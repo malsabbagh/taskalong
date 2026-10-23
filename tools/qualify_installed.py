@@ -8,11 +8,13 @@ real GitHub mutation, auth lookup, or runtime installation is performed.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 import hashlib
 import json
+import math
 import os
 import platform
+import selectors
 import shutil
 import ssl
 import subprocess
@@ -21,13 +23,395 @@ import tarfile
 import tempfile
 import time
 import urllib.request
-import venv
+import unittest
 from pathlib import Path
 
 REVIEW_SHA256 = "34337c4da835f794914915aeb2a0b4521f05d4ab13120452ee6ee4e43dbbf1b0"
 REVIEW_URL = "https://github.com/malsabbagh/review-sensei/releases/download/v0.8.8/review_sensei-0.8.8-py3-none-any.whl"
 FIXTURES = ("tests/fixtures/fake_codex.py", "tests/fixtures/fake_gh.py")
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
+PHASE_SECONDS = 600
+QUALIFICATION_SECONDS = 1500
+STREAM_LIMIT = 4 * 1024 * 1024
+
+
+def json_digest(value) -> str:
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def make_schedule(ids: list[str]) -> dict:
+    if not ids or len(ids) != len(set(ids)) or any('._FailedTest.' in i or not i.startswith('test_') for i in ids):
+        raise ValueError('invalid installed test inventory')
+    modules = sorted({i.split('.')[0] for i in ids})
+    batches = [[i for module in modules[index::2] for i in sorted(ids) if i.split('.')[0] == module]
+               for index in range(2)]
+    return {'format_version': 1, 'rule': 'sorted-modules-alternating-two-v1',
+            'inventory_sha256': json_digest(sorted(ids)), 'batches': batches}
+
+
+def phase_receipt(identity: dict, payload: dict) -> dict:
+    return {'kind': 'installed_phase', 'format_version': 2, 'ok': True, 'identity': identity, 'payload': payload}
+
+
+def validate_phase(value: dict, identity: dict) -> dict:
+    if (not isinstance(value, dict) or set(value) != {'kind', 'format_version', 'ok', 'identity', 'payload'}
+            or value['kind'] != 'installed_phase' or value['format_version'] != 2 or value['ok'] is not True
+            or value['identity'] != identity or not isinstance(value['payload'], dict)):
+        raise ValueError('missing or mismatched terminal phase receipt')
+    payload = value['payload']
+    phase = identity['phase']
+    if phase == 'probe':  # Small wrapper regressions, never part of a real schedule.
+        return payload
+    fields = {'inventory': {'schedule', 'package_snapshot_sha256'},
+              'sample': {'journey', 'package_snapshot_sha256'},
+              'tests-0': {'test_ids', 'outcomes', 'skipped_platform_cases', 'package_snapshot_sha256'},
+              'tests-1': {'test_ids', 'outcomes', 'skipped_platform_cases', 'package_snapshot_sha256'}}
+    if phase not in fields or set(payload) != fields[phase] or not is_sha(payload['package_snapshot_sha256']):
+        raise ValueError('invalid closed phase payload')
+    try:
+        if phase == 'inventory':
+            schedule = payload['schedule']
+            if schedule != make_schedule(sum(schedule['batches'], [])):
+                raise ValueError('invalid schedule payload')
+        elif phase == 'sample':
+            validate_journey(payload['journey'], core_only=identity.get('schedule_sha256') is None)
+        else:
+            ids, outcomes, skips = payload['test_ids'], payload['outcomes'], payload['skipped_platform_cases']
+            if (not isinstance(ids, list) or any(not isinstance(i, str) for i in ids)
+                    or len(ids) != len(set(ids)) or not isinstance(outcomes, dict) or set(outcomes) != set(ids)
+                    or any(v not in {'passed', 'skipped'} for v in outcomes.values()) or not isinstance(skips, list)
+                    or any(not isinstance(r, dict) or set(r) != {'test', 'reason', 'required_platform'} for r in skips)):
+                raise ValueError('invalid behavior phase payload')
+    except (KeyError, TypeError, AttributeError) as error:
+        raise ValueError('invalid phase payload types') from error
+    return payload
+
+
+def is_sha(value) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
+
+
+def validate_journey(value: dict, *, core_only: bool):
+    fields = {'kind', 'format_version', 'ok', 'state', 'qualification', 'review', 'publication', 'python',
+              'platform', 'machine', 'package_version', 'attempts', 'events', 'source_import', 'real_sandbox_claim',
+              'installed_behavior_tests', 'skipped_platform_cases', 'dependencies'}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError('invalid closed sample receipt')
+    fixed = {'kind': 'installed_journey', 'format_version': 1, 'ok': True,
+             'state': 'blocked' if core_only else 'draft_published', 'qualification': 'synthetic',
+             'review': 'missing-blocks' if core_only else 'released-fixture-full-diff',
+             'publication': 'review-blocked' if core_only else 'fixture-lost-response-reconciled-one-create',
+             'package_version': '0.1.0a1', 'attempts': 1, 'source_import': False, 'real_sandbox_claim': False,
+             'installed_behavior_tests': 0, 'skipped_platform_cases': []}
+    if any(type(value[k]) is not type(v) or value[k] != v for k, v in fixed.items()):
+        raise ValueError('sample receipt does not establish expected journey')
+    if (type(value['events']) is not int or value['events'] < 1
+            or any(not isinstance(value[k], str) or not 1 <= len(value[k]) <= 100 for k in ('python', 'platform', 'machine'))
+            or value['platform'] not in {'Darwin', 'Linux'} or not isinstance(value['dependencies'], dict)
+            or set(value['dependencies']) != {'jsonschema', 'setuptools', 'certifi'}
+            or any(not isinstance(v, str) or not 1 <= len(v) <= 100 for v in value['dependencies'].values())):
+        raise ValueError('invalid sample environment observations')
+
+
+class Progress:
+    def __init__(self, path: Path, phase: str):
+        self.path, self.phase, self.started, self.sequence = path, phase, time.monotonic(), 0
+
+    def emit(self, event: str, *, test: str | None = None, outcome: str | None = None):
+        self.sequence += 1
+        record = {'sequence': self.sequence, 'elapsed_seconds': round(time.monotonic() - self.started, 6),
+                  'phase': self.phase, 'event': event, 'test': test, 'outcome': outcome}
+        with self.path.open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps(record, sort_keys=True) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+
+
+class ProgressResult(unittest.TextTestResult):
+    def __init__(self, *args, progress: Progress, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.progress, self.outcomes, self.executed = progress, {}, []
+
+    def startTest(self, test):
+        self.executed.append(test.id())
+        self.progress.emit('test-start', test=test.id())
+        super().startTest(test)
+
+    def stopTest(self, test):
+        self.progress.emit('test-outcome', test=test.id(), outcome=self.outcomes.get(test.id(), 'failed'))
+        super().stopTest(test)
+        self.progress.emit('test-stop', test=test.id())
+
+    def addSuccess(self, test):
+        self.outcomes[test.id()] = 'passed'
+        super().addSuccess(test)
+
+    def addSkip(self, test, reason):
+        self.outcomes[test.id()] = 'skipped'
+        super().addSkip(test, reason)
+
+
+class PhaseFailure(RuntimeError):
+    def __init__(self, receipt: dict):
+        super().__init__('installed phase failed: ' + receipt['failure'])
+        self.receipt = receipt
+
+
+def error_code(stage: str, error: Exception) -> dict:
+    number = getattr(error, 'errno', None)
+    return {'stage': stage, 'errno': number if type(number) is int else None}
+
+
+def run_phase(argv: list[str], *, cwd: Path, env: dict, identity: dict, timeout: float,
+              stream_limit: int = STREAM_LIMIT) -> tuple[dict, dict]:
+    """Own/reap only this child; retain bounded streams without trusting descendants."""
+    phase = identity['phase']
+    if phase not in {'inventory', 'sample', 'tests-0', 'tests-1', 'probe'}:
+        raise ValueError('unknown qualification phase')
+    folder = cwd / 'diagnostics'
+    files, data, secondary = {}, {}, []
+    meta = {name: {'file': f'diagnostics/{phase}.{name}', 'bytes': 0, 'truncated': False,
+                   'sha256': None} for name in ('stdout', 'stderr')}
+    start = time.monotonic()
+    failure, child, reaped, exit_code = None, None, False, None
+    selector = None
+    final_deadline = None
+
+    def attempt(stage, action):
+        try:
+            return True, action()
+        except Exception as error:
+            secondary.append(error_code(stage, error))
+            return False, None
+
+    try:
+        folder.mkdir(exist_ok=True, mode=0o700)
+        for name in ('stdout', 'stderr'):
+            descriptor = os.open(cwd / meta[name]['file'], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                files[name] = os.fdopen(descriptor, 'wb', buffering=0)
+            except Exception:
+                attempt(f'close_descriptor_{name}', lambda: os.close(descriptor))
+                raise
+        selector = selectors.DefaultSelector()
+        child = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for name in ('stdout', 'stderr'):
+            pipe = getattr(child, name)
+            os.set_blocking(pipe.fileno(), False)
+            selector.register(pipe, selectors.EVENT_READ, name)
+        while selector.get_map() or child.poll() is None:
+            now = time.monotonic()
+            if failure is None and now - start >= timeout:
+                failure = 'timeout'
+            if failure is not None and final_deadline is None:
+                final_deadline = now + 3
+                if child.poll() is None:
+                    child.kill()
+            if final_deadline is not None and now >= final_deadline:
+                break
+            for key, _ in selector.select(.05):
+                name = key.data
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                available = max(0, stream_limit - meta[name]['bytes'])
+                retained = chunk[:available]
+                if files[name].write(retained) != len(retained):
+                    raise OSError('short private diagnostic write')
+                meta[name]['bytes'] += len(retained)
+                if len(chunk) > available:
+                    meta[name]['truncated'] = True
+                    failure = failure or 'output_limit'
+            if child.poll() is not None and selector.get_map() and final_deadline is None:
+                final_deadline = time.monotonic() + 3
+        if selector.get_map():
+            failure = failure or 'pipe_cleanup_uncertain'
+    except Exception as error:
+        failure = failure or 'wrapper_failure'
+        secondary.append(error_code('execution', error))
+    finally:
+        # Every resource gets its own bounded cleanup attempt. A failure cannot
+        # skip remaining resources or replace the original execution cause.
+        if child is not None:
+            observed, status = attempt('poll', child.poll)
+            if not observed or status is None:
+                attempt('kill', child.kill)
+            observed, status = attempt('wait', lambda: child.wait(timeout=3))
+            if observed:
+                reaped, exit_code = True, status
+            else:
+                failure = failure or 'direct_child_reap_uncertain'
+            for name in ('stdout', 'stderr'):
+                attempt(f'close_child_{name}', lambda name=name: getattr(child, name).close())
+        if selector is not None:
+            attempt('close_selector', selector.close)
+        for name, stream in files.items():
+            attempt(f'close_file_{name}', stream.close)
+        for name in ('stdout', 'stderr'):
+            observed, raw = attempt(f'read_{name}', lambda name=name: (cwd / meta[name]['file']).read_bytes())
+            if observed:
+                data[name] = raw
+                meta[name]['bytes'] = len(raw)
+                meta[name]['sha256'] = hashlib.sha256(raw).hexdigest()
+    if exit_code is not None and exit_code != 0:
+        failure = failure or 'nonzero_exit'
+    if secondary:
+        failure = failure or 'cleanup_or_evidence_failure'
+    receipt = {'identity': identity, 'ok': False, 'failure': failure, 'secondary_errors': secondary,
+               'budget_seconds': timeout, 'elapsed_seconds': round(time.monotonic() - start, 6),
+               'direct_child_exit': exit_code, 'direct_child_reaped': reaped,
+               'descendant_cleanup_confirmed': False, 'receipt_persisted': False, **meta}
+    payload = None
+    if failure is None:
+        try:
+            payload = validate_phase(json.loads(data['stdout']), identity)
+        except (ValueError, UnicodeError, KeyError):
+            receipt['failure'] = 'invalid_terminal_receipt'
+    receipt['ok'] = receipt['failure'] is None
+    receipt['receipt_persisted'] = True
+    persisted, _ = attempt('persist_receipt', lambda: write_json(folder / f'{phase}.parent.json', receipt))
+    if not persisted:
+        receipt.update(ok=False, receipt_persisted=False, failure=receipt['failure'] or 'cleanup_or_evidence_failure')
+    if not receipt['ok']:
+        raise PhaseFailure(receipt)
+    return payload, receipt
+
+
+def finalize_export(work: Path, output: Path, schedule: dict | None, *, reservation, primary, completed):
+    try:
+        export_evidence(work, output, schedule, reservation=reservation)
+    except Exception as error:
+        secondary = error_code('evidence_export', error)
+        if isinstance(primary, PhaseFailure):
+            primary.receipt['secondary_errors'].append(secondary)
+            primary.receipt['receipt_persisted'] = False  # Updated in memory after the original receipt write.
+        elif primary is not None:
+            primary.qualification_secondary_errors = [secondary]
+        else:
+            receipt = dict(completed or {}, ok=False, failure='evidence_export_failed', receipt_persisted=False)
+            receipt['secondary_errors'] = list(receipt.get('secondary_errors', [])) + [secondary]
+            raise PhaseFailure(receipt) from None
+
+
+def validate_test_accounting(schedule: dict, results: list[dict], system: str) -> tuple[int, list[dict]]:
+    expected = sorted(sum(schedule['batches'], []))
+    if schedule != make_schedule(expected) or len(results) != 2:
+        raise ValueError('incomplete installed schedule')
+    executed, skipped = [], []
+    for batch, result in zip(schedule['batches'], results):
+        ids, outcomes = result['test_ids'], result['outcomes']
+        if ids != batch or set(outcomes) != set(batch) or any(v not in {'passed', 'skipped'} for v in outcomes.values()):
+            raise ValueError('installed test identity/outcome mismatch')
+        cases = result['skipped_platform_cases']
+        if {r['test'] for r in cases} != {i for i, v in outcomes.items() if v == 'skipped'}:
+            raise ValueError('installed skip accounting mismatch')
+        executed.extend(ids)
+        skipped.extend(cases)
+    if len(executed) != len(set(executed)) or sorted(executed) != expected:
+        raise ValueError('installed test union differs from inventory')
+    required = {i for i in expected if system == 'darwin' and i.startswith('test_linux_lifetime.LinuxLifetimeTests.')}
+    reasons = {i: 'Linux prctl/subreaper kernel qualification' for i in required}
+    if system == 'linux':
+        reasons = {'test_linux_lifetime.UnsupportedLifetimeTests.test_non_linux_helper_never_releases_target': 'non-Linux refusal',
+                   'test_supervisor.ProcessTests.test_unavailable_kernel_lifetime_boundary_never_releases_target': 'Darwin kernel boundary fault injection'}
+        required = set(reasons) & set(expected)
+        alias = 'test_store_migration.StoreMigrationTests.test_system_alias_and_directory_identity_cannot_hide_overlapping_targets'
+        if any(r['test'] == alias for r in skipped):
+            reasons[alias] = 'No trusted OS directory alias contains this fixture root'
+            required.add(alias)
+    if len(skipped) != len({r['test'] for r in skipped}) or {r['test'] for r in skipped} != required:
+        raise ValueError('unexpected platform skip inventory')
+    if any(set(r) != {'test', 'reason', 'required_platform'} or r['reason'] != reasons.get(r['test'])
+           or r['required_platform'] != ('Linux' if system == 'darwin' else 'Darwin') for r in skipped):
+        raise ValueError('unexpected platform skip reason')
+    return len(executed) - len(skipped), skipped
+
+
+def export_evidence(work: Path, output: Path, schedule: dict | None, *, reservation=None):
+    """Export only validated closed records; arbitrary diagnostics stay private."""
+    if (work / 'diagnostics').is_symlink():
+        raise ValueError('diagnostic directory cannot be a symlink')
+    if reservation is None:
+        output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    elif output.is_symlink() or not output.is_dir() or (output.stat().st_dev, output.stat().st_ino) != reservation:
+        raise ValueError('reserved export directory identity changed')
+    ids = set() if schedule is None else set(sum(schedule['batches'], []))
+    events = {'phase-start', 'phase-stop', 'inventory-retained', 'test-start', 'test-outcome', 'test-stop',
+              'sample-baseline-start', 'sample-submit-start', 'sample-worker-start', 'sample-worker-terminal',
+              'sample-publication-start', 'sample-publication-stop'}
+    for phase in ('inventory', 'sample', 'tests-0', 'tests-1'):
+        path = work / 'diagnostics' / f'{phase}.progress.jsonl'
+        parent_path = path.with_name(f'{phase}.parent.json')
+        if not path.exists() and not parent_path.exists():
+            continue
+        if path.is_symlink() or path.exists() and path.stat().st_size > STREAM_LIMIT:
+            raise ValueError('invalid progress export file')
+        raw = path.read_bytes() if path.exists() else b''
+        rows, partial = [], False
+        for index, line in enumerate(raw.splitlines(keepends=True)):
+            try:
+                row = json.loads(line)
+            except (ValueError, UnicodeError):
+                if not line.endswith(b'\n') and index == len(raw.splitlines()) - 1:
+                    partial = True
+                    break
+                raise ValueError('malformed complete progress record')
+            if (not isinstance(row, dict) or set(row) != {'sequence', 'elapsed_seconds', 'phase', 'event', 'test', 'outcome'}
+                    or type(row['sequence']) is not int or row['sequence'] != len(rows) + 1
+                    or type(row['elapsed_seconds']) not in {int, float} or not math.isfinite(row['elapsed_seconds'])
+                    or row['elapsed_seconds'] < (rows[-1]['elapsed_seconds'] if rows else 0)
+                    or row['phase'] != phase or row['event'] not in events
+                    or row['test'] not in ids | {None} or row['outcome'] not in {None, 'passed', 'skipped', 'failed'}):
+                raise ValueError('unreviewed progress record cannot be exported')
+            rows.append(row)
+        (output / path.name).write_text(''.join(json.dumps(r, sort_keys=True) + '\n' for r in rows))
+        write_json(output / f'{phase}.progress-summary.json', {'source_sha256': hashlib.sha256(raw).hexdigest(),
+            'source_bytes': len(raw), 'exported_records': len(rows), 'partial_tail_omitted': partial})
+        if parent_path.exists():
+            if parent_path.is_symlink() or parent_path.stat().st_size > 16384:
+                raise ValueError('invalid parent evidence file')
+            value = json.loads(parent_path.read_text())
+            fields = {'identity', 'ok', 'failure', 'budget_seconds', 'elapsed_seconds', 'direct_child_exit',
+                      'direct_child_reaped', 'descendant_cleanup_confirmed', 'stdout', 'stderr',
+                      'secondary_errors', 'receipt_persisted'}
+            if not isinstance(value, dict) or set(value) != fields:
+                raise ValueError('invalid closed parent evidence')
+            identity = value['identity']
+            if (not isinstance(identity, dict) or set(identity) != {'phase', 'artifact_sha256', 'harness_sha256', 'lock_sha256', 'schedule_sha256'}
+                    or identity['phase'] != phase or any(not is_sha(identity[k]) for k in ('artifact_sha256', 'harness_sha256', 'lock_sha256'))
+                    or identity['schedule_sha256'] is not None and not is_sha(identity['schedule_sha256'])):
+                raise ValueError('invalid parent identity evidence')
+            for name in ('stdout', 'stderr'):
+                stream = value[name]
+                if (not isinstance(stream, dict) or set(stream) != {'file', 'bytes', 'truncated', 'sha256'}
+                        or stream['file'] != f'diagnostics/{phase}.{name}'
+                        or stream['sha256'] is not None and not is_sha(stream['sha256'])
+                        or type(stream['bytes']) is not int or not 0 <= stream['bytes'] <= STREAM_LIMIT
+                        or type(stream['truncated']) is not bool):
+                    raise ValueError('invalid parent stream evidence')
+            if (type(value['ok']) is not bool or type(value['direct_child_reaped']) is not bool
+                    or value['descendant_cleanup_confirmed'] is not False
+                    or value['direct_child_exit'] is not None and type(value['direct_child_exit']) is not int
+                    or value['failure'] not in {None, 'timeout', 'output_limit', 'pipe_cleanup_uncertain', 'nonzero_exit',
+                        'wrapper_failure', 'direct_child_reap_uncertain', 'invalid_terminal_receipt', 'cleanup_or_evidence_failure'}
+                    or type(value['receipt_persisted']) is not bool or not isinstance(value['secondary_errors'], list)
+                    or any(not isinstance(e, dict) or set(e) != {'stage', 'errno'}
+                           or e['stage'] not in {'execution', 'poll', 'kill', 'wait', 'close_child_stdout', 'close_child_stderr',
+                               'close_selector', 'close_file_stdout', 'close_file_stderr', 'close_descriptor_stdout',
+                               'close_descriptor_stderr', 'read_stdout', 'read_stderr', 'persist_receipt'}
+                           or e['errno'] is not None and type(e['errno']) is not int for e in value['secondary_errors'])
+                    or any(type(value[k]) not in {float, int} or not math.isfinite(value[k]) or value[k] < 0
+                           for k in ('budget_seconds', 'elapsed_seconds'))
+                    or value['ok'] and (partial or not rows or rows[-1]['event'] != 'phase-stop')):
+                raise ValueError('invalid parent outcome evidence')
+            write_json(output / parent_path.name, value)
+    if schedule is not None:
+        if schedule != make_schedule(sum(schedule['batches'], [])):
+            raise ValueError('invalid export inventory')
+        write_json(output / 'discovered-inventory.json', schedule)
+        for index, batch in enumerate(schedule['batches']):
+            write_json(output / f'tests-{index}.expected.json', {'test_ids': batch, 'schedule_sha256': json_digest(schedule)})
 
 
 def snapshot_artifact(source: Path, directory: Path) -> tuple[Path, str]:
@@ -62,7 +446,39 @@ def snapshot_harness(source: Path, work: Path) -> str:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
     manifest = [{"path": relative, "sha256": hashlib.sha256(data).hexdigest()} for relative, data in sorted(values.items())]
-    return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    write_json(work / 'harness-manifest.json', manifest)
+    return json_digest(manifest)
+
+
+def verify_harness(work: Path, expected_sha256: str):
+    manifest = json.loads((work / 'harness-manifest.json').read_text())
+    if not isinstance(manifest, list) or json_digest(manifest) != expected_sha256:
+        raise ValueError('frozen harness manifest identity changed')
+    installed_paths = set()
+    for row in manifest:
+        if not isinstance(row, dict) or set(row) != {'path', 'sha256'} or not is_sha(row['sha256']):
+            raise ValueError('invalid frozen harness manifest')
+        relative = row['path']
+        if not isinstance(relative, str) or Path(relative).is_absolute() or '..' in Path(relative).parts:
+            raise ValueError('invalid frozen harness path')
+        if relative in {'tools/qualify_installed.py', 'requirements-dev.lock'}:
+            paths = [work / Path(relative).name]
+        elif relative.startswith('tests/') and relative != 'tests/test_distribution.py':
+            suffix = relative.removeprefix('tests/')
+            installed_paths.add(suffix)
+            paths = [work / 'installed-tests' / suffix]
+            if relative in FIXTURES:
+                paths.append(work / 'fixtures' / Path(relative).name)
+        else:
+            raise ValueError('unexpected frozen harness path')
+        for path in paths:
+            if (path.is_symlink() or not path.is_file()
+                    or any(p.is_symlink() for p in path.parents if p.is_relative_to(work))
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != row['sha256']):
+                raise ValueError('frozen installed harness bytes changed')
+    actual = {str(p.relative_to(work / 'installed-tests')) for p in (work / 'installed-tests').rglob('*') if p.is_file()}
+    if installed_paths != actual:
+        raise ValueError('frozen installed test inventory changed')
 
 
 @contextmanager
@@ -88,11 +504,14 @@ def clean_environment() -> dict[str, str]:
     return env
 
 
-def create_environment(path: Path) -> str:
+def create_environment(path: Path, *, timeout: float = 60) -> str:
     # Standalone Darwin interpreters locate libpython relative to their executable.
     # Native venv links preserve that layout; copying the executable can abort in
     # dyld before ensurepip starts. Package imports still come from the fresh venv.
-    venv.EnvBuilder(with_pip=True, symlinks=sys.platform == "darwin").create(path)
+    argv = [sys.executable, '-m', 'venv']
+    if sys.platform == 'darwin':
+        argv.append('--symlinks')
+    subprocess.run(argv + [str(path)], env=clean_environment(), capture_output=True, timeout=timeout, check=True)
     return str(path / "bin" / "python")
 
 
@@ -125,7 +544,7 @@ def cli(python: str, state: Path, *args: str, ok_codes: tuple[int, ...] = (0,)) 
     return value
 
 
-def child_journey(args: argparse.Namespace) -> dict:
+def installed_context(args: argparse.Namespace):
     # This code executes only from a copied file with an external CWD. These are
     # the exact same installed APIs used by task-neutral local callers.
     source_root = Path(args.source_root).resolve()
@@ -160,7 +579,17 @@ def child_journey(args: argparse.Namespace) -> dict:
         return {str(path.relative_to(package.parent)): {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "mode": path.stat().st_mode}
                 for path in package.parent.rglob("*") if path.is_file()}
 
+    return package_snapshot
+
+
+def child_journey(args: argparse.Namespace, progress: Progress) -> dict:
+    package_snapshot = installed_context(args)
     before = package_snapshot()
+    from importlib import resources
+    import importlib.metadata
+    from taskalong.api import RunService
+    from taskalong.validation import digest, seal, schema_names
+    cwd = Path.cwd()
     py = sys.executable
     env = clean_environment()
     for argv in ([py, "-m", "taskalong", "--version"], [str(Path(py).parent / "taskalong"), "--version"], [str(Path(py).parent / "taskalong"), "--help"]):
@@ -171,6 +600,7 @@ def child_journey(args: argparse.Namespace) -> dict:
     for name in ("templates/worker.txt", "templates/draft-pr.md", "sql/001-initial.sql"):
         assert resources.files("taskalong.resources").joinpath(name).read_bytes()
 
+    progress.emit('sample-baseline-start')
     repo = cwd / "tiny-project"
     repo.mkdir()
     command(["git", "init", "-b", "main", str(repo)], cwd=cwd, env=env)
@@ -244,6 +674,7 @@ def child_journey(args: argparse.Namespace) -> dict:
     })
     spec_path = cwd / "task.json"
     write_json(spec_path, spec)
+    progress.emit('sample-submit-start')
     submitted = cli(py, state, "submit", "--spec", str(spec_path), "--key", "installed-submit")
     run_id = submitted["run_id"]
     first = service.inspect(run_id)
@@ -258,6 +689,7 @@ def child_journey(args: argparse.Namespace) -> dict:
     # Start via the installed console protocol; process ownership and all durable
     # transitions are product code. Poll from new clients rather than sharing a
     # connection with the detached supervisor.
+    progress.emit('sample-worker-start')
     cli(py, state, "start", run_id, "--expected-revision", str(service.inspect(run_id)["revision"]), "--key", "installed-start")
     deadline = time.monotonic() + 45
     run = first
@@ -268,6 +700,7 @@ def child_journey(args: argparse.Namespace) -> dict:
         time.sleep(.1)
     expected = "blocked" if args.core_only else "accepted"
     assert run["state"] == expected, {"expected": expected, "observed": run["state"], "blockers": run.get("blockers")}
+    progress.emit('sample-worker-terminal')
     events = service.events(run_id)
     assert events and [event["seq"] for event in events] == list(range(1, len(events) + 1))
     assert len(run["attempts"]) == 1
@@ -280,6 +713,7 @@ def child_journey(args: argparse.Namespace) -> dict:
     cli(py, state, "export", run_id, "--output", str(cwd / "export"))
     publication = "review-blocked"
     if not args.core_only:
+        progress.emit('sample-publication-start')
         intent = service.publish_intent(run_id)
         # The fake service creates a PR and loses the response. The product must
         # preserve uncertainty and reconcile it with reads, without another POST.
@@ -297,51 +731,90 @@ def child_journey(args: argparse.Namespace) -> dict:
         publication = "fixture-lost-response-reconciled-one-create"
         events = service.events(run_id)
         assert [event["seq"] for event in events] == list(range(1, len(events) + 1))
+    progress.emit('sample-publication-stop')
     after = package_snapshot()
     assert before == after, "application wrote into installed package"
-    suite_count = 0
-    skipped_platform_cases = []
-    if not args.core_only:
-        import unittest
-        suite = unittest.defaultTestLoader.discover(str(cwd / "installed-tests"))
-        result = unittest.TextTestRunner(stream=sys.stderr, verbosity=1).run(suite)
-        assert result.wasSuccessful(), "installed public-behavior suite failed"
-        for test, reason in result.skipped:
-            darwin_opposite = (sys.platform == "darwin" and test.id().startswith("test_linux_lifetime.LinuxLifetimeTests.")
-                               and reason == "Linux prctl/subreaper kernel qualification")
-            linux_opposite = (sys.platform == "linux" and test.id() == "test_linux_lifetime.UnsupportedLifetimeTests.test_non_linux_helper_never_releases_target"
-                              and reason == "non-Linux refusal")
-            darwin_fault_probe = (sys.platform == "linux" and test.id() == "test_supervisor.ProcessTests.test_unavailable_kernel_lifetime_boundary_never_releases_target"
-                                 and reason == "Darwin kernel boundary fault injection")
-            darwin_alias_probe = (sys.platform == "linux" and test.id() == "test_store_migration.StoreMigrationTests.test_system_alias_and_directory_identity_cannot_hide_overlapping_targets"
-                                  and reason == "No trusted OS directory alias contains this fixture root")
-            assert darwin_opposite or linux_opposite or darwin_fault_probe or darwin_alias_probe, "a required behavior case was skipped"
-            skipped_platform_cases.append({"test": test.id(), "reason": reason, "required_platform": "Linux" if darwin_opposite else "Darwin"})
-        if skipped_platform_cases:
-            lifetime_tests = sys.modules["test_linux_lifetime"]
-            opposite_class = lifetime_tests.LinuxLifetimeTests if sys.platform == "darwin" else lifetime_tests.UnsupportedLifetimeTests
-            expected_skips = {f"test_linux_lifetime.{opposite_class.__name__}.{name}"
-                              for name in unittest.defaultTestLoader.getTestCaseNames(opposite_class)}
-            if sys.platform == "linux":
-                expected_skips.add("test_supervisor.ProcessTests.test_unavailable_kernel_lifetime_boundary_never_releases_target")
-                alias_case = "test_store_migration.StoreMigrationTests.test_system_alias_and_directory_identity_cannot_hide_overlapping_targets"
-                if any(case["test"] == alias_case for case in skipped_platform_cases):
-                    expected_skips.add(alias_case)
-            assert {case["test"] for case in skipped_platform_cases} == expected_skips, "the platform-specific skip inventory changed"
-        suite_count = result.testsRun - len(skipped_platform_cases)
-        assert suite_count > 50, "installed qualification must include the complete reviewed behavior suite"
-    assert before == package_snapshot(), "a behavior scenario wrote into the installed package"
     return {"kind": "installed_journey", "format_version": 1, "ok": True, "state": run["state"],
             "qualification": "synthetic", "review": "missing-blocks" if args.core_only else "released-fixture-full-diff",
             "publication": publication, "python": platform.python_version(), "platform": platform.system(),
             "machine": platform.machine(), "package_version": "0.1.0a1", "attempts": len(run["attempts"]),
             "events": len(events), "source_import": False, "real_sandbox_claim": False,
-            "installed_behavior_tests": suite_count,
-            "skipped_platform_cases": skipped_platform_cases,
+            "installed_behavior_tests": 0,
+            "skipped_platform_cases": [],
             "dependencies": {name: importlib.metadata.version(name) for name in ("jsonschema", "setuptools", "certifi")}}
 
 
-def acquire_review(path: Path | None, target: Path) -> Path:
+def discovered_tests(cwd: Path) -> list:
+    def flatten(suite):
+        for item in suite:
+            if isinstance(item, unittest.TestSuite):
+                yield from flatten(item)
+            else:
+                yield item
+    loader = unittest.TestLoader()
+    tests = list(flatten(loader.discover(str(cwd / 'installed-tests'))))
+    if loader.errors:
+        raise ValueError('installed test discovery failed')
+    make_schedule([test.id() for test in tests])
+    return tests
+
+
+def child_phase(args: argparse.Namespace) -> dict:
+    cwd = Path.cwd()
+    value = json.loads(Path(args.phase_input).read_text())
+    if set(value) != {'identity', 'schedule'}:
+        raise ValueError('invalid phase input')
+    identity, schedule = value['identity'], value['schedule']
+    if set(identity) != {'phase', 'artifact_sha256', 'harness_sha256', 'lock_sha256', 'schedule_sha256'}:
+        raise ValueError('invalid phase identity')
+    phase = identity['phase']
+    if phase not in {'inventory', 'sample', 'tests-0', 'tests-1'}:
+        raise ValueError('unknown child phase')
+    if identity['schedule_sha256'] != (None if schedule is None else json_digest(schedule)):
+        raise ValueError('phase schedule identity mismatch')
+    progress = Progress(cwd / 'diagnostics' / f'{phase}.progress.jsonl', phase)
+    progress.emit('phase-start')
+    snapshot = installed_context(args)
+    verify_harness(cwd, identity['harness_sha256'])
+    if hashlib.sha256((cwd / 'requirements-dev.lock').read_bytes()).hexdigest() != identity['lock_sha256']:
+        raise ValueError('phase lock identity mismatch')
+    before = snapshot()
+    baseline_sha = json_digest(before)
+    payload = {}
+    if phase == 'sample':
+        payload['journey'] = child_journey(args, progress)
+    else:
+        tests = discovered_tests(cwd)
+        actual = make_schedule([test.id() for test in tests])
+        if phase == 'inventory':
+            if schedule is not None:
+                raise ValueError('inventory must precede schedule')
+            payload['schedule'] = actual
+            write_json(cwd / 'diagnostics' / 'discovered-inventory.json', actual)
+            progress.emit('inventory-retained')
+        else:
+            if schedule != actual:
+                raise ValueError('installed inventory changed between phases')
+            batch = schedule['batches'][int(phase[-1])]
+            by_id = {test.id(): test for test in tests}
+            write_json(cwd / 'diagnostics' / f'{phase}.expected.json', {'test_ids': batch, 'schedule_sha256': json_digest(schedule)})
+            result = unittest.TextTestRunner(stream=sys.stderr, verbosity=1,
+                resultclass=lambda *a, **kw: ProgressResult(*a, progress=progress, **kw)).run(
+                    unittest.TestSuite([by_id[i] for i in batch]))
+            if not result.wasSuccessful() or result.executed != batch:
+                raise AssertionError('installed behavior batch failed or omitted tests')
+            payload.update(test_ids=result.executed, outcomes=result.outcomes,
+                skipped_platform_cases=[{'test': test.id(), 'reason': reason,
+                    'required_platform': 'Linux' if sys.platform == 'darwin' else 'Darwin'} for test, reason in result.skipped])
+    if before != snapshot():
+        raise AssertionError('installed phase mutated package')
+    verify_harness(cwd, identity['harness_sha256'])
+    payload['package_snapshot_sha256'] = baseline_sha
+    progress.emit('phase-stop', outcome='passed')
+    return phase_receipt(identity, payload)
+
+
+def acquire_review(path: Path | None, target: Path, *, timeout: float = 30) -> Path:
     if path:
         data = path.read_bytes()
     else:
@@ -352,7 +825,7 @@ def acquire_review(path: Path | None, target: Path) -> Path:
             context = ssl.create_default_context(cafile=certifi.where())
         except ImportError:
             context = ssl.create_default_context()
-        with urllib.request.urlopen(REVIEW_URL, timeout=30, context=context) as response:
+        with urllib.request.urlopen(REVIEW_URL, timeout=timeout, context=context) as response:
             data = response.read(8 * 1024 * 1024 + 1)
     if len(data) > 8 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != REVIEW_SHA256:
         raise RuntimeError("released ReviewSensei wheel checksum mismatch")
@@ -361,6 +834,19 @@ def acquire_review(path: Path | None, target: Path) -> Path:
 
 
 def qualify(args: argparse.Namespace) -> dict:
+    started = time.monotonic()
+    def budget(limit: float = 60) -> float:
+        remaining = QUALIFICATION_SECONDS - (time.monotonic() - started)
+        if remaining <= 0:
+            raise RuntimeError('total installed qualification budget exhausted')
+        return min(limit, remaining)
+
+    reservation = None
+    if args.evidence_dir:
+        args.evidence_dir = args.evidence_dir.resolve()
+        args.evidence_dir.mkdir(parents=True, exist_ok=False, mode=0o700)
+        reservation = (args.evidence_dir.stat().st_dev, args.evidence_dir.stat().st_ino)
+
     root = Path(__file__).resolve().parents[1]
     artifact_paths = sorted(args.dist_dir.glob("*.whl" if args.artifact == "wheel" else "*.tar.gz"))
     if len(artifact_paths) != 1:
@@ -385,37 +871,76 @@ def qualify(args: argparse.Namespace) -> dict:
         harness_inputs_sha256 = snapshot_harness(extracted or root, work)
         env = clean_environment()
         venv_path = base / "venv"
-        python = create_environment(venv_path)
+        python = create_environment(venv_path, timeout=budget())
         env["PATH"] = str(venv_path / "bin") + os.pathsep + env.get("PATH", os.defpath)
         env["TASKALONG_REVIEW_EXECUTABLE"] = str(venv_path / "bin" / "review-sensei")
         env["TASKALONG_REVIEW_PYTHON"] = python
         install = [python, "-m", "pip", "--isolated", "--disable-pip-version-check", "install"]
         if args.wheelhouse:
             install += ["--no-index", "--find-links", str(args.wheelhouse.resolve())]
-        command(install + ["--require-hashes", "-r", str(work / "requirements-dev.lock")], cwd=work, env=env, timeout=60)
+        command(install + ["--require-hashes", "-r", str(work / "requirements-dev.lock")], cwd=work, env=env, timeout=budget())
         install_artifact = artifact
         if args.artifact == "sdist":
-            command([python, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(base / "rebuilt")], cwd=extracted, env=env)
+            command([python, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(base / "rebuilt")], cwd=extracted, env=env, timeout=budget())
             wheels = list((base / "rebuilt").glob("*.whl"))
             if len(wheels) != 1:
                 raise RuntimeError("sdist wheel build did not yield one artifact")
             install_artifact = wheels[0]
             audit(install_artifact, root=extracted)
-        command(install + ["--no-deps", str(install_artifact)], cwd=work, env=env)
+        command(install + ["--no-deps", str(install_artifact)], cwd=work, env=env, timeout=budget())
         if not args.core_only:
-            review = acquire_review(args.review_wheel, base / "review_sensei-0.8.8-py3-none-any.whl")
-            command(install + ["--no-deps", str(review)], cwd=work, env=env)
+            review = acquire_review(args.review_wheel, base / "review_sensei-0.8.8-py3-none-any.whl", timeout=budget(30))
+            command(install + ["--no-deps", str(review)], cwd=work, env=env, timeout=budget())
         copied = work / "qualify_installed.py"
         child_args = [python, str(copied), "--child", "--source-root", str(root)]
         if extracted:
             child_args.extend(["--build-source-root", str(extracted)])
         if args.core_only:
             child_args.append("--core-only")
-        raw = command(child_args, cwd=work, env=env, timeout=600)
-        result = json.loads(raw)
+        lock_sha = hashlib.sha256((work / 'requirements-dev.lock').read_bytes()).hexdigest()
+        phases, phase_receipts, schedule, package_sha = {}, [], None, None
+        order = ['sample'] if args.core_only else ['inventory', 'sample', 'tests-0', 'tests-1']
+        primary = None
+        try:
+            for phase in order:
+                identity = {'phase': phase, 'artifact_sha256': artifact_sha256,
+                    'harness_sha256': harness_inputs_sha256, 'lock_sha256': lock_sha,
+                    'schedule_sha256': None if schedule is None else json_digest(schedule)}
+                phase_input = work / 'phase-input.json'
+                write_json(phase_input, {'identity': identity, 'schedule': schedule})
+                verify_harness(work, harness_inputs_sha256)
+                payload, receipt = run_phase(child_args + ['--phase-input', str(phase_input)], cwd=work,
+                    env=env, identity=identity, timeout=budget(60 if phase == 'inventory' else PHASE_SECONDS))
+                verify_harness(work, harness_inputs_sha256)
+                phases[phase] = payload
+                phase_receipts.append(receipt)
+                current = payload['package_snapshot_sha256']
+                if package_sha is not None and current != package_sha:
+                    raise ValueError('package changed between installed phases')
+                package_sha = current
+                if phase == 'inventory':
+                    schedule = payload['schedule']
+                    if schedule != make_schedule(sum(schedule['batches'], [])):
+                        raise ValueError('invalid discovered installed schedule')
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            # Public-safe evidence contains only closed progress/identity records.
+            # Raw streams and synthetic state stay in the retained private root.
+            if args.evidence_dir:
+                finalize_export(work, args.evidence_dir, schedule, reservation=reservation, primary=primary,
+                                completed=phase_receipts[-1] if phase_receipts else None)
+        result = phases['sample']['journey']
+        count, skipped = (0, []) if args.core_only else validate_test_accounting(schedule, [phases['tests-0'], phases['tests-1']], sys.platform)
+        budget()
+        result.update(format_version=2, installed_behavior_tests=count, skipped_platform_cases=skipped,
+                      schedule=schedule, phases=phase_receipts, package_snapshot_sha256=package_sha,
+                      elapsed_seconds=round(time.monotonic() - started, 6), total_budget_seconds=QUALIFICATION_SECONDS,
+                      behavior_test_ids=[] if args.core_only else sorted(sum(schedule['batches'], [])))
         result.update(artifact=args.artifact, artifact_sha256=artifact_sha256,
                       review_wheel_sha256=None if args.core_only else REVIEW_SHA256,
-                      dependency_lock_sha256=hashlib.sha256((work / "requirements-dev.lock").read_bytes()).hexdigest(),
+                      dependency_lock_sha256=lock_sha,
                       qualification_inputs_sha256=harness_inputs_sha256,
                       environment="fresh-venv-external-cwd", editable=False)
         return result
@@ -429,12 +954,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--review-wheel", type=Path)
     parser.add_argument("--wheelhouse", type=Path)
     parser.add_argument("--core-only", action="store_true")
+    parser.add_argument('--evidence-dir', type=Path, help='new directory for allowlisted phase/test progress (never raw streams)')
     parser.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--source-root", help=argparse.SUPPRESS)
     parser.add_argument("--build-source-root", help=argparse.SUPPRESS)
+    parser.add_argument('--phase-input', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
-        result = child_journey(args) if args.child else qualify(args)
+        if args.child:
+            # Some original behavior fixtures emit observations. They are private
+            # diagnostics, not additional terminal documents on the stdout wire.
+            with redirect_stdout(sys.stderr):
+                result = child_phase(args)
+        else:
+            result = qualify(args)
         print(json.dumps(result, sort_keys=True))
         return 0
     except Exception as error:
@@ -444,8 +977,12 @@ def main(argv: list[str] | None = None) -> int:
             import traceback
             traceback.print_exc(file=sys.stderr)
         else:
-            print(json.dumps({"kind": "installed_qualification", "format_version": 1, "ok": False,
-                              "artifact": args.artifact, "error": str(error)}, sort_keys=True))
+            cause = error.__cause__ or error
+            print(json.dumps({"kind": "installed_qualification", "format_version": 2, "ok": False,
+                              "artifact": args.artifact, 'error': type(cause).__name__,
+                              'failure': cause.receipt if isinstance(cause, PhaseFailure) else None,
+                              'secondary_errors': getattr(cause, 'qualification_secondary_errors', []),
+                              'retained_synthetic_state': True}, sort_keys=True))
         return 1
 
 

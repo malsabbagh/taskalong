@@ -14,6 +14,8 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
+from contextlib import redirect_stdout, redirect_stderr
 import zipfile
 from pathlib import Path
 
@@ -26,6 +28,276 @@ _QUALIFIER_SPEC.loader.exec_module(qualifier)
 
 
 class DistributionTests(unittest.TestCase):
+    def test_installed_schedule_is_fixed_disjoint_and_module_preserving(self):
+        ids = ['test_b.C.test_z', 'test_a.C.test_y', 'test_a.C.test_x', 'test_c.C.test_x']
+        schedule = qualifier.make_schedule(ids)
+        self.assertEqual(schedule, qualifier.make_schedule(list(reversed(ids))))
+        self.assertEqual(sorted(sum(schedule['batches'], [])), sorted(ids))
+        self.assertTrue(any({'test_a.C.test_y', 'test_a.C.test_x'} <= set(batch) for batch in schedule['batches']))
+        for invalid in (ids + [ids[0]], ['unittest.loader._FailedTest.bad'], []):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                qualifier.make_schedule(invalid)
+
+    def test_phase_terminal_identity_and_closed_shape_are_required(self):
+        identity = {'phase': 'probe', 'artifact_sha256': 'a' * 64}
+        value = qualifier.phase_receipt(identity, {'ok': True})
+        self.assertEqual(qualifier.validate_phase(value, identity), {'ok': True})
+        for changed in ({}, dict(value, identity={'phase': 'other'}), dict(value, extra=True), dict(value, ok=False)):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                qualifier.validate_phase(changed, identity)
+
+    def test_phase_timeout_retains_progress_and_bounded_streams_and_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            code = "import sys,time;print('progress',file=sys.stderr,flush=True);time.sleep(10)"
+            with self.assertRaises(qualifier.PhaseFailure) as caught:
+                qualifier.run_phase([sys.executable, '-c', code], cwd=root,
+                    env=qualifier.clean_environment(), identity={'phase': 'probe'}, timeout=.15)
+            receipt = caught.exception.receipt
+            self.assertFalse(receipt['ok'])
+            self.assertEqual(receipt['failure'], 'timeout')
+            self.assertTrue(receipt['direct_child_reaped'])
+            self.assertFalse(receipt['descendant_cleanup_confirmed'])
+            self.assertIn(b'progress', (root / receipt['stderr']['file']).read_bytes())
+
+    def test_phase_payload_is_closed_and_sample_cannot_claim_false_success(self):
+        package_sha = 'd' * 64
+        schedule = qualifier.make_schedule(['test_a.C.test_x', 'test_b.C.test_y'])
+        good = {'schedule': schedule, 'package_snapshot_sha256': package_sha}
+        identity = {'phase': 'inventory'}
+        self.assertEqual(qualifier.validate_phase(qualifier.phase_receipt(identity, good), identity), good)
+        for payload in (dict(good, extra='unreviewed'), dict(good, package_snapshot_sha256='invalid'),
+                        {'journey': {'ok': False}, 'package_snapshot_sha256': package_sha}):
+            phase = 'sample' if 'journey' in payload else 'inventory'
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                qualifier.validate_phase(qualifier.phase_receipt({'phase': phase}, payload), {'phase': phase})
+
+    def test_frozen_installed_harness_and_fixture_aliases_cannot_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'source'
+            work = Path(directory) / 'work'
+            root.mkdir(); work.mkdir()
+            files = {'tools/qualify_installed.py': b'original qualifier', 'requirements-dev.lock': b'original lock',
+                     'tests/fixtures/fake_codex.py': b'original worker', 'tests/fixtures/fake_gh.py': b'original boundary',
+                     'tests/test_a.py': b'original test'}
+            for name, data in files.items():
+                target = root / name; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)
+            (root / 'distribution-inventory.json').write_text(json.dumps({'sdist_sources': sorted(files)}))
+            expected = qualifier.snapshot_harness(root, work)
+            qualifier.verify_harness(work, expected)
+            for relative in ('qualify_installed.py', 'requirements-dev.lock', 'installed-tests/test_a.py',
+                             'installed-tests/fixtures/fake_codex.py', 'fixtures/fake_codex.py'):
+                path = work / relative; original = path.read_bytes(); path.write_bytes(b'changed')
+                with self.subTest(path=relative), self.assertRaises(ValueError):
+                    qualifier.verify_harness(work, expected)
+                path.write_bytes(original)
+            (work / 'installed-tests/test_extra.py').write_bytes(b'new test')
+            with self.assertRaises(ValueError):
+                qualifier.verify_harness(work, expected)
+
+    def test_evidence_export_excludes_arbitrary_json_and_private_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); work = root / 'work'; work.mkdir()
+            diagnostics = work / 'diagnostics'; diagnostics.mkdir()
+            (diagnostics / 'private.json').write_text('{"private":"synthetic private state"}')
+            qualifier.Progress(diagnostics / 'sample.progress.jsonl', 'sample').emit('phase-start')
+            output = root / 'public'
+            qualifier.export_evidence(work, output, None)
+            self.assertFalse((output / 'private.json').exists())
+            self.assertIn('sample.progress.jsonl', {p.name for p in output.iterdir()})
+            (diagnostics / 'sample.progress.jsonl').write_text('{"private":"synthetic state"}\n')
+            with self.assertRaises(ValueError):
+                qualifier.export_evidence(work, root / 'rejected', None)
+            row = {'sequence': 1, 'elapsed_seconds': 0.0, 'phase': 'sample', 'event': 'phase-start', 'test': None, 'outcome': None}
+            (diagnostics / 'sample.progress.jsonl').write_text(json.dumps(row) + '\n{"partial":')
+            qualifier.export_evidence(work, root / 'partial', None)
+            self.assertEqual(json.loads((root / 'partial/sample.progress.jsonl').read_text()), row)
+            self.assertTrue(json.loads((root / 'partial/sample.progress-summary.json').read_text())['partial_tail_omitted'])
+
+    def test_phase_nonzero_missing_duplicate_and_output_overflow_never_pass(self):
+        identity = {'phase': 'probe'}
+        value = json.dumps(qualifier.phase_receipt(identity, {'ok': True}))
+        codes = ["import sys;print('private diagnostic',file=sys.stderr);sys.exit(3)",
+                 "print('{}')", f"print({value!r});print({value!r})",
+                 "import sys;sys.stdout.write('x'*1000000);sys.stdout.flush()"]
+        for code in codes:
+            with self.subTest(code=code[:30]), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(qualifier.PhaseFailure) as caught:
+                    qualifier.run_phase([sys.executable, '-c', code], cwd=Path(directory),
+                        env=qualifier.clean_environment(), identity=identity, timeout=2, stream_limit=4096)
+                self.assertFalse(caught.exception.receipt['ok'])
+                self.assertLessEqual(caught.exception.receipt['stdout']['bytes'], 4096)
+
+    def test_phase_cleanup_fault_preserves_timeout_and_no_private_exception_text(self):
+        real_popen = subprocess.Popen
+        waits = []
+        owned = []
+        class FaultyWait:
+            def __init__(self, child): self.child = child
+            def __getattr__(self, name): return getattr(self.child, name)
+            def wait(self, *, timeout):
+                waits.append(timeout)
+                raise OSError(5, 'SYNTHETIC_PRIVATE_EXCEPTION')
+        def spawn(*args, **kwargs):
+            child = real_popen(*args, **kwargs); owned.append(child); return FaultyWait(child)
+        try:
+            with tempfile.TemporaryDirectory() as directory, mock.patch.object(qualifier.subprocess, 'Popen', side_effect=spawn):
+                with self.assertRaises(qualifier.PhaseFailure) as caught:
+                    qualifier.run_phase([sys.executable, '-c', 'import time;time.sleep(10)'], cwd=Path(directory),
+                        env=qualifier.clean_environment(), identity={'phase': 'probe'}, timeout=.05)
+                receipt = caught.exception.receipt
+                self.assertEqual(receipt['failure'], 'timeout')
+                self.assertFalse(receipt['direct_child_reaped'])
+                self.assertTrue(receipt['secondary_errors'])
+                self.assertNotIn('SYNTHETIC_PRIVATE_EXCEPTION', json.dumps(receipt))
+                self.assertLessEqual(len(waits), 2)
+                self.assertTrue(all(0 < timeout <= 3 for timeout in waits))
+        finally:
+            for child in owned:
+                if child.poll() is None: child.kill()
+                child.wait(timeout=3)
+
+    def test_phase_diagnostic_read_error_keeps_other_cleanup_and_unavailable_hash(self):
+        read = Path.read_bytes
+        seen = []
+        def fail_one(path):
+            seen.append(path.name)
+            if path.name == 'probe.stdout': raise OSError(5, 'SYNTHETIC_PRIVATE_EXCEPTION')
+            return read(path)
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(Path, 'read_bytes', fail_one):
+            with self.assertRaises(qualifier.PhaseFailure) as caught:
+                qualifier.run_phase([sys.executable, '-c', 'print("{}")'], cwd=Path(directory),
+                    env=qualifier.clean_environment(), identity={'phase': 'probe'}, timeout=2)
+            receipt = caught.exception.receipt
+            self.assertFalse(receipt['ok'])
+            self.assertIsNone(receipt['stdout']['sha256'])
+            self.assertIn('probe.stderr', seen)
+            self.assertTrue(receipt['direct_child_reaped'])
+            self.assertNotIn('SYNTHETIC_PRIVATE_EXCEPTION', json.dumps(receipt))
+
+    def test_export_failure_preserves_primary_phase_failure(self):
+        primary = qualifier.PhaseFailure({'ok': False, 'failure': 'timeout', 'secondary_errors': []})
+        with mock.patch.object(qualifier, 'export_evidence', side_effect=OSError(5, 'SYNTHETIC_PRIVATE_EXCEPTION')):
+            qualifier.finalize_export(Path('.'), Path('unused'), None, reservation=None, primary=primary, completed=None)
+        self.assertEqual(primary.receipt['failure'], 'timeout')
+        self.assertEqual(primary.receipt['secondary_errors'], [{'stage': 'evidence_export', 'errno': 5}])
+        self.assertNotIn('SYNTHETIC_PRIVATE_EXCEPTION', json.dumps(primary.receipt))
+
+    def test_failed_receipt_persistence_keeps_in_memory_failure_and_no_durable_claim(self):
+        identity = {'phase': 'probe'}
+        value = json.dumps(qualifier.phase_receipt(identity, {'ok': True}))
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(qualifier, 'write_json', side_effect=OSError(28, 'SYNTHETIC_PRIVATE_EXCEPTION')):
+            with self.assertRaises(qualifier.PhaseFailure) as caught:
+                qualifier.run_phase([sys.executable, '-c', f'print({value!r})'], cwd=Path(directory),
+                    env=qualifier.clean_environment(), identity=identity, timeout=2)
+            self.assertFalse(caught.exception.receipt['ok'])
+            self.assertFalse(caught.exception.receipt['receipt_persisted'])
+            self.assertIn({'stage': 'persist_receipt', 'errno': 28}, caught.exception.receipt['secondary_errors'])
+
+    def test_existing_export_destination_refuses_before_setup(self):
+        import argparse
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(qualifier, 'create_environment') as create:
+            with self.assertRaises(FileExistsError):
+                qualifier.qualify(argparse.Namespace(evidence_dir=Path(directory)))
+            create.assert_not_called()
+
+    def test_phase_success_is_exactly_one_json_and_has_private_diagnostics(self):
+        identity = {'phase': 'probe'}
+        value = json.dumps(qualifier.phase_receipt(identity, {'ok': True}))
+        with tempfile.TemporaryDirectory() as directory:
+            payload, receipt = qualifier.run_phase([sys.executable, '-c', f'print({value!r})'],
+                cwd=Path(directory), env=qualifier.clean_environment(), identity=identity, timeout=2)
+            self.assertEqual(payload, {'ok': True})
+            self.assertTrue(receipt['ok'])
+            self.assertTrue(receipt['direct_child_reaped'])
+
+    def test_progress_records_test_cleanup_completion_separately(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'progress.jsonl'
+            progress = qualifier.Progress(path, 'tests-0')
+            class Sample(unittest.TestCase):
+                def test_cleanup(self):
+                    self.addCleanup(lambda: progress.emit('cleanup-observed', test=self.id()))
+            result = qualifier.ProgressResult(io.StringIO(), True, 0, progress=progress)
+            unittest.TestSuite([Sample('test_cleanup')]).run(result)
+            rows = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual([row['event'] for row in rows], ['test-start', 'cleanup-observed', 'test-outcome', 'test-stop'])
+            self.assertEqual([row['sequence'] for row in rows], list(range(1, 5)))
+
+    def test_batch_accounting_rejects_omitted_duplicate_unknown_and_skip(self):
+        schedule = qualifier.make_schedule(['test_a.C.test_x', 'test_b.C.test_y'])
+        good = [{'test_ids': batch, 'outcomes': {i: 'passed' for i in batch},
+                 'skipped_platform_cases': []} for batch in schedule['batches']]
+        self.assertEqual(qualifier.validate_test_accounting(schedule, good, 'darwin')[0], 2)
+        for bad in (good[:1], good + [good[0]],
+                    [dict(good[0], test_ids=['test_unknown.C.test_z']), good[1]],
+                    [dict(good[0], skipped_platform_cases=[{'test': good[0]['test_ids'][0], 'reason': 'optional'}]), good[1]]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                qualifier.validate_test_accounting(schedule, bad, 'darwin')
+
+    def test_child_main_keeps_fixture_observations_out_of_terminal_stdout(self):
+        value = qualifier.phase_receipt({'phase': 'probe'}, {'ok': True})
+        def noisy_child(args):
+            print('synthetic observation')
+            return value
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(qualifier, 'child_phase', side_effect=noisy_child), redirect_stdout(stdout), redirect_stderr(stderr):
+            self.assertEqual(qualifier.main(['--child']), 0)
+        self.assertEqual(json.loads(stdout.getvalue()), value)
+        self.assertIn('synthetic observation', stderr.getvalue())
+
+    def test_every_installed_phase_refuses_checkout_package_reads(self):
+        import taskalong
+        source = Path(taskalong.__file__).resolve().parent.parent
+        tool = Path(qualifier.__file__).resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'diagnostics').mkdir()
+            for phase in ('inventory', 'sample', 'tests-0', 'tests-1'):
+                identity = {'phase': phase, 'artifact_sha256': 'a'*64, 'harness_sha256': 'b'*64,
+                            'lock_sha256': 'c'*64, 'schedule_sha256': None}
+                path = root / 'phase-input.json'
+                path.write_text(json.dumps({'identity': identity, 'schedule': None}))
+                result = subprocess.run([sys.executable, str(tool), '--child', '--source-root', str(source),
+                    '--phase-input', str(path)], cwd=root, env=qualifier.clean_environment(),
+                    capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 1, phase)
+                self.assertEqual(result.stdout, '', phase)
+                self.assertIn('installed qualification attempted source checkout access', result.stderr, phase)
+
+    def test_ci_bundle_refuses_other_run_artifact_or_modified_checkout(self):
+        tool = Path(qualifier.__file__).with_name('qualification_bundle.py')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = qualifier.clean_environment()
+            def git(*args):
+                return subprocess.check_output(['git', *args], cwd=root, env=env, stderr=subprocess.PIPE, text=True).strip()
+            git('init', '-b', 'main')
+            (root / 'public.txt').write_text('original')
+            git('add', 'public.txt')
+            git('-c', 'user.name=Synthetic Operator', '-c', 'user.email=synthetic@example.invalid', 'commit', '-m', 'Synthetic bundle')
+            env.update(GITHUB_SHA=git('rev-parse', 'HEAD'), GITHUB_RUN_ID='100', GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_NAME='pull_request')
+            dist = root / 'dist'
+            dist.mkdir()
+            wheel = dist / 'taskalong-0.1.0a1-py3-none-any.whl'
+            wheel.write_bytes(b'synthetic wheel bytes')
+            (dist / 'taskalong-0.1.0a1.tar.gz').write_bytes(b'synthetic sdist bytes')
+            profile = 'macos-15' if sys.platform == 'darwin' else 'ubuntu-24.04'
+            def bundle(operation, local=None):
+                return subprocess.run([sys.executable, str(tool), operation, '--os-profile', profile,
+                    '--python-profile', '.'.join(map(str, sys.version_info[:2]))], cwd=root, env=local or env,
+                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(bundle('write').returncode, 0)
+            self.assertEqual(bundle('verify').returncode, 0)
+            for field, changed in [('GITHUB_RUN_ID', '101'), ('GITHUB_RUN_ATTEMPT', '2'), ('GITHUB_SHA', '0'*40)]:
+                with self.subTest(field=field):
+                    self.assertNotEqual(bundle('verify', dict(env, **{field: changed})).returncode, 0)
+            wheel.write_bytes(b'changed artifact')
+            self.assertNotEqual(bundle('verify').returncode, 0)
+            wheel.write_bytes(b'synthetic wheel bytes')
+            (root / 'public.txt').write_text('changed source')
+            self.assertNotEqual(bundle('verify').returncode, 0)
+
     def test_fresh_environment_interpreter_and_pip_start(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "venv"

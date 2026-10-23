@@ -288,6 +288,7 @@
     "tests/test_workspaces.py",
     "tools/check_dist.py",
     "tools/normalize_sdist.py",
+    "tools/qualification_bundle.py",
     "tools/qualify_installed.py",
     "tools/sync_guides.py"
   ]

@@ -194,3 +194,4 @@ include tests/test_cursor_store.py
 include tests/fixtures/fake_cursor.py
 include tests/fixtures/legacy_store_v5.py
 include tests/fixtures/m6-contract-hashes.json
+include tools/qualification_bundle.py
