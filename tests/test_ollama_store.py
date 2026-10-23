@@ -60,14 +60,23 @@ class OllamaStoreFenceTests(unittest.TestCase):
     def test_new_task_cannot_be_persisted_before_the_fence(self):
         task = seal_versioned("task-spec", example_spec() | {"schema_version": "2.4", "execution": {
             "binding_digest": "a" * 64, "driver_config_digest": ollama_config().digest}}, version="2.4")
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory).resolve()
-            with Store(root/"state") as store:
-                with self.assertRaises(TaskAlongError) as early:
-                    store.create_run(task, "early")
-                self.assertEqual(early.exception.code, "store_upgrade_required")
-                self.assertEqual(store.db.execute("SELECT count(*) FROM runs").fetchone()[0], 0)
-                self.assertEqual(store.db.execute("SELECT count(*) FROM task_specs").fetchone()[0], 0)
+        for version in (1, 4):
+            with self.subTest(format_version=version), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                with Store(root/"state"):
+                    pass
+                if version > 1:
+                    with Store.maintenance(root/"state") as store:
+                        upgrade_to(store, root, version)
+                with Store(root/"state") as store:
+                    self.assertEqual(store.format_version, version)
+                    operations = [tuple(row) for row in store.db.execute("SELECT * FROM operations")]
+                    with self.assertRaises(TaskAlongError) as early:
+                        store.create_run(task, "early")
+                    self.assertEqual(early.exception.code, "store_upgrade_required")
+                    self.assertEqual(store.db.execute("SELECT count(*) FROM runs").fetchone()[0], 0)
+                    self.assertEqual(store.db.execute("SELECT count(*) FROM task_specs").fetchone()[0], 0)
+                    self.assertEqual([tuple(row) for row in store.db.execute("SELECT * FROM operations")], operations)
 
     def test_backed_up_history_requires_format5_and_actual_format4_client_refuses(self):
         config = ollama_config()
