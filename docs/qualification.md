@@ -11,6 +11,19 @@ execution; no macOS result qualifies them. Local checks do not qualify a differe
 hosted OS image. Every intended Python/platform cell needs its own exact-head CI
 receipt; matching Python versions alone do not establish platform equivalence.
 
+Maintenance exclusion uses a composed proof: actual byte-pinned predecessor
+compatibility and active-client refusal, plus fresh real SQLite subprocesses
+that bypass the advisory gate and receive numeric BUSY at the protected read
+and write-reservation operations. Only the witnesses use zero busy retry time;
+neither the predecessor nor production settings change. Unlocked controls and
+an advisory-only counterexample must expose missing kernel exclusion, and
+application rows/schema/identities/blob/control inventory must remain unchanged.
+The ten-second witness deadline is containment; timeout, wrong/missing evidence,
+unrelated errors or unconfirmed cleanup fail qualification. The historical
+default busy-handler constructor timeout remains unexplained. The replacement
+proves exclusion within the trusted local-filesystem scope, not legacy response
+latency, native scheduling behavior or hostile same-user isolation.
+
 ```sh
 python -m pip install --require-hashes -r requirements-dev.lock
 python -m build --no-isolation --sdist --wheel

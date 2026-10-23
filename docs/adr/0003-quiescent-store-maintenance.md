@@ -72,3 +72,18 @@ Tests exercise actual predecessor source, cross-process locks, committed WAL,
 complete manifests, symlink/tamper/missing data, ENOSPC fault injection, SIGKILL
 barriers, atomic migration rollback, immutable history and the upgraded synthetic
 lifecycle. Synthetic success establishes no real-provider runtime qualification.
+
+The exclusion oracle composes exact predecessor compatibility with separate
+real SQLite lock witnesses. The pinned predecessor opens before and after
+maintenance, and an already-open predecessor must prevent maintenance acquisition.
+While actual maintenance holds exclusive/delete ownership, fresh subprocesses
+bypass the advisory gate and must receive numeric SQLITE_BUSY at the protected
+read and write-reservation operations. Only those witnesses disable their own
+busy retry handler; production and predecessor settings are unchanged. Unlocked
+positive controls and an advisory-only counterexample establish sensitivity to
+missing kernel exclusion, with unchanged logical application state.
+Ten seconds is subprocess test containment, not a product refusal SLA. A timeout,
+missing result or unconfirmed reap still fails. The earlier default-handler
+constructor timeout remains unexplained; this changed proof does not qualify its
+latency or establish its native cause. Local-filesystem/trusted-operator limits
+remain unchanged.

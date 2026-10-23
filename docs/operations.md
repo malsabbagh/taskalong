@@ -163,6 +163,16 @@ an unverified PID. Unknown effect kinds, inconsistent records and uncertain
 cessation remain blocked. Only local filesystems and a trusted OS operator are
 supported. A new advisory file alone cannot fence older clients.
 
+Qualification checks exact predecessor opening before/after maintenance and
+refusal of maintenance while that predecessor is active. Separate real SQLite
+subprocesses, with only their own retry handlers disabled, must return numeric
+BUSY for protected reads and write reservations while maintenance retains its
+kernel lock. Unlocked controls and an advisory-only counterexample must succeed
+at those operations. These checks preserve logical state and require observed
+child completion/reaping. The ten-second probe bound is test containment, not a
+product refusal SLA; timeout remains failure. The historical default-handler
+constructor timeout is unresolved and its latency is not qualified by this proof.
+
 The trusted Python operator API performs the complete sequence:
 
 ```python

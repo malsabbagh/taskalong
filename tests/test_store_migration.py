@@ -30,6 +30,144 @@ def legacy_store():
     return module.Store
 
 
+LOCK_WITNESS = r'''
+import json,os,sqlite3,sys
+from pathlib import Path
+path,nonce,operation,expected,ready=sys.argv[1:];ready=int(ready)
+expected=json.loads(expected)
+result={'nonce':nonce,'phase':'setup','operation':operation,'outcome':'error',
+        'identity':None,'sqlite_version':sqlite3.sqlite_version,'error_code':None,
+        'base_code':None,'value':None,'connection_closed':False,'rollback_complete':False}
+connection=None
+try:
+    selected=Path(path).resolve(strict=True)
+    info=selected.stat();identity={'device':info.st_dev,'inode':info.st_ino}
+    result['identity']=identity
+    if identity!=expected:raise ValueError('identity')
+    connection=sqlite3.connect(selected.as_uri()+'?mode=rw',uri=True,timeout=0,isolation_level=None)
+    if connection.execute('PRAGMA busy_timeout=0').fetchone()[0]!=0:raise ValueError('timeout')
+    info=selected.stat()
+    if identity!={'device':info.st_dev,'inode':info.st_ino}:raise ValueError('identity')
+    os.write(ready,b'R');os.close(ready)
+    result['phase']='protected_operation'
+    try:
+        if operation=='read_version':version=connection.execute('PRAGMA user_version').fetchone()[0]
+        elif operation=='begin_write':connection.execute('BEGIN IMMEDIATE');version=None
+        else:raise ValueError('operation')
+    except sqlite3.OperationalError as exc:
+        code=getattr(exc,'sqlite_errorcode',None)
+        result['error_code']=code
+        if type(code) is int:
+            result['base_code']=code&255
+            if code&255==sqlite3.SQLITE_BUSY:result['outcome']='busy'
+    else:
+        result['phase']='identity_check'
+        if version is None:version=connection.execute('PRAGMA user_version').fetchone()[0]
+        identity_uuid=connection.execute("SELECT value FROM metadata WHERE key='store_uuid'").fetchone()[0]
+        result.update(phase='protected_operation',outcome='success',value={'format':version,'store_uuid':identity_uuid})
+except Exception:
+    result['outcome']='error'
+finally:
+    if connection is not None:
+        try:
+            if connection.in_transaction:connection.rollback()
+            result['rollback_complete']=not connection.in_transaction
+        except Exception:pass
+        try:connection.close();result['connection_closed']=True
+        except Exception:pass
+    print(json.dumps(result,separators=(',',':')),flush=True)
+'''
+
+
+def database_identity(state):
+    info=(state/'state.sqlite3').stat()
+    return {'device':info.st_dev,'inode':info.st_ino}
+
+
+def parse_lock_receipt(output, *, nonce, operation, identity, store_uuid):
+    def unique(pairs):
+        result={}
+        for key,value in pairs:
+            if key in result:raise ValueError('duplicate field')
+            result[key]=value
+        return result
+    if len(output.encode('utf-8'))>4096:raise ValueError('oversized receipt')
+    result=json.loads(output,object_pairs_hook=unique)
+    keys={'nonce','phase','operation','outcome','identity','sqlite_version','error_code',
+          'base_code','value','connection_closed','rollback_complete'}
+    if type(result) is not dict or set(result)!=keys:raise ValueError('receipt shape')
+    if result['nonce']!=nonce or result['operation']!=operation:raise ValueError('correlation')
+    if result['phase']!='protected_operation':raise ValueError('wrong phase')
+    if (type(result['identity']) is not dict or set(result['identity'])!={'device','inode'}
+            or any(type(v) is not int for v in result['identity'].values()) or result['identity']!=identity):
+        raise ValueError('wrong database')
+    if type(result['sqlite_version']) is not str or not 0<len(result['sqlite_version'])<=64:raise ValueError('sqlite identity')
+    if result['connection_closed'] is not True or result['rollback_complete'] is not True:raise ValueError('cleanup unconfirmed')
+    if result['outcome']=='success':
+        if result['error_code'] is not None or result['base_code'] is not None:raise ValueError('success with error')
+        value=result['value']
+        if (type(value) is not dict or set(value)!={'format','store_uuid'} or type(value['format']) is not int
+                or value!={'format':1,'store_uuid':store_uuid}):raise ValueError('wrong logical identity')
+    elif result['outcome']=='busy':
+        code=result['error_code']
+        if (type(code) is not int or code&255!=sqlite3.SQLITE_BUSY or
+                type(result['base_code']) is not int or result['base_code']!=code&255 or result['value'] is not None):
+            raise ValueError('not numeric BUSY')
+    else:raise ValueError('operation did not provide proof')
+    return result
+
+
+def require_lock_denial(receipt):
+    code=receipt['error_code']
+    if receipt['outcome']!='busy' or type(code) is not int or code&255!=sqlite3.SQLITE_BUSY:
+        raise AssertionError('The protected SQLite operation was not refused with numeric BUSY')
+
+
+def run_lock_witness(state, operation, store_uuid):
+    nonce=os.urandom(16).hex();identity=database_identity(state)
+    reader,writer=os.pipe()
+    child=None
+    try:
+        child=subprocess.Popen([sys.executable,'-c',LOCK_WITNESS,str(state/'state.sqlite3'),
+            nonce,operation,json.dumps(identity),str(writer)],close_fds=True,pass_fds=(writer,),
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        os.close(writer);writer=None
+        if not select.select([reader],[],[],15)[0] or os.read(reader,1)!=b'R':
+            raise AssertionError('SQLite witness did not complete setup readiness')
+        try:output,error=child.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.kill();child.communicate(timeout=5)
+            raise AssertionError('SQLite witness exceeded ten-second containment; no exclusion proof') from None
+        if child.returncode!=0 or child.poll() is None:raise AssertionError('SQLite witness exit/reap unconfirmed')
+        if error:raise AssertionError('SQLite witness emitted unexpected stderr')
+        if database_identity(state)!=identity:raise AssertionError('Database identity changed')
+        return parse_lock_receipt(output,nonce=nonce,operation=operation,identity=identity,store_uuid=store_uuid)
+    finally:
+        os.close(reader)
+        if writer is not None:os.close(writer)
+        if child is not None and child.poll() is None:
+            child.kill();child.communicate(timeout=5)
+
+
+def logical_fingerprint(store):
+    """Use the owning DB connection; never open a second parent DB descriptor."""
+    schema=[tuple(r) for r in store.db.execute('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name')]
+    tables={}
+    for name, in store.db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
+        quoted='"'+name.replace('"','""')+'"'
+        tables[name]=sorted((tuple(r) for r in store.db.execute('SELECT * FROM '+quoted)),key=repr)
+    files=[]
+    excluded={'state.sqlite3','state.sqlite3-wal','state.sqlite3-shm','state.sqlite3-journal','initialize.lock','maintenance.lock'}
+    for path in sorted(store.root.rglob('*')):
+        relative=path.relative_to(store.root).as_posix()
+        if relative in excluded:continue
+        if path.is_symlink():raise AssertionError('Unexpected fixture symlink')
+        mode=path.stat().st_mode&0o777
+        files.append((relative,mode,'directory' if path.is_dir() else hashlib.sha256(path.read_bytes()).hexdigest()))
+    return {'schema':schema,'tables':tables,'files':files,'version':store.db.execute('PRAGMA user_version').fetchone()[0],
+            'store_uuid':store.store_uuid}
+
+
 class StoreMigrationTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -42,6 +180,99 @@ class StoreMigrationTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_advisory_only_owner_cannot_fool_real_sqlite_exclusion_witnesses(self):
+        import fcntl
+        with Store(self.state) as store:before=logical_fingerprint(store)
+        observations=[]
+        descriptor=os.open(self.state/'maintenance.lock',os.O_RDWR)
+        try:
+            fcntl.flock(descriptor,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            for operation in ('read_version','begin_write'):
+                with self.subTest(operation=operation):
+                    receipt=run_lock_witness(self.state,operation,self.store_uuid)
+                    self.assertEqual(receipt['outcome'],'success')
+                    with self.assertRaises(AssertionError):require_lock_denial(receipt)
+                    observations.append({'denial_assertion_rejected':True,'receipt':receipt})
+        finally:os.close(descriptor)
+        with Store(self.state) as store:self.assertEqual(logical_fingerprint(store),before)
+        print(json.dumps({'kind':'maintenance_advisory_only_counterexample','observations':observations,
+                          'logical_state_unchanged':True}),file=sys.stderr,flush=True)
+
+    def test_real_sqlite_witnesses_refuse_reads_and_writes_only_while_maintenance_owns_state(self):
+        control=self.state/'.codex'
+        control.mkdir(mode=0o700)
+        (control/'AGENTS.md').write_bytes(b'Synthetic retained control data, never authority.')
+        (control/'AGENTS.md').chmod(0o600)
+        with Store(self.state) as store:before=logical_fingerprint(store)
+        observations=[]
+        for operation in ('read_version','begin_write'):
+            receipt=run_lock_witness(self.state,operation,self.store_uuid)
+            self.assertEqual(receipt['outcome'],'success')
+            observations.append({'owner_phase':'before','parent_observed_reaped':True,'receipt':receipt})
+        with Store.maintenance(self.state) as owner:
+            self.assertEqual(owner.db.execute('PRAGMA locking_mode').fetchone()[0],'exclusive')
+            self.assertEqual(owner.db.execute('PRAGMA journal_mode').fetchone()[0],'delete')
+            locked=logical_fingerprint(owner)
+            self.assertEqual(locked,before)
+            for operation in ('read_version','begin_write'):
+                with self.subTest(operation=operation):
+                    receipt=run_lock_witness(self.state,operation,self.store_uuid)
+                    require_lock_denial(receipt)
+                    self.assertEqual(receipt['base_code'],sqlite3.SQLITE_BUSY)
+                    self.assertEqual(logical_fingerprint(owner),locked)
+                    observations.append({'owner_phase':'owned','parent_observed_reaped':True,'receipt':receipt})
+        for operation in ('read_version','begin_write'):
+            receipt=run_lock_witness(self.state,operation,self.store_uuid)
+            self.assertEqual(receipt['outcome'],'success')
+            observations.append({'owner_phase':'after','parent_observed_reaped':True,'receipt':receipt})
+        with Store(self.state) as store:self.assertEqual(logical_fingerprint(store),before)
+        print(json.dumps({'kind':'maintenance_real_kernel_exclusion','observations':observations,
+                          'logical_state_unchanged':True,'owner_locking':'exclusive','owner_journal':'delete',
+                          'claim':'independent zero-wait witnesses; not legacy busy-handler latency'}),file=sys.stderr,flush=True)
+
+    def test_lock_witness_protocol_rejects_missing_wrong_or_unrelated_evidence(self):
+        from copy import deepcopy
+        nonce='a'*32;identity=database_identity(self.state)
+        valid={'nonce':nonce,'phase':'protected_operation','operation':'read_version','outcome':'busy',
+            'identity':identity,'sqlite_version':sqlite3.sqlite_version,'error_code':sqlite3.SQLITE_BUSY,
+            'base_code':sqlite3.SQLITE_BUSY,'value':None,'connection_closed':True,'rollback_complete':True}
+        def parse(output):
+            return parse_lock_receipt(output,nonce=nonce,operation='read_version',identity=identity,store_uuid=self.store_uuid)
+        require_lock_denial(parse(json.dumps(valid)))
+        extended=deepcopy(valid);extended['error_code']=sqlite3.SQLITE_BUSY|256
+        require_lock_denial(parse(json.dumps(extended)))
+        cases=[('',None),('nonobject',json.dumps([valid])),('duplicate/trailing',json.dumps(valid)+'\n'+json.dumps(valid)),
+               ('duplicate key',json.dumps(valid)[:-1]+',"nonce":"'+nonce+'"}'),('oversized',' '*4097)]
+        for field,value in [('nonce','b'*32),('phase','setup'),('operation','begin_write'),
+                ('identity',{'device':identity['device'],'inode':identity['inode']+1}),
+                ('identity',{'device':True,'inode':identity['inode']}),('error_code',None),
+                ('error_code',True),('error_code','5'),('error_code',5.0),('error_code',sqlite3.SQLITE_LOCKED),
+                ('error_code',sqlite3.SQLITE_READONLY),('error_code',sqlite3.SQLITE_CANTOPEN),
+                ('base_code',True),('outcome','error'),('connection_closed',False),('rollback_complete',False)]:
+            bad=deepcopy(valid);bad[field]=value;cases.append((field+':'+str(value),json.dumps(bad)))
+        bad=deepcopy(valid);del bad['nonce'];cases.append(('missing nonce',json.dumps(bad)))
+        bad=deepcopy(valid);del bad['error_code'];cases.append(('missing error code',json.dumps(bad)))
+        bad=deepcopy(valid);bad['extra']='unexpected';cases.append(('extra field',json.dumps(bad)))
+        for name,output in cases:
+            with self.subTest(case=name),self.assertRaises((ValueError,TypeError)):
+                parse('' if output is None else output)
+
+    def test_ready_witness_timeout_is_failure_and_owned_child_is_killed_and_reaped(self):
+        from unittest.mock import Mock
+        child=Mock();child.returncode=None
+        child.poll.side_effect=lambda:child.returncode
+        child.kill.side_effect=lambda:setattr(child,'returncode',-signal.SIGKILL)
+        child.communicate.side_effect=[subprocess.TimeoutExpired('synthetic-witness',10),('','')]
+        def start(*args,**kwargs):
+            os.write(kwargs['pass_fds'][0],b'R')
+            return child
+        with patch.object(subprocess,'Popen',side_effect=start):
+            with self.assertRaisesRegex(AssertionError,'no exclusion proof'):
+                run_lock_witness(self.state,'read_version',self.store_uuid)
+        child.kill.assert_called_once_with()
+        self.assertEqual([call.kwargs['timeout'] for call in child.communicate.call_args_list],[10,5])
+        self.assertEqual(child.returncode,-signal.SIGKILL)
 
     def test_current_client_lifetime_gate_refuses_maintenance(self):
         with Store(self.state):
@@ -618,63 +849,65 @@ maintenance.restore_backup(source,target,expected_digest=identity)
                 finally:
                     with Store(self.state) as store:store.db.execute("DELETE FROM effects")
 
-    def test_exact_predecessor_process_prevents_and_is_excluded_by_maintenance(self):
-        fixture = Path(__file__).parent / "fixtures/legacy_store_v1.py"
-        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(),"356f4286ed1113d6d528093c208adb641dcb0c0dc5a3c8e8072cf75da5eeca55")
-        program = r'''
-import faulthandler,importlib.util,os,signal,sqlite3,sys,time
+    def test_exact_predecessor_opens_before_after_and_prevents_maintenance_while_active(self):
+        fixture=Path(__file__).parent/'fixtures/legacy_store_v1.py'
+        self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                         '356f4286ed1113d6d528093c208adb641dcb0c0dc5a3c8e8072cf75da5eeca55')
+        # The pinned predecessor's first protected file read is PRAGMA user_version.
+        # This full-client proof complements the independent real lock witnesses;
+        # it makes no claim about its default busy-handler wall-time latency.
+        program=r'''
+import importlib.util,json,os,signal,sys
+from pathlib import Path
 spec=importlib.util.spec_from_file_location('taskalong._legacy_store_v1',sys.argv[1])
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-if len(sys.argv)>4:
-    time.sleep(float(sys.argv[4]));os.write(int(sys.argv[3]),b'P')
-    print('predecessor-probe python='+sys.version.split()[0]+' sqlite='+sqlite3.sqlite_version,file=sys.stderr,flush=True)
-    faulthandler.dump_traceback_later(8)
-try:
-    with module.Store(sys.argv[2]):
-        if len(sys.argv)==4:os.write(int(sys.argv[3]),b'R');signal.pause()
-except sqlite3.OperationalError as exc:
-    code=getattr(exc,'sqlite_errorcode',None)
-    print('predecessor-error code='+str(code)+' name='+str(getattr(exc,'sqlite_errorname',None)),file=sys.stderr,flush=True)
-    if type(code) is not int or code & 0xff != sqlite3.SQLITE_BUSY:raise
-    print('kernel-excluded',flush=True)
-finally:faulthandler.cancel_dump_traceback_later()
+with module.Store(sys.argv[2]) as store:
+    info=(Path(sys.argv[2])/'state.sqlite3').stat()
+    result={'nonce':sys.argv[3],'store_uuid':store.store_uuid,
+        'format':store.db.execute('PRAGMA user_version').fetchone()[0],
+        'identity':{'device':info.st_dev,'inode':info.st_ino}}
+    output=json.dumps(result,separators=(',',':'))
+    if len(sys.argv)==5:os.write(int(sys.argv[4]),output.encode());signal.pause()
+    else:print(output,flush=True)
 '''
-        reader,writer=os.pipe()
-        child=subprocess.Popen([sys.executable,"-c",program,str(fixture),str(self.state),str(writer)],pass_fds=(writer,),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        identity=database_identity(self.state)
+        def check(output,nonce):
+            self.assertLess(len(output),4096)
+            self.assertEqual(json.loads(output),{'nonce':nonce,'store_uuid':self.store_uuid,'format':1,'identity':identity})
+        def once():
+            nonce=os.urandom(16).hex()
+            result=subprocess.run([sys.executable,'-c',program,str(fixture),str(self.state),nonce],
+                close_fds=True,capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,0)
+            self.assertEqual(result.stderr,'')
+            check(result.stdout,nonce)
+        with Store(self.state) as store:before=logical_fingerprint(store)
+        once()
+        nonce=os.urandom(16).hex();reader,writer=os.pipe()
+        child=subprocess.Popen([sys.executable,'-c',program,str(fixture),str(self.state),nonce,str(writer)],
+            close_fds=True,pass_fds=(writer,),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         os.close(writer)
         try:
-            self.assertTrue(select.select([reader],[],[],10)[0])
-            self.assertEqual(os.read(reader,1),b"R")
+            self.assertTrue(select.select([reader],[],[],10)[0],'Exact predecessor did not open')
+            check(os.read(reader,4096).decode(),nonce)
+            self.assertIsNone(child.poll())
             with self.assertRaises(TaskAlongError) as failure:
                 with Store.maintenance(self.state):pass
-            self.assertEqual(failure.exception.code,"maintenance_exclusivity_unproven")
+            self.assertEqual(failure.exception.code,'maintenance_exclusivity_unproven')
+            self.assertIsNone(child.poll(),'A dead predecessor is not active-client refusal proof')
         finally:
             os.close(reader)
-            child.kill();child.communicate(timeout=5)
-        with Store.maintenance(self.state):
-            # Python startup is not SQLite exclusion. A delayed startup would
-            # exhaust the old combined ten-second deadline despite a correct
-            # five-second busy refusal. Keep the refusal deadline at ten seconds
-            # and require an independent bounded readiness handshake first.
-            reader,writer=os.pipe()
-            probe=subprocess.Popen([sys.executable,"-c",program,str(fixture),str(self.state),str(writer),"6"],
-                pass_fds=(writer,),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-            os.close(writer)
-            try:
-                self.assertTrue(select.select([reader],[],[],15)[0],"predecessor startup did not complete")
-                self.assertEqual(os.read(reader,1),b"P")
-                try:
-                    output,error=probe.communicate(timeout=10)
-                except subprocess.TimeoutExpired:
-                    probe.kill()
-                    output,error=probe.communicate(timeout=5)
-                    self.fail("Predecessor did not complete the exclusion probe within ten seconds after readiness: stdout=" + output[-1000:] + " stderr=" + error[-4000:])
-                self.assertEqual(probe.returncode,0,error[-1000:])
-                self.assertEqual(output.strip(),"kernel-excluded")
-            finally:
-                os.close(reader)
-                if probe.poll() is None:
-                    probe.kill();probe.communicate(timeout=5)
+            if child.poll() is None:child.kill()
+            child.communicate(timeout=5)
+        self.assertEqual(child.returncode,-signal.SIGKILL)
+        once()
+        with Store(self.state) as store:self.assertEqual(logical_fingerprint(store),before)
+        print(json.dumps({'kind':'maintenance_exact_predecessor_compatibility',
+            'fixture_sha256':hashlib.sha256(fixture.read_bytes()).hexdigest(),'format':1,
+            'store_uuid':self.store_uuid,'identity':identity,'opened_before':True,'opened_after':True,
+            'active_client_refusal':'maintenance_exclusivity_unproven','active_during_refusal':True,
+            'parent_observed_reaped':True,'logical_state_unchanged':True,
+            'legacy_contended_constructor_latency_qualified':False}),file=sys.stderr,flush=True)
 
 
 class UpgradedStoreJourneyTests(ServiceFixture, unittest.TestCase):
