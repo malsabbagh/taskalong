@@ -601,19 +601,39 @@ maintenance.restore_backup(source,target,expected_digest=identity)
             self.assertEqual(store.setting("later-change"),{"must_remain":True})
             self.assertEqual(store.format_version,1)
 
+    def test_malformed_effect_response_refuses_maintenance_with_typed_integrity_error(self):
+        for response in ("wrong-shape", 42, True, [], ["unexpected"]):
+            with self.subTest(response=response):
+                with Store(self.state) as store:
+                    document={"effect_id":"effect", "run_id":self.run["run_id"], "kind":"executor.start", "phase":"observed", "response":response}
+                    store.db.execute("INSERT INTO effects VALUES(?,?,?,?,?,?,?)",("effect",self.run["run_id"],"once","executor.start","a"*64,"observed",json.dumps(document)))
+                try:
+                    with self.assertRaises(TaskAlongError) as failure:
+                        with Store.maintenance(self.state):pass
+                    self.assertEqual(failure.exception.code,"store_integrity")
+                    with Store(self.state) as store:
+                        self.assertEqual(store.format_version,1)
+                        self.assertEqual(store.db.execute("SELECT document FROM effects").fetchone()[0],json.dumps(document))
+                        self.assertEqual(store.db.execute("SELECT count(*) FROM operations WHERE command='maintenance.upgrade'").fetchone()[0],0)
+                finally:
+                    with Store(self.state) as store:store.db.execute("DELETE FROM effects")
+
     def test_exact_predecessor_process_prevents_and_is_excluded_by_maintenance(self):
         fixture = Path(__file__).parent / "fixtures/legacy_store_v1.py"
         self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(),"356f4286ed1113d6d528093c208adb641dcb0c0dc5a3c8e8072cf75da5eeca55")
         program = r'''
-import importlib.util,os,signal,sqlite3,sys,time
+import faulthandler,importlib.util,os,signal,sqlite3,sys,time
 spec=importlib.util.spec_from_file_location('taskalong._legacy_store_v1',sys.argv[1])
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 if len(sys.argv)>4:
     time.sleep(float(sys.argv[4]));os.write(int(sys.argv[3]),b'P')
+    print('predecessor-probe python='+sys.version.split()[0]+' sqlite='+sqlite3.sqlite_version,file=sys.stderr,flush=True)
+    faulthandler.dump_traceback_later(8)
 try:
     with module.Store(sys.argv[2]):
         if len(sys.argv)==4:os.write(int(sys.argv[3]),b'R');signal.pause()
-except sqlite3.OperationalError:print('kernel-excluded')
+except sqlite3.OperationalError:print('kernel-excluded',flush=True)
+finally:faulthandler.cancel_dump_traceback_later()
 '''
         reader,writer=os.pipe()
         child=subprocess.Popen([sys.executable,"-c",program,str(fixture),str(self.state),str(writer)],pass_fds=(writer,),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
@@ -639,7 +659,12 @@ except sqlite3.OperationalError:print('kernel-excluded')
             try:
                 self.assertTrue(select.select([reader],[],[],15)[0],"predecessor startup did not complete")
                 self.assertEqual(os.read(reader,1),b"P")
-                output,error=probe.communicate(timeout=10)
+                try:
+                    output,error=probe.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    probe.kill()
+                    output,error=probe.communicate(timeout=5)
+                    self.fail("Predecessor did not complete the exclusion probe within ten seconds after readiness: stdout=" + output[-1000:] + " stderr=" + error[-4000:])
                 self.assertEqual(probe.returncode,0,error[-1000:])
                 self.assertEqual(output.strip(),"kernel-excluded")
             finally:

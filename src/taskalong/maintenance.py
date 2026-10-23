@@ -520,6 +520,9 @@ def require_quiescent(store):
         blocked |= row["phase"] != "observed" or effect.get("phase") != "observed"
         blocked |= row["kind"] not in known_effects or any(effect.get(key) != row[key] for key in ("effect_id","run_id","kind"))
         if effect.get("kind") in {"executor.start", "verifier.capture"}:
-            blocked |= (effect.get("response") or {}).get("termination_confirmed") is not True
+            response = effect.get("response")
+            if response is not None and type(response) is not dict:
+                raise _failure("store_integrity", "An invocation effect has malformed retained response metadata; preserve it for reconciliation.")
+            blocked |= response is None or response.get("termination_confirmed") is not True
     if blocked:
         raise TaskAlongError("maintenance_not_quiescent", "Active or uncertain invocations/effects require reconciliation before maintenance.", exit_code=5, effect_outcome="uncertain")
