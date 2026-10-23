@@ -42,4 +42,3 @@ def represent(binding, installation, provider, policies, profile, registration):
     if b["budget"]["max_cost_micro_usd"] is not None or b["budget"]["max_tokens"] is not None:
         _refuse("hard_budget_unsupported")
     return check, verifier
-
