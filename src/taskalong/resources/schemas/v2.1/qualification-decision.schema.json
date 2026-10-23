@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.1:qualification-decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "subject",
+    "mode",
+    "minimum_evidence_level",
+    "evaluated_at",
+    "trust_policy_digest",
+    "verified_receipt_digests",
+    "rejected_receipts",
+    "capability_results",
+    "requirements_satisfied",
+    "production_dispatch_allowed",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "qualification_decision"
+    },
+    "schema_version": {
+      "const": "2.1"
+    },
+    "subject": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/subject"
+    },
+    "mode": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/mode"
+    },
+    "minimum_evidence_level": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/level"
+    },
+    "evaluated_at": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/timestamp"
+    },
+    "trust_policy_digest": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/sha256"
+    },
+    "verified_receipt_digests": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/sha256"
+      },
+      "maxItems": 64,
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "rejected_receipts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "input_index",
+          "reason_code"
+        ],
+        "properties": {
+          "input_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 63
+          },
+          "reason_code": {
+            "enum": [
+              "evidence_verified",
+              "no_evidence",
+              "receipt_invalid",
+              "subject_mismatch",
+              "mode_mismatch",
+              "receipt_not_current",
+              "producer_untrusted",
+              "evidence_level_untrusted",
+              "evidence_level_insufficient",
+              "approval_missing",
+              "approval_revoked",
+              "approval_not_current",
+              "receipt_revoked",
+              "evidence_missing",
+              "evidence_mismatch",
+              "evidence_invalid",
+              "evidence_subject_mismatch",
+              "evidence_outcome_mismatch",
+              "observed_unsupported",
+              "observed_unknown",
+              "hard_cap_unsupported",
+              "evidence_revoked"
+            ]
+          }
+        }
+      },
+      "maxItems": 64,
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "capability_results": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/capability-result"
+      },
+      "maxItems": 9,
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "requirements_satisfied": {
+      "type": "boolean"
+    },
+    "production_dispatch_allowed": {
+      "const": false
+    },
+    "digest": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/sha256"
+    }
+  }
+}

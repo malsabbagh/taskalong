@@ -115,3 +115,17 @@ include src/taskalong/resources/schemas/v2/provider-profile.schema.json
 include tests/fixtures/v1-canonical.json
 include tests/fixtures/v1-schema-hashes.json
 include tests/test_bindings.py
+include docs/adr/0002-offline-qualification.md
+include src/taskalong/qualification.py
+include src/taskalong/resources/examples/v2.1/binding-fixture.json
+include src/taskalong/resources/examples/v2.1/capability-report.json
+include src/taskalong/resources/examples/v2.1/capture.txt
+include src/taskalong/resources/examples/v2.1/evidence-observation.json
+include src/taskalong/resources/examples/v2.1/qualification-decision.json
+include src/taskalong/resources/examples/v2.1/qualification-receipt.json
+include src/taskalong/resources/examples/v2.1/trust-policy.json
+include src/taskalong/resources/schemas/v2.1/capability-report.schema.json
+include src/taskalong/resources/schemas/v2.1/qualification-decision.schema.json
+include src/taskalong/resources/schemas/v2.1/qualification-receipt.schema.json
+include tests/fixtures/m1-contract-hashes.json
+include tests/test_qualification.py

@@ -1,0 +1,23 @@
+{
+  "budget": {
+    "hard_cost_cap_required": false,
+    "hard_token_cap_required": false,
+    "max_attempts": 1,
+    "max_cost_micro_usd": null,
+    "max_tokens": null,
+    "wall_seconds": 120
+  },
+  "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+  "digest": "206b65a2e8e2cd6f9e255543c6b98d135262eb94d7be6c3622d5c472e41d1599",
+  "installation_digest": "e2b80840ca92c6b96f92f641bae9054d8dd9e876dc73569e45218ac52c2bee8e",
+  "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+  "kind": "execution_binding",
+  "native_resume": null,
+  "provider_profile_digest": "0cc62bc2806aca44452099d04ec45d8ae50c7ef76a2079c04bcbbdd4210115a0",
+  "required_capabilities": [
+    "start"
+  ],
+  "schema_version": "2.0",
+  "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+  "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+}

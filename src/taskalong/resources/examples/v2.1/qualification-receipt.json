@@ -1,0 +1,53 @@
+{
+  "receipt_id": "fixture-receipt",
+  "producer_id": "fixture-qa",
+  "subject": {
+    "installation_digest": "e2b80840ca92c6b96f92f641bae9054d8dd9e876dc73569e45218ac52c2bee8e",
+    "provider_profile_digest": "0cc62bc2806aca44452099d04ec45d8ae50c7ef76a2079c04bcbbdd4210115a0",
+    "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+    "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+    "binding_digest": "206b65a2e8e2cd6f9e255543c6b98d135262eb94d7be6c3622d5c472e41d1599",
+    "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "backend_id": "fixture-only",
+    "provider": "ollama-local",
+    "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "native_resume_compatibility_digest": null,
+    "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "test_inputs_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "session_digest": null,
+    "prior_invocation_digest": null
+  },
+  "mode": "start",
+  "evidence_level": "offline_fixture",
+  "valid_from": "2026-01-01T00:00:00Z",
+  "valid_until": "2027-01-01T00:00:00Z",
+  "results": [
+    {
+      "capability": "start",
+      "outcome": "supported",
+      "evidence_refs": [
+        {
+          "sha256": "19cac8c61fb25007c0d8908d730712673c7f7c2b1ff9c199fb22b2cef038fb83",
+          "size_bytes": 1760,
+          "media_type": "application/json",
+          "classification": "public"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": null,
+    "output_tokens": null,
+    "cost_micro_usd": null
+  },
+  "limitations": [
+    "Synthetic fixture; no provider proof."
+  ],
+  "kind": "qualification_receipt",
+  "schema_version": "2.1",
+  "digest": "4a5061eba1f8e8e5b7461bb5946db7cf6998812c28164df1428233b1be813eee"
+}
