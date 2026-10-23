@@ -1,4 +1,4 @@
-name: SQLite exclusion diagnostic (not qualification)
+name: SQLite native wait diagnostic (not qualification)
 on:
   push:
     branches: [diagnostic/sqlite-exclusion-91042f1]
@@ -42,6 +42,6 @@ jobs:
           PY
           "$RUNNER_TEMP/sqlite-diagnostic-venv/bin/python" -m pip --isolated install --require-hashes -r candidate/requirements-dev.lock
           "$RUNNER_TEMP/sqlite-diagnostic-venv/bin/python" -m pip --isolated install --no-deps candidate/dist/*.whl
-      - name: Run exactly three predetermined trials
+      - name: Run control and one sampled complete probe
         run: |
           "$RUNNER_TEMP/sqlite-diagnostic-venv/bin/python" diagnostic/.github/diagnostics/sqlite_exclusion.py --source candidate --work "$RUNNER_TEMP/sqlite-diagnostic-work" --wheel candidate/dist/taskalong-0.1.0a1-py3-none-any.whl

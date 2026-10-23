@@ -1,6 +1,5 @@
 """One bounded diagnostic campaign, never a replacement qualification gate."""
 import argparse
-import ast
 import hashlib
 import io
 import json
@@ -9,6 +8,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -34,6 +35,52 @@ def diagnostic_profile(frame,event,arg):
       'frame':os.path.basename(frame.f_code.co_filename),'monotonic':time.monotonic(),
       'cpu':time.process_time()}),file=sys.stderr,flush=True)
 '''
+
+
+def bounded_collect(process, timeout):
+    """The caller alone owns drain/reap. No exception text leaves this seam."""
+    result={'status':'completed','cleanup_confirmed':False}
+    out=err=b''
+    try:
+        try:out,err=process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            result['status']='tool_timeout'
+            process.kill()
+            try:out,err=process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:result['status']='cleanup_drain_timeout'
+    except OSError as exc:result.update(status='tool_io_error',errno=exc.errno)
+    except Exception:result['status']='tool_diagnostic_error'
+    finally:
+        try:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+            result['cleanup_confirmed']=process.poll() is not None
+        except subprocess.TimeoutExpired:result['cleanup_status']='wait_timeout'
+        except OSError as exc:result.update(cleanup_status='io_error',cleanup_errno=exc.errno)
+        except Exception:result['cleanup_status']='diagnostic_error'
+        for stream in (process.stdout,process.stderr):
+            if stream is not None:
+                try:stream.close()
+                except OSError as exc:result.update(pipe_close_errno=exc.errno)
+                except Exception:result['pipe_close_status']='diagnostic_error'
+    result['exit']=process.returncode
+    return result,out or b'',err or b''
+
+
+def check_sample_tool(path,popen):
+    result={'available':path.is_file() and os.access(path,os.X_OK),'supported_invocation':False}
+    if not result['available']:return result
+    try:
+        process=popen([str(path),'-h'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        state,out,err=bounded_collect(process,5)
+        result.update(state)
+        if state['status']=='completed' and state['cleanup_confirmed']:
+            text=(out+err).decode('utf-8','replace')
+            result['supported_invocation']=all(n in text for n in ('samplingInterval','-mayDie','-file'))
+    except OSError as exc:result.update(status='help_unavailable',errno=exc.errno)
+    except Exception:result['status']='help_diagnostic_error'
+    return result
 
 
 def main():
@@ -68,18 +115,6 @@ def main():
     def event(phase,**fields):
         print(safe(json.dumps({'phase':phase,'monotonic':time.monotonic(),**fields})),flush=True)
     original_method=tests.StoreMigrationTests.test_exact_predecessor_process_prevents_and_is_excluded_by_maintenance
-    parsed=ast.parse(Path(tests.__file__).read_text())
-    klass=next(n for n in parsed.body if isinstance(n,ast.ClassDef) and n.name=='StoreMigrationTests')
-    method=next(n for n in klass.body if isinstance(n,ast.FunctionDef) and n.name==original_method.__name__)
-    tree=ast.Module(body=[method],type_ignores=[])
-    # Preserve the original setup/pin/program and exact second-direction block.
-    block=next(n for n in method.body if isinstance(n,ast.With))
-    assert len(method.body[:3])==3 and isinstance(method.body[2],ast.Assign)
-    method.body=method.body[:3]+[block]
-    method.name='diagnostic_maintenance_first'
-    namespace={}
-    exec(compile(ast.fix_missing_locations(tree),str(Path(tests.__file__)),'exec'),tests.__dict__,namespace)
-    setattr(tests.StoreMigrationTests,method.name,namespace[method.name])
     original_popen=subprocess.Popen
     original_exclusive=tests.Store._exclusive_database
     class TracedPopen(original_popen):
@@ -115,22 +150,146 @@ def main():
         event('exclusive_acquired',locking=owner.db.execute('PRAGMA locking_mode').fetchone()[0],
               journal=owner.db.execute('PRAGMA journal_mode').fetchone()[0])
         return result
+    sample_path=Path('/usr/bin/sample')
+    sample_check=check_sample_tool(sample_path,original_popen)
+    event('native_tool_check',**sample_check)
+    native_records=[]
+    native_sessions=[]
+    class NativeSample:
+        def __init__(self,child):
+            self.child=child
+            self.cancelled=threading.Event()
+            self.process=None
+            self.record={'scheduled':time.monotonic(),'delay_seconds':4,'duration_seconds':2,'interval_ms':10}
+            self.path=self.timer=None
+            native_sessions.append(self)
+            try:
+                descriptor,name=tempfile.mkstemp(prefix='sqlite-owned-native-',suffix='.txt')
+                os.close(descriptor)
+                self.path=Path(name)
+                self.timer=threading.Timer(4,self.capture)
+                self.timer.daemon=True
+                self.timer.start()
+            except OSError as exc:
+                self.timer=None
+                self.record.update(status='sampler_setup_error',errno=exc.errno,cleanup_confirmed=True)
+            except Exception:
+                self.timer=None
+                self.record.update(status='sampler_setup_error',cleanup_confirmed=True)
+        def capture(self):
+            try:
+                if self.cancelled.is_set() or self.child.poll() is not None:
+                    self.record.update(status='target_exited_or_cancelled',cleanup_confirmed=True);return
+                self.record['launch']=time.monotonic()
+                self.process=original_popen([str(sample_path),str(self.child.pid),'2','10','-mayDie','-file',str(self.path)],
+                    stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                if self.cancelled.is_set():self.process.kill()
+                state,out,err=bounded_collect(self.process,5)
+                self.record.update(state)
+                self.record.update(finish=time.monotonic(),
+                    tool_output_sha256=hashlib.sha256(out+err).hexdigest())
+                tool_text=(out+err).decode('utf-8','replace').lower()
+                self.record['tool_error_tokens']=[token for token in (
+                    'operation not permitted','permission denied','task_for_pid',
+                    'could not examine','cannot examine','no such process','invalid argument',
+                    'not supported') if token in tool_text]
+                if state['status']=='completed':
+                    self.record['status']='captured' if self.process.returncode==0 else 'attach_failed'
+            except OSError as exc:
+                self.record.update(status='launch_failed',errno=exc.errno,finish=time.monotonic(),cleanup_confirmed=self.process is None)
+                if self.process is not None:
+                    state,_,_=bounded_collect(self.process,2);self.record.update(state)
+            except Exception:
+                self.record.update(status='sampler_diagnostic_error',cleanup_confirmed=self.process is None)
+                if self.process is not None:
+                    state,_,_=bounded_collect(self.process,2);self.record.update(state)
+        def finish(self):
+            try:return self._finish()
+            except Exception:
+                # Finalization is diagnostic: never replace an original test failure.
+                self.cancelled.set()
+                try:
+                    if self.process is not None:self.process.kill()
+                    if self.timer is not None:
+                        self.timer.cancel();self.timer.join(timeout=2)
+                except Exception:pass
+                return {'status':'sampler_finalization_error','cleanup_confirmed':False,
+                        'raw_report_uploaded':False}
+        def _finish(self):
+            self.cancelled.set()
+            if self.timer is not None:
+                self.timer.cancel();self.timer.join(timeout=8)
+                if self.timer.is_alive():
+                    # Only request cancellation: capture retains sole pipe/reap ownership.
+                    if self.process is not None:
+                        try:self.process.kill()
+                        except OSError:pass
+                    self.timer.join(timeout=2)
+                    if self.timer.is_alive():
+                        return {'status':'sampler_cleanup_incomplete','cleanup_confirmed':False,
+                                'raw_report_uploaded':False}
+            self.record.setdefault('status','cancelled_before_launch')
+            if self.path is None:return dict(self.record)
+            try:
+                with self.path.open('rb') as stream:data=stream.read(4*1024*1024+1)
+            except OSError as exc:return {**self.record,'status':'report_unavailable','report_errno':exc.errno}
+            if len(data)>4*1024*1024:
+                self.record['report']='over_bound';return self.record
+            self.record['raw_report_sha256']=hashlib.sha256(data).hexdigest()
+            # Raw samples include paths/command lines: never print or upload them.
+            # The allowlist deliberately omits unknown symbols and metadata.
+            functions={'sqlite3_prepare_v2','sqlite3_step','sqlite3LockAndPrepare','sqlite3Prepare',
+                'sqlite3BtreeBeginTrans','sqlite3PagerSharedLock','sqlite3OsSleep','sqlite3_sleep',
+                'sqliteDefaultBusyCallback','sqlite3InvokeBusyHandler','unixSleep','unixLock',
+                'unixFileControl','fcntl','__fcntl','usleep','nanosleep','__semwait_signal',
+                'pthread_mutex_lock','__psynch_mutexwait','__psynch_cvwait'}
+            modules={'Python','libsqlite3.dylib','libsqlite3.0.dylib','libsystem_c.dylib',
+                'libsystem_kernel.dylib','libsystem_pthread.dylib','_sqlite3.cpython-313-darwin.so'}
+            selected=[]
+            for line in data.decode('utf-8','replace').splitlines():
+                match=re.fullmatch(r'[ |+!:]*([0-9]+)\s+([A-Za-z_][A-Za-z_0-9]*) \(in ([A-Za-z_0-9.\-]+)\).*',line)
+                if match and match[2] in functions and match[3] in modules:
+                    selected.append({'count':int(match[1]),'function':match[2],'module':match[3]})
+            self.record['allowlisted_frames']=selected[:32]
+            self.record['raw_report_uploaded']=False
+            self.record['raw_report_retained_after_runner']=False
+            self.record['observer_effects']='Tool briefly suspends/resumes target; no timing subtraction.'
+            return self.record
+    original_communicate=TracedPopen.communicate
+    def sampled_communicate(child,*a,**kw):
+        if child.probe and not hasattr(child,'native_sample'):
+            # Called only after the unchanged readiness assertion. Do not delay
+            # or replace original communicate(timeout=10) with sampler work.
+            child.native_sample=NativeSample(child)
+        return original_communicate(child,*a,**kw)
+    TracedPopen.communicate=sampled_communicate
     trials=[]
     for kind,name in [('unchanged-control',original_method.__name__),
-                      ('instrumented-full',original_method.__name__),
-                      ('instrumented-maintenance-first',method.name)]:
+                      ('instrumented-full-native',original_method.__name__)]:
+        if kind!='unchanged-control' and not sample_check['supported_invocation']:
+            event('sampling_stopped',reason='tool_unavailable_or_unsupported')
+            trials.append({'trial':kind,'passed':False,'tests':0,'status':'not_run'});break
         event('trial_entry',trial=kind)
         output=io.StringIO()
         runner=unittest.TextTestRunner(stream=output,verbosity=2)
         suite=unittest.TestSuite([tests.StoreMigrationTests(name)])
         if kind=='unchanged-control':result=runner.run(suite)
         else:
-            with patch.object(tests.subprocess,'Popen',TracedPopen),patch.object(tests.Store,'_exclusive_database',exclusive):
-                result=runner.run(suite)
+            try:
+                with patch.object(tests.subprocess,'Popen',TracedPopen),patch.object(tests.Store,'_exclusive_database',exclusive):
+                    result=runner.run(suite)
+            finally:
+                # Even a failed original child kill/reap must finalize the sampler.
+                for session in native_sessions:
+                    report=session.finish();native_records.append(report)
+                    event('native_sample',**report)
         event('trial_result',trial=kind,passed=result.wasSuccessful(),report=output.getvalue())
         trials.append({'trial':kind,'passed':result.wasSuccessful(),'tests':result.testsRun})
     event('diagnostic_summary',source_head=HEAD,wheel_sha256=hashlib.sha256(wheel.read_bytes()).hexdigest(),
           predecessor_sha256=PIN,source_import=False,package_files_verified=len(payloads),trials=trials,
+          native_samples=native_records,native_evidence_usable=len(native_records)==1 and
+              native_records[0].get('status')=='captured' and native_records[0].get('cleanup_confirmed') is True
+              and bool(native_records[0].get('allowlisted_frames')),
           qualification=False,failed_PR_gate_resolved=False)
     return 0 if all(row['passed'] for row in trials) else 1
 
