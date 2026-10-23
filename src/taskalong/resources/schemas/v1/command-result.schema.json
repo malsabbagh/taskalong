@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v1:command-result",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "command_result"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.-]*:[A-Za-z0-9_.-]+$"
+      }
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+    },
+    "operation_key": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "disposition": {
+      "enum": [
+        "observed",
+        "accepted",
+        "rejected",
+        "unsupported",
+        "unknown",
+        "pending",
+        "blocked",
+        "completed",
+        "conflict",
+        "failed"
+      ]
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "run_revision": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "state": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "data": {
+      "type": "object",
+      "maxProperties": 128
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1024
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "effect_outcome": {
+            "enum": [
+              "not_sent",
+              "known",
+              "uncertain"
+            ]
+          },
+          "recovery": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "maxProperties": 128
+            },
+            "minItems": 0,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "effect_outcome",
+          "recovery"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 128
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 2048
+      },
+      "minItems": 0,
+      "maxItems": 128
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "maxProperties": 128
+      },
+      "minItems": 0,
+      "maxItems": 128
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "extensions",
+    "command",
+    "operation_key",
+    "ok",
+    "disposition",
+    "run_id",
+    "run_revision",
+    "state",
+    "data",
+    "errors",
+    "warnings",
+    "next_actions"
+  ],
+  "additionalProperties": false
+}

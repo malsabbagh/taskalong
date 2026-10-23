@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v1:effect-intent",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "effect_intent"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.-]*:[A-Za-z0-9_.-]+$"
+      }
+    },
+    "effect_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "effect_kind": {
+      "enum": [
+        "workspace",
+        "start",
+        "resume",
+        "commit_candidate",
+        "push_branch",
+        "create_draft_pr"
+      ]
+    },
+    "operation_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+    },
+    "request_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "phase": {
+      "enum": [
+        "prepared",
+        "dispatched",
+        "observed",
+        "unknown",
+        "not_sent"
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "maxProperties": 128
+    },
+    "authority_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "minItems": 0,
+      "maxItems": 128,
+      "uniqueItems": true
+    },
+    "response": {
+      "anyOf": [
+        {
+          "type": "object",
+          "maxProperties": 128
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "qualification": {
+      "enum": [
+        "production",
+        "synthetic"
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "extensions",
+    "effect_id",
+    "run_id",
+    "effect_kind",
+    "operation_key",
+    "request_digest",
+    "phase",
+    "subject",
+    "authority_ids",
+    "response",
+    "qualification"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,16 @@
+# Local Python development and build output
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Local secrets and runtime state (not a substitute for a privacy review)
+.env
+.env.*
+!.env.example
+.taskalong/
+
+# Operating system metadata
+.DS_Store

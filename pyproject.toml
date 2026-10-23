@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77,<85"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taskalong"
+version = "0.1.0a1"
+description = "Experimental local development-task foundation; live execution disabled"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.15"
+dependencies = ["jsonschema>=4.26,<5"]
+
+[project.optional-dependencies]
+review = ["review-sensei==0.8.8"]
+
+[project.scripts]
+taskalong = "taskalong.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+packages = ["taskalong", "taskalong.executors", "taskalong.integrations", "taskalong.resources"]
+
+[tool.setuptools.package-data]
+"taskalong.resources" = ["docs/guides.json", "schemas/v1/acceptance.schema.json", "schemas/v1/authority.schema.json", "schemas/v1/command-result.schema.json", "schemas/v1/effect-intent.schema.json", "schemas/v1/evidence.schema.json", "schemas/v1/execution-observation.schema.json", "schemas/v1/run-event.schema.json", "schemas/v1/runtime-profile.schema.json", "schemas/v1/task-run.schema.json", "schemas/v1/task-spec.schema.json", "schemas/v1/worker-packet.schema.json", "schemas/v1/worker-result.schema.json", "templates/worker.txt", "templates/draft-pr.md", "sql/001-initial.sql"]

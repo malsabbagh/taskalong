@@ -1,0 +1,80 @@
+name: Core qualification
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installed-core:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        python: ['3.11', '3.12', '3.13', '3.14']
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONNOUSERSITE: '1'
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install locked build and test dependencies
+        run: python -m pip --isolated install --require-hashes -r requirements-dev.lock
+      - name: Build candidate artifacts
+        run: |
+          python -m build --no-isolation --sdist --wheel
+          python tools/normalize_sdist.py dist/*.tar.gz
+      - name: Audit exact distribution contents
+        id: audit
+        run: python tools/check_dist.py --dist-dir dist > distribution-audit.json
+      - name: Install ordinary wheel for public boundary tests
+        run: python -m pip --isolated install --no-deps dist/*.whl
+      - name: Install checksum-pinned released reviewer for fixture tests
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'tools')
+          from qualify_installed import acquire_review
+          acquire_review(None, Path(os.environ['RUNNER_TEMP']) / 'review_sensei-0.8.8-py3-none-any.whl')
+          PY
+          python -m pip --isolated install --no-deps "$RUNNER_TEMP/review_sensei-0.8.8-py3-none-any.whl"
+      - name: Run behavior, process, store, and boundary tests
+        run: python -m unittest discover -s tests -v
+      - name: Check documentation and whitespace
+        run: |
+          python scripts/check_docs.py
+          git diff --check
+      - name: Qualify installed wheel and sdist with synthetic boundaries
+        run: |
+          python tools/qualify_installed.py --dist-dir dist --artifact wheel --mode fixture --review-wheel "$RUNNER_TEMP/review_sensei-0.8.8-py3-none-any.whl" > installed-wheel.json
+          python tools/qualify_installed.py --dist-dir dist --artifact sdist --mode fixture --review-wheel "$RUNNER_TEMP/review_sensei-0.8.8-py3-none-any.whl" > installed-sdist.json
+          python tools/qualify_installed.py --dist-dir dist --artifact wheel --mode fixture --core-only > installed-core-only.json
+      - name: Retain artifact and qualification receipts
+        if: ${{ always() && steps.audit.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: taskalong-${{ matrix.os }}-py${{ matrix.python }}-${{ github.sha }}
+          path: |
+            dist/
+            distribution-audit.json
+            installed-wheel.json
+            installed-sdist.json
+            installed-core-only.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,611 @@
+{
+  "format_version": 1,
+  "lineage_record": "maintained_privately_outside_this_snapshot",
+  "source_import_allowlist": [],
+  "adaptations": [],
+  "project_license": "MIT",
+  "copyright_holder": "Mohamad Alsabbagh",
+  "rights_status": "owner_selected_MIT_and_supplied_copyright_notice",
+  "files": [
+    {
+      "destination_path": ".github/workflows/ci.yml",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": ".gitignore",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "CONTRIBUTING.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "LICENSE",
+      "classification": "standard_license_text",
+      "license": "MIT",
+      "verification": "owner_selected_notice_and_exact_artifact_hash"
+    },
+    {
+      "destination_path": "MANIFEST.in",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "PROVENANCE.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "README.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "SECURITY.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "THIRD_PARTY.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "distribution-inventory.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/architecture.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/claude-protocol.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/contracts.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/fixture-walkthrough.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/operations.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/provenance.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/qualification.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "pyproject.toml",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "requirements-dev.lock",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "scripts/check_docs.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/__init__.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/__main__.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/_linux_lifetime.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/_supervisor.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/api.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/cli.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/command_sandbox.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/contracts.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/errors.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/evidence.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/__init__.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/base.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/claude_protocol.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/codex_cli.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/registry.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/integrations/__init__.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/integrations/github.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/integrations/reviewsensei.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/paths.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/process.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/__init__.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/docs/guides.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/acceptance.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/authority.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/command-result.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/effect-intent.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/evidence.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/execution-observation.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/run-event.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/runtime-profile.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/task-run.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/task-spec.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/worker-packet.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v1/worker-result.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/sql/001-initial.sql",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/templates/draft-pr.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/templates/worker.txt",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/store.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/validation.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/workflow.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/workspace.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/codex_events/truncated.jsonl",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/codex_events/unknown.jsonl",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/fake_codex.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/fake_gh.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/reviewsensei/approved.yml",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/reviewsensei/clean.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/tiny_project/calc.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/tiny_project/test_calc.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/helpers.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_acceptance.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_authority.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_cancel_resume.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_claude_protocol.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_cli.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_codex_cli.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_contracts.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_crash_recovery.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_distribution.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_evidence.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_executor_registry.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_idempotency.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_installed_lifecycle.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_linux_lifetime.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_privacy.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_publish.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_publish_recovery.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_recovery_regressions.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_resources.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_reviewsensei_contract.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_runs.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_runtime_policy.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_scope.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_store.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_supervisor.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_workspaces.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tools/check_dist.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tools/normalize_sdist.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tools/qualify_installed.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tools/sync_guides.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    }
+  ]
+}
