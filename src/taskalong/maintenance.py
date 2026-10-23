@@ -34,7 +34,25 @@ def _path(value):
     for component in (path, *path.parents):
         if component.is_symlink() and component not in (Path("/tmp"), Path("/var")):
             raise _failure("unsafe_state_path", "Maintenance paths cannot traverse symbolic links.")
-    return path
+    # Only OS-controlled aliases survive the component checks above. Normalize
+    # them before containment checks; otherwise /var and its canonical spelling
+    # can describe the same control directory with different lexical parents.
+    return path.resolve(strict=False)
+
+
+def _overlap(first, second):
+    first, second = _path(first), _path(second)
+    if first == second or first in second.parents or second in first.parents:
+        return True
+    # Existing directory identity also catches case aliases on filesystems that
+    # preserve spelling while comparing names without case sensitivity.
+    try:
+        for root, other in ((first,second),(second,first)):
+            if root.exists() and any(parent.exists() and root.samefile(parent) for parent in (other,*other.parents)):
+                return True
+    except OSError as exc:
+        raise _failure("maintenance_path_unproven", "Directory separation cannot be proved; preserve the selected paths.") from exc
+    return False
 
 
 def _relative(value):
@@ -181,7 +199,7 @@ def _read_db(path):
 def create_backup(store, destination):
     require_quiescent(store)
     target = _path(destination)
-    if target == store.root or store.root in target.parents:
+    if _overlap(store.root, target):
         raise _failure("backup_target", "Complete backups must be outside the source control directory.")
     try:
         target.mkdir(mode=0o700)
@@ -307,6 +325,8 @@ def restore_backup(directory, destination, *, expected_digest):
     source, target = _path(directory), _path(destination)
     if target.exists():
         raise _failure("restore_exists", "Restore requires a fresh directory; never overwrite a store or later effects.")
+    if _overlap(source, target):
+        raise _failure("restore_target", "A restore must be separate from its complete backup.")
     try:
         stage = Path(tempfile.mkdtemp(prefix="." + target.name + "-restore-", dir=target.parent))
         with initialization_guard(stage):
@@ -411,7 +431,7 @@ def upgrade(store, *, operation_key, backup_dir, restore_dir):
     key_check(operation_key)
     backup, restored = _path(backup_dir), _path(restore_dir)
     targets = (store.root, backup, restored)
-    if any(a == b or a in b.parents or b in a.parents for i,a in enumerate(targets) for b in targets[i+1:]):
+    if any(_overlap(a,b) for i,a in enumerate(targets) for b in targets[i+1:]):
         raise _failure("maintenance_target", "Source, backup and restore must be separate non-overlapping directories.")
     request = {"store_uuid":store.store_uuid, "from_version":1, "to_version":2,
                "backup_target_digest":digest({"path":str(backup)}), "restore_target_digest":digest({"path":str(restored)})}

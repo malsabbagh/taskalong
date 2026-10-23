@@ -36,6 +36,9 @@ Upgrade writes an idempotent operation intent before creating its backup. The
 intent binds store identity, target format and backup/restore path identities;
 the backup includes the intent and the final receipt names the resulting backup
 digest. This avoids recursive hashes. A changed operation request conflicts.
+Selected paths reject user symlinks before normalizing trusted OS aliases.
+Containment checks also compare existing directory identities so case aliases
+cannot hide a nested target; restore checks separation from its backup again.
 Before DDL, the complete backup must still match the exclusively owned source,
 and a fresh-directory restore must pass independent integrity/row comparisons.
 Restore uses a private sibling staging directory. Before copying any payload, a

@@ -180,7 +180,9 @@ with Store.maintenance(state_path) as maintenance:
 
 The durable intent binds the operation key to store identity, target version and
 both target paths. A complete control backup and verified fresh restore precede
-DDL. Original application-table rows/digests, blob references, retained captures,
+DDL. OS aliases and case variations cannot make an existing control directory
+count as a separate backup or restore destination. Original application-table
+rows/digests, blob references, retained captures,
 instruction files and required control metadata are included privately. SQLite's
 backup captures committed WAL data; copying only state.sqlite3 is insufficient.
 SQLite WAL/SHM/rollback journals and empty coordination lock files are omitted

@@ -53,6 +53,68 @@ class StoreMigrationTests(unittest.TestCase):
                 Store(self.state)
             self.assertEqual(failure.exception.code, "maintenance_busy")
 
+    def test_system_alias_and_directory_identity_cannot_hide_overlapping_targets(self):
+        from taskalong.maintenance import restore_backup
+        aliases = [(alias,alias.resolve()) for alias in (Path("/var"),Path("/tmp"))
+                   if alias.is_symlink() and self.root.is_relative_to(alias.resolve())]
+        if not aliases:self.skipTest("No trusted OS directory alias contains this fixture root")
+        alias,canonical = aliases[0]
+        for operation in ("backup","upgrade"):
+            state = self.root / ("alias-"+operation)
+            with Store(state):pass
+            nested = state/"nested"
+            selected = alias/nested.relative_to(canonical)
+            with self.subTest(operation=operation):
+                with Store.maintenance(state) as store:
+                    with self.assertRaises(TaskAlongError) as failure:
+                        if operation == "backup":store.backup(selected,complete=True)
+                        else:store.upgrade(operation_key="alias-refused",backup_dir=self.root/"outside",restore_dir=selected)
+                    self.assertEqual(failure.exception.code,"backup_target" if operation=="backup" else "maintenance_target")
+                    self.assertEqual(store.format_version,1)
+                    self.assertEqual(store.db.execute("SELECT count(*) FROM operations").fetchone()[0],0)
+                self.assertFalse(nested.exists())
+        case_source = self.root/"CaseSource"
+        with Store(case_source):pass
+        alternate = case_source.with_name(case_source.name.swapcase())
+        if alternate.exists() and alternate.samefile(case_source):
+            with Store.maintenance(case_source) as store:
+                with self.assertRaises(TaskAlongError) as failure:store.backup(alternate/"nested",complete=True)
+                self.assertEqual(failure.exception.code,"backup_target")
+                self.assertFalse((case_source/"nested").exists())
+        backup = self.root/"valid-backup"
+        with Store.maintenance(self.state) as store:manifest=store.backup(backup,complete=True)
+        with self.assertRaises(TaskAlongError) as failure:
+            restore_backup(backup,alias/(backup/"nested").relative_to(canonical),expected_digest=manifest["digest"])
+        self.assertEqual(failure.exception.code,"restore_target")
+        self.assertFalse((backup/"nested").exists())
+
+    def test_selected_and_captured_directory_symlinks_stay_rejected(self):
+        from taskalong.maintenance import restore_backup
+        selected = self.root/"operator-link"
+        selected.symlink_to(self.state,target_is_directory=True)
+        backup = self.root/"valid-backup"
+        with Store.maintenance(self.state) as store:
+            manifest=store.backup(backup,complete=True)
+            with self.assertRaises(TaskAlongError) as failure:store.backup(selected/"nested",complete=True)
+            self.assertEqual(failure.exception.code,"unsafe_state_path")
+        with self.assertRaises(TaskAlongError) as failure:
+            restore_backup(backup,selected/"nested",expected_digest=manifest["digest"])
+        self.assertEqual(failure.exception.code,"unsafe_state_path")
+        self.assertFalse((self.state/"nested").exists())
+        outside=self.root/"external-control"
+        outside.mkdir(mode=0o700)
+        payload=outside/"private-capture"
+        payload.write_bytes(b"synthetic external control")
+        payload.chmod(0o600)
+        (self.state/"redirect").symlink_to(outside,target_is_directory=True)
+        partial=self.root/"refused-copy"
+        with Store.maintenance(self.state) as store:
+            with self.assertRaises(TaskAlongError) as failure:store.backup(partial,complete=True)
+            self.assertEqual(failure.exception.code,"unsafe_state_path")
+        self.assertTrue(partial.exists())
+        self.assertFalse((partial/"redirect/private-capture").exists())
+        self.assertEqual(payload.read_bytes(),b"synthetic external control")
+
     def test_predecessor_ignores_gate_but_kernel_refuses_exclusivity(self):
         with legacy_store()(self.state):
             with self.assertRaises(TaskAlongError) as failure:
