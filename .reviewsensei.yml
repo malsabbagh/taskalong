@@ -5,30 +5,31 @@ schema: 1
 # Backend and model used for review.
 inference:
   # local-ollama, cloud-ollama, openrouter, or openai-compatible
-  backend: local-ollama
+  backend: cloud-ollama
   # Model slug for the selected backend
-  model: qwen3.5:4b
+  model: deepseek-v4.1-flash:cloud
 
 # GitHub publication and conversation policy.
 github:
+  publication_inventory: complete
   # Review eligible pull requests automatically
   automatic_reviews: true
   # Publish the validated result to GitHub
-  writes: false
+  writes: true
   # auto-approve (request changes or approve), blocking, or advisory
   reviews: auto-approve
-  # Reply to authorized @reviewsensei (or @sensei) mentions
+  # Reply to authorized @sensei mentions
   mentions: true
   # disabled, proposals, or pull-requests
   learning: disabled
   # none or diagnostics
   artifacts: none
-  # enabled uses the shared operation entry. disabled keeps the previous paths.
-  # The measured P1 profile does not fit 60 ordinary dispatches (#267).
-  operation_entry: enabled
 
 # Optional limits and endpoint overrides.
 advanced:
+  review_work:
+    # Use complete evidence batches for full review and human reassessment.
+    mode: unified
   endpoint:
     # Required to send requests to a custom API root
     allow_custom_endpoint: false
@@ -45,11 +46,8 @@ advanced:
   egress:
     # Permit non-loopback provider traffic
     allow_data_egress: false
-  large_changes:
-    # Split a large diff into bounded review slices
-    orchestrate: false
   resources:
     # Provider request timeout in seconds
     timeout_seconds: 900
     # Maximum provider calls for one review
-    max_provider_calls: 8
+    max_provider_calls: 16
