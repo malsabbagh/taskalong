@@ -13,7 +13,7 @@ from .bindings import ExecutionBinding, HarnessInstallation, ProviderProfile
 from .contracts import RuntimeProfile
 from .errors import TaskAlongError
 from .execution import CheckBinding, InstructionBundle, PolicyResolver, SandboxPolicy, ToolPolicy
-from .executors.config import DriverConfig, OllamaDriverConfig, read_driver_config
+from .executors.config import CursorDriverConfig, DriverConfig, OllamaDriverConfig, read_driver_config
 from .qualification import EvidenceStore, QualificationReceipt, TrustPolicy, evaluate
 from .store import encode, now
 from .validation import canonical_bytes, digest, loads, screen_sensitive
@@ -29,7 +29,7 @@ def _refuse(code="execution_projection_unsupported"):
 
 
 def _require(store):
-    if store.format_version not in (3, 4, 5):
+    if store.format_version not in (3, 4, 5, 6):
         _refuse("store_upgrade_required")
 
 
@@ -59,7 +59,7 @@ def configure_execution(store, *, binding, installation, provider, policies,
         _refuse("execution_registration_conflict")
     profile = read_driver_config(driver_config) if is_driver else exact_document(store, runtime_profile_digest, RuntimeProfile)
     version = profile.to_dict()["schema_version"] if is_driver else "2.2"
-    if is_driver and store.format_version < (5 if version == "2.4" else 4):
+    if is_driver and store.format_version < {"2.3": 4, "2.4": 5, "2.5": 6}[version]:
         _refuse("store_upgrade_required")
     if not is_driver and projection != PROJECTION:
         _refuse()
@@ -138,15 +138,15 @@ def registered_profile(store, binding_digest):
 
 
 def registered_driver_config(store, binding_digest):
-    if store.format_version not in (4, 5):
+    if store.format_version not in (4, 5, 6):
         _refuse("store_upgrade_required")
     registration = _registration(store, binding_digest)
     version = registration.get("schema_version")
-    if version not in ("2.3", "2.4") or "driver_config_digest" not in registration:
+    if version not in ("2.3", "2.4", "2.5") or "driver_config_digest" not in registration:
         _refuse()
-    if version == "2.4" and store.format_version < 5:
+    if store.format_version < {"2.3": 4, "2.4": 5, "2.5": 6}[version]:
         _refuse("store_upgrade_required")
-    reader = OllamaDriverConfig if version == "2.4" else DriverConfig
+    reader = {"2.3": DriverConfig, "2.4": OllamaDriverConfig, "2.5": CursorDriverConfig}[version]
     config = exact_document(store, registration["driver_config_digest"], reader).to_dict()
     from .executors.registry import contract_for
     contract_for(config, task_version=version, projection=registration["projection"])
@@ -158,7 +158,7 @@ def worker_contract(store, spec, configuration):
     from .executors.registry import contract_for
     if spec["schema_version"] == "1.0":
         return contract_for(configuration), None
-    getter = registered_driver_config if spec["schema_version"] in {"2.3", "2.4"} else registered_profile
+    getter = registered_driver_config if spec["schema_version"] in {"2.3", "2.4", "2.5"} else registered_profile
     retained, registration = getter(store, spec["execution"]["binding_digest"])
     if retained != configuration:
         _refuse("execution_identity_mismatch")
@@ -169,7 +169,7 @@ def worker_contract(store, spec, configuration):
 
 def resolve(store, spec, *, mode="start", authority_id=None):
     """Resolve current trusted facts; caller owns the transaction/fence boundary."""
-    is_driver = spec["schema_version"] in {"2.3", "2.4"}
+    is_driver = spec["schema_version"] in {"2.3", "2.4", "2.5"}
     getter = registered_driver_config if is_driver else registered_profile
     profile, registration = getter(store, spec["execution"]["binding_digest"])
     if is_driver and spec["execution"]["driver_config_digest"] != profile["digest"]:

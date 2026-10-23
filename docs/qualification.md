@@ -41,6 +41,56 @@ actual released fixture backend; this is not live model review. Synthetic
 lost-response publication must reconcile one fixture create. Missing required
 review blocks acceptance. These checks produce no runtime authority.
 
+Each wheel or rebuilt-sdist journey uses one frozen artifact, harness and lock
+snapshot in one fresh environment. A separate inventory child discovers the
+copied installed tests. The fixed schedule sorts modules, assigns alternating
+modules to two batches, and keeps each module intact; it never uses prior test
+outcomes or timings to select cases. One sample journey and both batches must
+succeed. Their disjoint executed-ID union must equal the discovered inventory,
+including shared subclasses, with exactly the platform-specific skip cases and
+reasons. Missing, duplicate or unexpected tests, skips, or terminal receipts fail.
+Ordinary full discovery remains unpartitioned in its original order.
+
+Every child repeats checkout/build-root read and import denial, checks installed
+identity and package nonmutation, and binds its terminal receipt to the artifact,
+harness, lock, schedule and phase. Phase and test start/outcome/stop records are
+flushed durably; test stop follows cleanup. Use `--evidence-dir NEW_DIRECTORY` to
+retain the allowlisted progress, inventories and parent receipts. Raw streams
+and failed synthetic state stay outside the public export. Stdout contains one
+terminal JSON document. Failure preserves bounded stream prefixes, their hashes,
+truncation flags and the direct-child exit/reap observation; it does not prove
+detached descendants ceased. A timeout, pipe uncertainty or nonzero/malformed
+terminal result stops the campaign and remains a failure.
+Closed phase payloads are validated before aggregation. The copied harness and
+lock manifest are rechecked before and after each phase, including the sample's
+fixture aliases. Evidence export excludes arbitrary JSON files and private
+fields. Cleanup, diagnostic-read or export errors retain the first failure and
+separate closed error codes; unavailable hashes and unconfirmed reaping stay
+explicit. A receipt-write failure cannot claim durable persistence. The new
+export destination is reserved before setup begins.
+
+Inventory has a 60-second ceiling; the sample and each of the two predetermined
+behavior batches have a 600-second ceiling. The whole artifact qualification has
+a 1,500-second budget across setup and phases, with at most nine seconds of owned
+child finalization outside an execution deadline. Finalization permits only
+termination, reaping and evidence retention. These are finite harness bounds;
+product, individual test, SQLite, cancellation and process deadlines are
+unchanged. The earlier combined-child 600-second timeout remains incomplete
+qualification with its precise inner position unknown. Partitioning does not
+establish its cause or repair a product defect.
+
+Hosted qualification has eight producer jobs and eight installed jobs per
+automatic push/PR event, each with its existing 30-minute job ceiling. Producers
+build/audit artifacts and run the ordinary suite and documentation checks.
+Installed jobs start only after producer success and download the immutable
+matching OS/Python bundle from that same run and attempt. The bundle binds event,
+commit/tree, logical producer job/profile, all tracked source hashes and exact
+wheel/sdist hashes; consumers verify those identities before fresh wheel, rebuilt
+sdist and core-only qualification. Retained workflow metadata supplies numeric
+job/artifact IDs for acceptance. A failed/skipped dependent lane is unqualified;
+all sixteen jobs in both events require actual success. No runner, billing,
+permission, credential or repository-rule change follows from this split.
+
 The existing Codex CLI target is 0.163.0. Prior controlled-responder probes did
 not establish complete descendant cessation or effective instruction/tool
 isolation. Resume must not follow an unconfirmed lifetime. The current Darwin
@@ -113,3 +163,18 @@ maintenance must preserve complete prior state and exclude the byte-pinned M5
 client. Source and installed artifact results qualify only their recorded head,
 platform and synthetic mode; they do not enable production or real credentials.
 External-server cessation and real token/cost accounting remain unsupported.
+
+## Cursor fixture qualification scope
+
+M7 adds the explicit 2.5 `cursor-print-fixture/1` projection. Original fixtures
+exercise strict whole-object terminal output, fresh observed sessions, exact
+model/config/provider bindings, private stream association, owned cancellation
+and independent acceptance through the shared lifecycle. Captures are consistency
+evidence; they do not establish vendor execution or current authority.
+
+No real Cursor start/edit/model route, account access, project instruction/tool/
+hook/MCP isolation, native resume or complete vendor lifetime is qualified. The
+fixture permits only balanced scoped Edit events and no nonempty stderr. It
+performs no provider request and proves no remote cancellation or cost. Unknown
+usage stays unknown; production and hard cost/token caps refuse. See the
+[protocol boundary](cursor-protocol.md) and [2.5 contracts](contracts.md#cursor-fixture-contracts-v25).

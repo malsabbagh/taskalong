@@ -11,6 +11,7 @@ from functools import partial
 from ..errors import TaskAlongError
 from .base import HarnessDriver
 from .codex_cli import CodexCLI
+from .cursor_cli import CursorCLI, compile_packet as compile_cursor_packet, represent as represent_cursor
 from .claude_code import ClaudeCode, OLLAMA_FIXTURE, compile_packet as compile_claude_packet, represent as represent_claude
 from .codex_projection import represent as represent_codex
 from ..validation import seal
@@ -42,6 +43,12 @@ def _ollama_driver(configuration, provider):
     return ClaudeCode(configuration, provider=provider, contract=OLLAMA_FIXTURE)
 
 
+def _cursor_driver(configuration, provider):
+    if provider is None:
+        raise TaskAlongError("execution_document_unresolved", "An exact provider document is required.", exit_code=3)
+    return CursorCLI(configuration, provider=provider)
+
+
 _CODEX = DriverContract(lambda configuration, provider: CodexCLI(configuration), _codex_packet, represent_codex)
 _CONTRACTS = MappingProxyType({
     ("1.0", "codex-v1", "runtime_profile", "1.0"): _CODEX,
@@ -49,6 +56,8 @@ _CONTRACTS = MappingProxyType({
     ("2.3", "claude-print-fixture/1", "driver_config", "2.3"): DriverContract(_claude_driver, compile_claude_packet, represent_claude),
     ("2.4", "claude-ollama-fixture/1", "driver_config", "2.4"): DriverContract(_ollama_driver,
         partial(compile_claude_packet, contract=OLLAMA_FIXTURE), partial(represent_claude, contract=OLLAMA_FIXTURE)),
+    ("2.5", "cursor-print-fixture/1", "driver_config", "2.5"): DriverContract(
+        _cursor_driver, compile_cursor_packet, represent_cursor),
 })
 
 

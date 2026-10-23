@@ -139,10 +139,10 @@ class Store:
         self.db.execute("PRAGMA busy_timeout=5000")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        if version not in (0, 1, 2, 3, 4, 5) or (version == 0 and tables):
+        if version not in (0, 1, 2, 3, 4, 5, 6) or (version == 0 and tables):
             self.db.close()
             raise TaskAlongError("unsupported_store_version", "Store format is unknown; preserve it and use a compatible runtime.", exit_code=70)
-        if version in (1, 2, 3, 4, 5):
+        if version in (1, 2, 3, 4, 5, 6):
             try:
                 current_metadata = dict(self.db.execute("SELECT key,value FROM metadata"))
                 if current_metadata.get("format_version") != str(version):
@@ -154,7 +154,7 @@ class Store:
             if current_metadata.get("application") != "taskalong":
                 self.db.close()
                 raise TaskAlongError("unsupported_store_application", "This is not a tagged TaskAlong store; preserve it and use its owning application.", exit_code=70)
-            if version in (2, 3, 4, 5):
+            if version in (2, 3, 4, 5, 6):
                 self.store_uuid = str(uuid.UUID(current_metadata["store_uuid"]))
                 from .maintenance import validate_history_schema
                 validate_history_schema(self)
@@ -301,6 +301,8 @@ class Store:
             raise TaskAlongError("store_upgrade_required", "Driver execution requires the explicit format-4 maintenance upgrade.", exit_code=3)
         if document.get("schema_version") == "2.4" and self.format_version < 5:
             raise TaskAlongError("store_upgrade_required", "Ollama fixture execution requires the explicit format-5 maintenance upgrade.", exit_code=3)
+        if document.get("schema_version") == "2.5" and self.format_version < 6:
+            raise TaskAlongError("store_upgrade_required", "Cursor fixture execution requires the explicit format-6 maintenance upgrade.", exit_code=3)
         return read_task_spec(document).to_dict()
 
     def events(self, run_id: str, after_seq: int = 0, limit: int = 1000):
@@ -334,6 +336,8 @@ class Store:
             raise TaskAlongError("store_upgrade_required", "Driver execution requires the explicit format-4 maintenance upgrade.", exit_code=3)
         if spec.get("schema_version") == "2.4" and self.format_version < 5:
             raise TaskAlongError("store_upgrade_required", "Ollama fixture execution requires the explicit format-5 maintenance upgrade.", exit_code=3)
+        if spec.get("schema_version") == "2.5" and self.format_version < 6:
+            raise TaskAlongError("store_upgrade_required", "Cursor fixture execution requires the explicit format-6 maintenance upgrade.", exit_code=3)
         key_check(operation_key)
         request_digest = digest(spec)
         with self.transaction() as db:

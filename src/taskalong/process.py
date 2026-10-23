@@ -356,6 +356,7 @@ def run_bounded(
     heartbeat: Callable[[], None] | None = None,
     on_spawn: Callable[[ProcessReceipt], None] | None = None,
     on_stdout_line: Callable[[bytes], None] | None = None,
+    _capture_private_output: Callable[[bytes, bytes], None] | None = None,
     secrets: Sequence[str | bytes] = (), max_line_bytes: int = 1024 * 1024,
     signal_grace_seconds: float = 0.5,
 ) -> ProcessResult:
@@ -597,10 +598,25 @@ def run_bounded(
         confirmed = group_confirmed and not unaccounted
         exit_code = (tracker.root_exit_code if isinstance(tracker, _LinuxTracker)
                      else process.returncode if gate_release_attempted else None)
-        result = ProcessResult(exit_code, redact(bytes(buffers["stdout"]), secrets),
-                               redact(bytes(buffers["stderr"]), secrets), timed_out, cancelled,
+        # Only trusted in-process drivers can retain these bounded originals.
+        # Default ProcessResult/to_dict callers still receive redacted output.
+        raw_stdout, raw_stderr = bytes(buffers["stdout"]), bytes(buffers["stderr"])
+        capture_error = None
+        if _capture_private_output is not None:
+            try:
+                _capture_private_output(raw_stdout, raw_stderr)
+            except Exception as exc:
+                capture_error = exc
+        result = ProcessResult(exit_code, redact(raw_stdout, secrets),
+                               redact(raw_stderr, secrets), timed_out, cancelled,
                                confirmed, group_confirmed, output_limited, receipt, int((time.monotonic()-started)*1000), total,
                                tracker.backend, unaccounted, protocol_error)
+        if capture_error is not None:
+            # Do not disguise a missing capture as the earlier closed-gate
+            # cancellation path. Preserve real lifetime facts in safe output.
+            raise ProcessBoundaryError("private output capture callback failed", code="process_capture_failed",
+                effect_outcome="uncertain" if gate_release_attempted else "not_sent",
+                process_result=result) from None
         if callback_error:
             raise ProcessBoundaryError("process boundary callback failed",
                 code=getattr(callback_error, "code", "process_callback_failed"),

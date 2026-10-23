@@ -4,6 +4,34 @@ The original provisional contracts use schema version `1.0`; the package/API ver
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).
 
+## Cursor fixture contracts v2.5
+
+Five additive resources describe `driver-config`, `task-spec`, `worker-packet`,
+`packet-projection` and `worker-result` for `cursor-print-fixture/1`.
+`CursorDriverConfig` and `CursorTaskSpec` are explicit readers; earlier resources
+retain their exact bytes and meanings. Provider/binding/installation stay 2.0,
+qualification stays 2.1 and policy/read-only views stay 2.2. Executable history
+requires explicit format 6 maintenance. No implicit upgrade occurs at submission.
+
+Unlike 2.3/2.4, the 2.5 packet requests `session_policy: fresh` and contains no
+native session ID. Its unchanged canonical/wire bytes carry the core correlation
+IDs. The original fixture allocates a distinct session, observed in the first
+stream event. Worker-result 2.5 has no worker-supplied session. The core separately
+checks the untouched complete worker result, observed session/model and exact
+bounded private stdout/stderr captures against the frozen packet/config/provider.
+An association binds them to the fenced finish operation and checkpoint. Result,
+verification, acceptance and completion-dependent recovery/publication repeat
+read-only validation; status flags alone cannot establish a completed handoff.
+
+The fixed synthetic account profile declares `https://api2.cursor.sh`, a fixture
+account reference and exact synthetic model identity. No account, network or
+credential lookup occurs. A model display report is compared with its fixture
+expectation; it does not attest real model weights or routing. Strict whole-object
+terminal JSON and a closed balanced Edit subset are described in the
+[Cursor protocol](cursor-protocol.md). Native continuation, arbitrary tools,
+real editing/permission isolation, hard cost/token caps and production refuse.
+Unknown usage stays unknown. See the [Cursor ADR](adr/0007-cursor-fixture-driver.md).
+
 ## Ollama fixture contracts v2.4
 
 The additive `driver-config`, `task-spec`, `worker-packet` and `packet-projection`

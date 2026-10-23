@@ -16,7 +16,7 @@ ReviewSensei results govern acceptance; worker output cannot grant authority.
   verification and fixture publication journeys.
 - Installed read-only guides: `taskalong guide`, `taskalong guide operations`,
   `taskalong guide contracts` and `taskalong guide qualification`.
-- Explicit Codex and Claude synthetic driver projections sharing one supervisor,
+- Explicit Codex, Claude and Cursor synthetic driver projections sharing one supervisor,
   with offline wire decoders and contract tests. Separate local/direct-cloud
   Ollama profiles run through the same Claude fixture driver. Real CLI execution
   and provider routing are unqualified.
