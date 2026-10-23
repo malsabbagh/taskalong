@@ -8,7 +8,7 @@ import shutil
 from .errors import TaskAlongError
 from .paths import default_state_dir
 from .store import Store, identifier
-from .validation import canonical_bytes
+from .validation import canonical_bytes, digest, seal_versioned, validate, validate_versioned
 from .workflow import Workflow
 
 
@@ -38,6 +38,11 @@ class RunService:
     def register_profile(self, profile):
         return self._workflow.register_profile(profile)
 
+    def configure_execution(self, **configuration):
+        """Trusted operator fixture registration; task/worker JSON cannot call it."""
+        from .admission import configure_execution
+        return configure_execution(self._store, **configuration)
+
     def configure_review(self, config_path, *, fixture_response=None, executable=None, python_executable=None):
         return self._workflow.configure_review(config_path, fixture_response=fixture_response, executable=executable, python_executable=python_executable)
 
@@ -58,6 +63,80 @@ class RunService:
 
     def inspect(self, run_id):
         return self._store.run(run_id)
+
+    def capabilities(self, run_id, *, mode="start"):
+        """Current read-only scoped assessment, never dispatch authorization."""
+        if type(mode) is not str or mode not in {"start", "restart", "native_resume", "observe", "cancel", "result"}:
+            raise TaskAlongError("execution_mode_unsupported", "Select an explicit supported observation mode.")
+        run = self._store.run(run_id)
+        spec = self._store.spec(run)
+        binding, satisfied, decision, reasons = None, None, None, ["v1_runtime_unqualified"]
+        if spec["schema_version"] == "2.2":
+            binding = spec["execution"]["binding_digest"]
+            try:
+                if mode not in {"start", "restart"}:
+                    raise TaskAlongError("execution_mode_unsupported", "This projection has no qualification for the selected mode.")
+                from .admission import resolve
+                snapshot, _, _ = resolve(self._store, spec, mode=mode)
+                satisfied, decision, reasons = True, snapshot["decision"]["digest"], []
+            except TaskAlongError as exc:
+                satisfied, reasons = False, [exc.code]
+        return seal_versioned("capabilities-view", {"run_id": run_id, "revision": run["revision"], "mode": mode,
+            "binding_digest": binding, "requirements_satisfied": satisfied, "decision_digest": decision,
+            "reason_codes": reasons, "production_dispatch_allowed": False}, version="2.2")
+
+    def result(self, run_id):
+        """Read persisted outcomes/immutable references; never reconcile or launch.
+
+        A completed worker remains distinct from independent acceptance. Raw
+        task/policy bodies, runtime paths, credentials and logs are excluded.
+        """
+        run = self._store.run(run_id)
+        attempt = self._store.detail("attempts", run["attempts"][-1]["attempt_id"]) if run["attempts"] else None
+        acceptance = self._store.detail("acceptances", run["acceptance_id"]) if run["acceptance_id"] else None
+        if acceptance is not None:
+            acceptance = validate("acceptance", acceptance)
+            if (acceptance["run_id"] != run_id or acceptance["spec_digest"] != run["spec_digest"]
+                    or acceptance["candidate"] != run["candidate"] or acceptance["qualification"] != run["qualification"]):
+                raise TaskAlongError("store_integrity", "The stored acceptance belongs to different immutable inputs.", exit_code=70)
+        accepted = bool(acceptance and acceptance["decision"] == "accepted" and run["state"] in {"accepted", "publishing", "draft_published"})
+        if run["state"] == "cancelled":
+            outcome = "cancelled"
+        elif accepted:
+            outcome = "accepted"
+        elif run["active_attempt_id"] or run["pending_effect_ids"]:
+            outcome = "unknown" if run["state"] == "blocked" else "pending"
+        elif attempt and attempt["status"] == "completed" and attempt.get("termination_confirmed"):
+            outcome = "worker_completed"
+        elif run["state"] == "failed":
+            outcome = "failed"
+        elif run["state"] == "blocked":
+            outcome = "unknown"
+        else:
+            outcome = "pending"
+        artifacts = []
+        for evidence_id in run["evidence_ids"]:
+            record = self._store.detail("evidence", evidence_id)
+            artifacts.extend(record["artifacts"])
+        if attempt:
+            artifacts.extend(attempt.get("canonical_evidence_refs", []))
+            if attempt.get("result_artifact"):
+                artifacts.append(attempt["result_artifact"])
+        unique = {item["sha256"]:item for item in artifacts}
+        for key in unique:
+            self._store.get_blob(key)
+        packet_digest = None
+        if attempt and attempt.get("canonical_packet"):
+            packet = validate_versioned("worker-packet", attempt["canonical_packet"], expected_version="2.2")
+            mapping = validate_versioned("packet-projection", attempt["packet_projection"], expected_version="2.2")
+            if mapping["canonical_packet_digest"] != packet["digest"] or mapping["wire_packet_digest"] != attempt["packet"]["digest"]:
+                raise TaskAlongError("store_integrity", "The stored canonical/wire packet identities disagree.", exit_code=70)
+            packet_digest = packet["digest"]
+        return seal_versioned("result-view", {"run_id":run_id, "revision":run["revision"], "state":run["state"],
+            "outcome":outcome, "independently_accepted":accepted, "acceptance_digest":digest(acceptance) if acceptance else None,
+            "worker_result_digest":attempt["result_artifact"]["sha256"] if attempt and attempt.get("result_artifact") else None,
+            "canonical_packet_digest":packet_digest, "evidence_artifacts": [unique[key] for key in sorted(unique)],
+            "production_dispatch_allowed":False}, version="2.2")
 
     def events(self, run_id, *, after_seq=0, limit=1000):
         return self._store.events(run_id, after_seq, limit)

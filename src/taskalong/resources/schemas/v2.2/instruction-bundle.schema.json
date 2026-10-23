@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.2:instruction-bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "texts",
+    "ambient_context",
+    "protective_policy_digest",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "instruction_bundle"
+    },
+    "schema_version": {
+      "const": "2.2"
+    },
+    "texts": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "maxLength": 16384
+      }
+    },
+    "ambient_context": {
+      "const": "deny"
+    },
+    "protective_policy_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  }
+}

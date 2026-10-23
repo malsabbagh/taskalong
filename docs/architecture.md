@@ -44,3 +44,11 @@ explicit format-2 migration under exclusive ownership, complete private control
 backups and quarantined fresh-directory restores. Stored decisions grant no
 current authority. The [operations guide](operations.md#quiescent-store-maintenance)
 describes the operator API and failure boundaries.
+
+The proposed [single-step admission ADR](adr/0004-single-step-execution-admission.md)
+connects exact immutable bindings and current trusted qualification to the same
+Workflow, supervisor, reservations and fences. It adds an explicit 2.2 contract
+family, independently bound verifier policies, a synthetic Codex wire projection
+and read-only capabilities/result views. Explicit format 3 excludes older clients
+before executable v2 state is interpreted. No new harness, scheduler or production
+dispatch is introduced.

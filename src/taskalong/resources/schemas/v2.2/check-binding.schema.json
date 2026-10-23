@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.2:check-binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "sandbox_digest",
+    "runtime_profile_digest",
+    "checks_digest",
+    "review_config_digest",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "check_binding"
+    },
+    "schema_version": {
+      "const": "2.2"
+    },
+    "sandbox_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "runtime_profile_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "checks_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "review_config_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  }
+}

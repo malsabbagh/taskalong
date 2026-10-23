@@ -37,6 +37,17 @@ Use an existing approved runtime environment and exact profile for a separate
 actual start/cancel/resume/tool/isolation campaign. No runtime installation,
 credential change, model pull or provider fallback is implied.
 
+The single-step 2.2 admission path currently admits only an explicitly trusted
+`codex-v1-fixture/1` registration. The shared executor contract suite observes one
+supervised fake CLI, real local cancellation, canonical/wire identity mapping and
+independent synthetic verification. It also checks production/native-resume
+refusal. The simulated provider declaration does not prove the actual endpoint,
+account, model, instructions, tools or containment of any vendor CLI. Revocation
+before dispatch or before owned gate release prevents target execution; retained
+unknown windows remain quarantined rather than manufacturing cessation evidence.
+Adding another shared driver case or installing a binary grants no runtime
+authority. Production stays disabled until separately reviewed exact-mode proof.
+
 Claude wire tests are original synthetic frames, not installed-version
 transcripts. Its decoder is unregistered and reports untrusted protocol data;
 no provider identity, billing proof, native-resume or cessation receipt follows.

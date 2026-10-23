@@ -1,8 +1,71 @@
 # Experimental alpha contracts
 
-These provisional contracts use schema version `1.0`; the package/API version is
+The original provisional contracts use schema version `1.0`; the package/API version is
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).
+
+## Single-step execution v2.2
+
+Explicit version `2.2` adds TaskSpecV2, WorkerPacketV2, ExecutionEvidence,
+InstructionBundle, ToolPolicy, SandboxPolicy and CheckBinding through
+`taskalong.execution`. It also adds closed packet-projection, result-view and
+capabilities-view schemas. Use `schema(name, version="2.2")`,
+`seal_versioned(name, data, version="2.2")` and `read_task_spec(data)` explicitly.
+The v1 reader remains unchanged; reading a saved v1 task preserves its canonical
+bytes/digest. The exact 2.0 and 2.1 resource sets and semantics remain unchanged.
+
+A v2 TaskSpec selects `execution.binding_digest`. Its worker and verifier policies
+are separate exact immutable references. PolicyResolver accepts only a bounded
+operator-selected tuple of typed documents and resolves exact digest plus type.
+It does no filesystem/network discovery and grants no authority. Instruction
+content and configured runtime paths stay private. A valid schema or self-hash
+does not establish effective enforcement, trusted qualification or a launch route.
+
+`RunService.configure_execution(...)` is a trusted operating-system control-plane
+API, separate from task submission. It requires explicit installation, provider,
+binding, policy, exact runtime-profile digest, context, receipts, approved trust
+and evidence bytes. Currently its only projection is `codex-v1-fixture/1`: an
+explicitly registered synthetic executable and independent fixture verifier
+launcher. Empty additional instructions, exactly `fixture.edit`, denied discovery
+and the `synthetic-fixture` sandbox backend are its closed policy subset. Legacy
+permission objects and extra toolchain roots must be empty; additional constraints
+cannot be silently discarded by this projection. These
+are simulation inputs, with no claim of actual Codex or OS policy enforcement.
+The effective-context digest is SHA-256 of the canonical array of policy documents
+sorted by their content digests. Other context identities remain explicit inputs
+to the fixture measurement, never proof of this release's runtime qualification.
+Requested provider/model/auth identities remain recorded as simulated route
+inputs; actual transport is the registered local fixture. Arbitrary policies,
+unknown drivers, unresolved documents, non-null cost/token limits and unsupported
+native resume are typed refusals. Nothing selects a fallback transport or model.
+
+V2 executable state requires an explicit format-3 store upgrade. Admission
+re-evaluates current trusted approvals, expiry/revocation, exact required mode,
+profile identity and budgets. A start receipt cannot satisfy a binding requiring
+native resume. Preparation atomically retains authority/policy/binding/decision
+snapshots, lease, reservation, event and intent. Dispatch and the owned pre-exec
+gate revalidate current mutable facts. An interruption after dispatch can leave
+unknown effects; the workspace stays quarantined until explicitly reconciled.
+
+The canonical packet binds the 2.2 task and admission. The explicitly projected
+v1 wire packet and final mapping bind both packet identities to one attempt.
+Legacy worker output must match those exact wire inputs. Independent check
+records retain the existing acceptance interpreter and immutable 2.2 evidence
+projections. Worker completion does not grant independent acceptance.
+
+`RunService.capabilities(run_id, mode="start")` and `result(run_id)` return 2.2
+dictionary envelopes without preparing work, reconciling state or issuing
+authority. V1 `inspect`, other dictionary returns, CLI verbs and exit meanings
+remain available. V2 start/restart returns its original prepared operation receipt
+on both first call and replay; call `inspect` for the latest run revision.
+Capabilities reports scoped fixture satisfaction separately from production
+dispatch, which is always false. Result distinguishes pending, unknown, completed
+worker and independent acceptance, and exposes immutable artifact identities
+without policy bodies, configured paths, authority records or raw output. These
+views do not authorize execution or publication.
+
+See the [admission ADR](adr/0004-single-step-execution-admission.md) and
+[maintenance operations](operations.md#v2-execution-store-boundary).
 
 Persistent stores belong to the `taskalong` application namespace. New stores
 record that marker; existing untagged or foreign stores fail before journal-mode

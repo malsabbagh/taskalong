@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.2:evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "run_id",
+    "attempt_id",
+    "spec_digest",
+    "binding_digest",
+    "admission_digest",
+    "canonical_packet_digest",
+    "wire_packet_digest",
+    "legacy_evidence_digest",
+    "legacy_evidence_id",
+    "role",
+    "result",
+    "qualification",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "evidence"
+    },
+    "schema_version": {
+      "const": "2.2"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "spec_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "binding_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "admission_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "canonical_packet_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "wire_packet_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "legacy_evidence_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "legacy_evidence_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "role": {
+      "const": "independent_verifier"
+    },
+    "result": {
+      "enum": [
+        "passed",
+        "failed",
+        "blocked"
+      ]
+    },
+    "qualification": {
+      "const": "synthetic"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  }
+}

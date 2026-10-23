@@ -188,7 +188,7 @@ class ReviewSenseiAdapter:
     """One version-pinned CLI invocation, from a fresh controlled directory."""
     def __init__(self, executable: str | Path, *, python_executable: str | Path | None = None,
                  expected_executable_sha256: str | None = None,
-                 expected_provider: str = "fixture", interrupt_requested=None) -> None:
+                 expected_provider: str = "fixture", interrupt_requested=None, pre_dispatch=None) -> None:
         self.executable = str(Path(executable).absolute())
         self.python_executable = str(Path(python_executable or sys.executable).absolute())
         self.executable_sha256 = fingerprint(self.executable)
@@ -198,6 +198,7 @@ class ReviewSenseiAdapter:
             raise _blocked("review_provider_unsupported", "The selected review provider is unsupported.")
         self.expected_provider = expected_provider
         self._interrupt_requested = interrupt_requested
+        self._pre_dispatch = pre_dispatch
         self._observed_process_output_bytes = 0
 
     def _invoke(self, argv: list[str], *, cwd: Path, timeout_seconds: int,
@@ -223,6 +224,8 @@ class ReviewSenseiAdapter:
         def before_dispatch(receipt):
             if self._interrupt_requested and self._interrupt_requested():
                 raise ProcessBoundaryError("Foreground review stopped before dispatch.", code="verification_interrupted", effect_outcome="not_sent")
+            if self._pre_dispatch is not None:
+                self._pre_dispatch()
         try:
             process = run_bounded(argv, cwd=cwd, timeout_seconds=timeout_seconds,
                                   max_output_bytes=max_output_bytes, on_spawn=before_dispatch,

@@ -3,16 +3,18 @@ from .bindings import ExecutionBinding, HarnessInstallation, ProviderProfile
 from .contracts import RuntimeProfile
 from .errors import TaskAlongError
 from .qualification import QualificationDecision
+from .execution import InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding
 from .store import encode, key_check, now
 from .validation import digest, loads
 
 
 _TYPES = {"runtime_profile":RuntimeProfile, "harness_installation":HarnessInstallation, "provider_profile":ProviderProfile,
           "execution_binding":ExecutionBinding, "qualification_decision":QualificationDecision}
+_TYPES.update({cls.schema_name.replace("-", "_"): cls for cls in (InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding)})
 
 
 def _require(store):
-    if store.format_version != 2:
+    if store.format_version not in (2, 3):
         raise TaskAlongError("store_upgrade_required", "Versioned history requires the explicit backed-up store upgrade.", exit_code=3)
 
 
@@ -34,6 +36,8 @@ def record_document(store, document, *, operation_key):
         raise TaskAlongError("history_document_invalid", "Only validated immutable profile/binding/decision documents can be stored.")
     document = type(document)(document.to_bytes())
     value = document.to_dict()
+    if value["schema_version"] == "2.2" and store.format_version < 3:
+        raise TaskAlongError("store_upgrade_required", "V2 execution policy history requires format 3.", exit_code=3)
     request = {"kind":value["kind"], "identity":_identity(value), "digest":document.digest, "schema_version":value["schema_version"]}
     request_digest = digest(request, exclude_digest=False)
     response = request | {"historical_only":True}

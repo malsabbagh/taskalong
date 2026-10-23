@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.2:result-view",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "run_id",
+    "revision",
+    "state",
+    "outcome",
+    "independently_accepted",
+    "acceptance_digest",
+    "worker_result_digest",
+    "canonical_packet_digest",
+    "evidence_artifacts",
+    "production_dispatch_allowed",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "result_view"
+    },
+    "schema_version": {
+      "const": "2.2"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "state": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "outcome": {
+      "enum": [
+        "pending",
+        "unknown",
+        "worker_completed",
+        "accepted",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "independently_accepted": {
+      "type": "boolean"
+    },
+    "acceptance_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "worker_result_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "canonical_packet_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_artifacts": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha256",
+          "bytes",
+          "media_type",
+          "redaction_version"
+        ],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "redaction_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    "production_dispatch_allowed": {
+      "const": false
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  }
+}
