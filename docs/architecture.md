@@ -59,3 +59,10 @@ DriverConfig and exact registry contract to the same lifecycle. Explicit format 
 excludes predecessor clients before executable driver state. The original external
 fixture exercises protocol, cancellation and restart; actual CLI execution,
 routing and isolation remain unqualified and production remains disabled.
+
+The [Ollama fixture ADR](adr/0006-ollama-fixture-profiles.md) adds one explicit 2.4
+contract descriptor to that same Claude driver, with four additive resources
+and a backed-up format-5 fence. A pure route plan plus exact capture linkage and
+two current exact-mode decisions admit only offline local/direct-cloud fixtures.
+The unchanged binding is evaluated in full in both modes. No fifth executor,
+provider daemon, HTTP transport or production dispatch is introduced.

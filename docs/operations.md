@@ -292,3 +292,21 @@ setup guide. Schema validity or installed Claude help cannot admit real executio
 Production, native continuation, Ollama and hard cost/token enforcement refuse.
 Explicit restart has a new session and consumes the existing run budget. Unknown
 cessation/effects require inspection and reconciliation, never automatic retry.
+
+## Ollama fixture store boundary
+
+The distinct `claude-ollama-fixture/1` projection requires 2.4 task/config
+documents and installation `synthetic-claude-ollama-1`. Under the same exclusive,
+quiescent maintenance procedure, an already format-4 store can explicitly use
+`target_version=5`, with distinct private backup and fresh restore directories.
+SQL005 changes no existing tables; both format markers and its numbered receipt
+advance together after complete backup and restore verification. A byte-pinned
+format-4 client refuses format 5. Preserve verified prior backups for recovery;
+never edit markers or restore over current data.
+
+This is an offline developer fixture through the same Claude driver. Select the
+exact local or direct-cloud ProviderProfile and approved start **and** lookup
+evidence. Capability inspection reflects both gates and creates no authority.
+The responder sends no server request. No Ollama install, login, model pull,
+shared-server lifecycle, real credentials or live provider execution is enabled.
+See the [2.4 contract](contracts.md#ollama-fixture-contracts-v24).

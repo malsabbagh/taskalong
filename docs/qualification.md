@@ -80,3 +80,23 @@ check profile and released offline reviewer fixture are required for acceptance.
 No real Claude start/cancel/resume, auth/routing, protective context/tool policy
 or complete vendor descendant lifetime is qualified. Production stays disabled;
 native resume, hard token/cost enforcement and Ollama remain unsupported here.
+
+## Ollama fixture qualification scope
+
+M6 adds local and direct-cloud Ollama profiles through the same Claude driver
+and durable lifecycle under the distinct 2.4 projection. Its route reader and
+real offline evaluator require exact identities and separately approved start
+and provider-lookup evidence. The controlled responder lives inside the fake
+worker, opens no socket and never calls a provider or changes server/model state.
+Its invocation record retains route/model/session/config/provider identities and
+auth presence/match predicates, never a token. These are synthetic request and
+environment observations, not actual HTTP or managed-settings isolation proof.
+
+Shared contract cases cover worker/result separation, independent acceptance,
+owned and closed-gate cancellation, persistent restart budgets and native refusal
+for both profiles. Route/evidence negatives cover forwarding, unknown identity,
+availability, auth, endpoint, mode, provenance, revocation and expiry. Format-5
+maintenance must preserve complete prior state and exclude the byte-pinned M5
+client. Source and installed artifact results qualify only their recorded head,
+platform and synthetic mode; they do not enable production or real credentials.
+External-server cessation and real token/cost accounting remain unsupported.

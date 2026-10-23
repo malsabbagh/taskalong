@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Original synthetic Claude-shaped fixture; no captured vendor implementation."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ parser.add_argument("--output-format", choices=["stream-json"], required=True)
 parser.add_argument("--verbose", action="store_true")
 parser.add_argument("--json-schema", required=True)
 parser.add_argument("--model", required=True)
-parser.add_argument("--effort", required=True)
+parser.add_argument("--effort")
 parser.add_argument("--session-id", required=True)
 parser.add_argument("--no-session-persistence", action="store_true")
 parser.add_argument("--permission-mode", choices=["default"], required=True)
@@ -36,6 +37,30 @@ packet = json.loads(sys.stdin.buffer.read())
 assert packet["session_id"] == packet["attempt_id"] == args.session_id
 observed = {"model":args.model, "session_id":args.session_id,
     "credential_environment_present":any(key.startswith(("ANTHROPIC_", "OPENAI_", "OLLAMA_", "GH_", "GITHUB_", "AWS_")) for key in os.environ)}
+if packet["schema_version"] == "2.4":
+    # Original deterministic responder, inside this owned fixture process.
+    # No socket, SDK, server/model operation or second provider process exists.
+    assert args.effort is None and args.model == "fixture-claude-model"
+    endpoint = os.environ.get("ANTHROPIC_BASE_URL")
+    assert endpoint in ("http://127.0.0.1:11434", "https://ollama.com")
+    expected_token = "ollama" if endpoint.startswith("http:") else "taskalong-fixture-ollama-cloud-1"
+    token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
+    allowed = {"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"}
+    unexpected = any((key.startswith(("ANTHROPIC_", "OPENAI_", "OLLAMA_", "GH_", "GITHUB_", "AWS_"))
+        or key.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}) and key not in allowed for key in os.environ)
+    assert token == expected_token and os.environ.get("ANTHROPIC_API_KEY") == "" and not unexpected
+    observed["ollama_fixture_request"] = {
+        "endpoint": endpoint, "requested_model": args.model,
+        "resolved_model_digest": hashlib.sha256(b'{"simulated_model":"fixture-claude-model"}').hexdigest(),
+        "model_origin": "local" if endpoint.startswith("http:") else "cloud",
+        "driver_config_digest": packet["bindings"]["driver_config_digest"],
+        "provider_profile_digest": packet["bindings"]["provider_profile_digest"],
+        "packet_digest": packet["digest"], "session_id": args.session_id,
+        "token_present": bool(token), "token_matched": token == expected_token,
+        "unexpected_environment_present": unexpected, "external_request": "not_sent",
+        "qualification": "synthetic"}
+else:
+    assert packet["schema_version"] == "2.3" and args.effort is not None
 descriptor = os.open(Path(__file__).with_suffix(".invocations.jsonl"), os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
 with os.fdopen(descriptor, "w") as log:
     log.write(json.dumps(observed) + "\n")

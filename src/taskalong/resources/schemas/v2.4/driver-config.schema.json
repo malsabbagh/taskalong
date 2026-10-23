@@ -1,0 +1,320 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.4:driver-config",
+  "title": "driver-config",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "fixture-route-observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "schema_version",
+        "qualification",
+        "provider_profile_digest",
+        "endpoint",
+        "requested_model",
+        "resolved_model_digest",
+        "model_origin",
+        "server_available",
+        "model_available",
+        "tool_protocol",
+        "result_schema_id",
+        "external_effect",
+        "managed_route_conflict",
+        "auth"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ollama_fixture_route_observation"
+        },
+        "schema_version": {
+          "const": "1.0"
+        },
+        "qualification": {
+          "const": "synthetic"
+        },
+        "provider_profile_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "requested_model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}(?![\\s\\S])"
+        },
+        "resolved_model_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "model_origin": {
+          "enum": [
+            "local",
+            "cloud",
+            "forwarded",
+            "unknown"
+          ]
+        },
+        "server_available": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_available": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_protocol": {
+          "const": "fixture-edit/1"
+        },
+        "result_schema_id": {
+          "const": "urn:taskalong:schema:v2.3:worker-result"
+        },
+        "external_effect": {
+          "enum": [
+            "none",
+            "active",
+            "unknown",
+            "reported-complete"
+          ]
+        },
+        "managed_route_conflict": {
+          "type": "boolean"
+        },
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "credential_ref",
+            "token_present",
+            "token_matched"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "local-no-secret",
+                "credential-ref"
+              ]
+            },
+            "credential_ref": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z][a-z0-9_.-]{0,63}(?![\\s\\S])"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "token_present": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "token_matched": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "driver_id",
+    "driver_version",
+    "projection",
+    "wire_version",
+    "installation_digest",
+    "provider_profile_digest",
+    "qualification",
+    "registration",
+    "executable",
+    "credential_ref",
+    "policy_digests",
+    "launch",
+    "digest",
+    "fixture_route_observation"
+  ],
+  "properties": {
+    "kind": {
+      "const": "driver_config"
+    },
+    "schema_version": {
+      "const": "2.4"
+    },
+    "driver_id": {
+      "const": "claude-code"
+    },
+    "driver_version": {
+      "const": "claude-print-ollama-fixture-1"
+    },
+    "projection": {
+      "const": "claude-ollama-fixture/1"
+    },
+    "wire_version": {
+      "const": "2.4"
+    },
+    "installation_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "provider_profile_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "qualification": {
+      "const": "synthetic"
+    },
+    "registration": {
+      "const": "operator_registered_fixture"
+    },
+    "executable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "credential_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "policy_digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instructions",
+        "tools",
+        "worker_sandbox",
+        "check_binding"
+      ],
+      "properties": {
+        "instructions": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tools": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worker_sandbox": {
+          "$ref": "#/$defs/sha256"
+        },
+        "check_binding": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "launch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "input_format",
+        "output_format",
+        "verbose",
+        "session_persistence",
+        "settings_sources",
+        "strict_mcp",
+        "background_agents",
+        "customizations",
+        "permission_mode"
+      ],
+      "properties": {
+        "mode": {
+          "const": "print"
+        },
+        "input_format": {
+          "const": "text"
+        },
+        "output_format": {
+          "const": "stream-json"
+        },
+        "verbose": {
+          "const": true
+        },
+        "session_persistence": {
+          "const": false
+        },
+        "settings_sources": {
+          "const": []
+        },
+        "strict_mcp": {
+          "const": true
+        },
+        "background_agents": {
+          "const": "deny"
+        },
+        "customizations": {
+          "const": "deny"
+        },
+        "permission_mode": {
+          "const": "default"
+        }
+      }
+    },
+    "digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "fixture_route_observation": {
+      "$ref": "#/$defs/fixture-route-observation"
+    }
+  }
+}

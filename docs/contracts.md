@@ -4,6 +4,31 @@ The original provisional contracts use schema version `1.0`; the package/API ver
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).
 
+## Ollama fixture contracts v2.4
+
+The additive `driver-config`, `task-spec`, `worker-packet` and `packet-projection`
+resources use version 2.4 with `claude-ollama-fixture/1`. Explicit
+`OllamaDriverConfig` and `OllamaTaskSpec` readers preserve earlier reader meanings;
+`read_driver_config` and `read_task_spec` select only declared supported versions.
+ProviderProfile stays 2.0; worker results stay 2.3 and are named explicitly by
+the 2.4 packet. Executable history requires format 5, not an implicit upgrade.
+
+Only numeric HTTP loopback local fixtures or direct `https://ollama.com` cloud
+fixtures are representable. A closed inline synthetic observation binds exact
+availability, origin, model, route and auth predicates. Current start and
+provider-lookup decisions must both satisfy the unchanged original binding,
+with separate exact-mode approved evidence over one context/trust/time snapshot.
+Each contributing lookup observation references the exact canonical capture.
+Registration and matching blob presence grant no authority; revocation or
+expiry at preparation, dispatch or gate release prevents target execution.
+
+The same Claude driver and lifecycle simulate the selected route without a
+network request. Local uses a nonsecret placeholder, cloud a closed fixture
+reference; real credentials, inherited proxies/model overrides, settings
+discovery, model/server operations and fallback are absent. Remote cancellation,
+real accounting, native resume, hard cost/token enforcement and production
+remain unsupported. See the [provider ADR](adr/0006-ollama-fixture-profiles.md).
+
 ## Claude fixture contracts v2.3
 
 The explicit 2.3 family contains `driver-config`, `task-spec`, `worker-packet`,
@@ -17,7 +42,7 @@ The five schemas are available with `schema(name, version="2.3")`.
 
 The trusted `configure_execution` API accepts `driver_config=...` instead of
 `runtime_profile_digest` for the explicit `claude-print-fixture/1` projection.
-It requires a format-4 store and the same exact installation, binding, policies,
+It requires a format-4-or-later store and the same exact installation, binding, policies,
 trusted receipts, evidence and context as 2.2 admission. The effective-context
 digest binds `{policies: <documents sorted by digest>, driver_config_digest: ...}`.
 It admits only installation `synthetic-claude-1`, empty additional instructions,

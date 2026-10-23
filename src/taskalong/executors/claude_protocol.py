@@ -376,3 +376,10 @@ class ClaudeDriverStreamDecoder(ClaudeStreamDecoder):
         if result.protocol_version != 2:
             self._finished = replace(result, protocol_version=2)
         return self._finished
+
+
+class OllamaDriverStreamDecoder(ClaudeDriverStreamDecoder):
+    """Explicit 2.4 packet entry; preserves the strict 2.3 result contract."""
+    @staticmethod
+    def _admit_packet(packet):
+        return validate_versioned("worker-packet", packet, expected_version="2.4")

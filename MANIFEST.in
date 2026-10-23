@@ -165,3 +165,15 @@ include src/taskalong/resources/sql/004-driver-compatibility.sql
 include tests/fixtures/fake_claude.py
 include tests/fixtures/legacy_store_v3.py
 include tests/test_claude_driver.py
+include src/taskalong/runtime_profiles.py
+include src/taskalong/resources/sql/005-ollama-compatibility.sql
+include src/taskalong/resources/schemas/v2.4/worker-packet.schema.json
+include src/taskalong/resources/schemas/v2.4/packet-projection.schema.json
+include src/taskalong/resources/schemas/v2.4/task-spec.schema.json
+include src/taskalong/resources/schemas/v2.4/driver-config.schema.json
+include tests/test_ollama_profiles.py
+include tests/test_ollama_store.py
+include tests/test_ollama_driver.py
+include tests/fixtures/legacy_store_v4.py
+include tests/fixtures/m5-contract-hashes.json
+include docs/adr/0006-ollama-fixture-profiles.md
