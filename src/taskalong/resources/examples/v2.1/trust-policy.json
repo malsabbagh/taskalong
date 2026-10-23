@@ -1,0 +1,22 @@
+{
+  "producers": [
+    {
+      "producer_id": "fixture-qa",
+      "allowed_evidence_levels": [
+        "offline_fixture"
+      ]
+    }
+  ],
+  "approvals": [
+    {
+      "producer_id": "fixture-qa",
+      "receipt_digest": "4a5061eba1f8e8e5b7461bb5946db7cf6998812c28164df1428233b1be813eee",
+      "valid_from": "2026-01-01T00:00:00Z",
+      "valid_until": "2027-01-01T00:00:00Z",
+      "digest": "6137e59a2a206a95eda6e1b9cef3cc7e569242f37657708fca2bb1ac35b8bfc1"
+    }
+  ],
+  "revoked_receipt_digests": [],
+  "revoked_approval_digests": [],
+  "revoked_evidence_digests": []
+}

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.1:capability-report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "subject",
+    "mode",
+    "decision_digest",
+    "overall_outcome",
+    "capability_results",
+    "per_receipt_usage",
+    "production_dispatch_allowed",
+    "digest",
+    "limitations"
+  ],
+  "properties": {
+    "kind": {
+      "const": "capability_report"
+    },
+    "schema_version": {
+      "const": "2.1"
+    },
+    "subject": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/subject"
+    },
+    "mode": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/mode"
+    },
+    "decision_digest": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/sha256"
+    },
+    "overall_outcome": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/outcome"
+    },
+    "capability_results": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/capability-result"
+      },
+      "maxItems": 9,
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "per_receipt_usage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt_digest",
+          "usage"
+        ],
+        "properties": {
+          "receipt_digest": {
+            "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/sha256"
+          },
+          "usage": {
+            "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/usage"
+          }
+        }
+      },
+      "maxItems": 64,
+      "minItems": 0,
+      "uniqueItems": true
+    },
+    "production_dispatch_allowed": {
+      "const": false
+    },
+    "digest": {
+      "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/sha256"
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2049,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    }
+  }
+}

@@ -143,6 +143,8 @@ def schema_names(*, version: str = "1.0") -> tuple[str, ...]:
         return SCHEMA_NAMES
     if version == "2.0":
         return ("harness-installation", "provider-profile", "execution-binding")
+    if version == "2.1":
+        return ("qualification-receipt", "qualification-decision", "capability-report")
     raise _invalid("The schema version is unsupported.", "unknown_schema_version")
 
 
@@ -150,7 +152,7 @@ def schema(name: str, *, version: str = "1.0") -> dict[str, Any]:
     name = name.removesuffix(".schema.json").replace("_", "-")
     if name not in schema_names(version=version):
         raise _invalid("The schema name is unsupported.", "unknown_schema")
-    directory = {"1.0": "v1", "2.0": "v2"}[version]
+    directory = {"1.0": "v1", "2.0": "v2", "2.1": "v2.1"}[version]
     return loads(resources.files("taskalong.resources").joinpath("schemas", directory, name + ".schema.json").read_bytes())
 
 
@@ -342,9 +344,13 @@ def validate_versioned(name: str, document: dict[str, Any], *, expected_version:
     validator = Draft202012Validator(selected, registry=schema_registry(version=expected_version), format_checker=_FORMAT_CHECKER)
     if next(validator.iter_errors(result), None) is not None:
         raise _invalid("The document does not match the selected schema.", "schema_validation")
-    from .bindings import _normalize, _semantics as binding_semantics
-    _normalize(result)
-    binding_semantics(result)
+    if expected_version == "2.0":
+        from .bindings import _normalize, _semantics as binding_semantics
+        _normalize(result)
+        binding_semantics(result)
+    else:
+        from .qualification import _semantics as qualification_semantics
+        qualification_semantics(result)
     if digest(result) != result["digest"]:
         raise _invalid("The document digest does not match normalized content.", "digest_mismatch")
     return result
@@ -362,7 +368,8 @@ def seal_versioned(name: str, document: dict[str, Any], *, version: str) -> dict
     result = copy.deepcopy(document)
     result.setdefault("kind", name.removesuffix(".schema.json").replace("-", "_"))
     result.setdefault("schema_version", version)
-    from .bindings import _normalize
-    _normalize(result)
+    if version == "2.0":
+        from .bindings import _normalize
+        _normalize(result)
     result["digest"] = digest(result)
     return validate_versioned(name, result, expected_version=version)

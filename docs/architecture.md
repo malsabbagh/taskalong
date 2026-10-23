@@ -16,7 +16,8 @@ signal, PID disappearance or empty group is not complete descendant proof.
 The offline Claude wire component validates synthetic framing and structured
 results only. It does not launch, observe, cancel or resume a real CLI. Provider
 profiles and versioned semantic bindings now have offline v2 data contracts;
-evidence-backed admission and live provider profiles remain future work.
+offline qualification evidence has separate v2.1 contracts and a pure evaluator.
+Durable admission and live provider profiles remain future work.
 Cross-harness continuation must use explicit immutable artifacts and a
 new session; opaque sessions are not transferable. No scheduler or task DAG is
 provided.
@@ -31,3 +32,8 @@ show the installed resources. V1 lifecycle/store contracts remain unchanged.
 The [contracts](contracts.md), [operations](operations.md) and
 [qualification](qualification.md) describe executable behavior and limits. All
 runtime/acceptance rules remain in effect regardless of repository visibility.
+
+The [offline qualification ADR](adr/0002-offline-qualification.md) describes exact
+subjects, explicitly trusted approvals and bounded evidence snapshots. This
+evaluator changes no lifecycle or runtime admission; every report keeps production
+dispatch disabled. See the [offline example](contracts.md#offline-qualification-v21).

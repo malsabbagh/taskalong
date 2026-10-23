@@ -1,0 +1,8 @@
+{
+  "examples/v2/execution-binding.json": "5376c0bb49de5e4524cf58548bc044e3297abc926dd4ac992904e77890a8b42b",
+  "examples/v2/harness-installation.json": "7515b6d45549f91185c0006b11778fd7c35fd98729940bd0c157fdc9dbeefced",
+  "examples/v2/provider-profile.json": "c5d5bf787da5a5984b1b37c1e539ba6b2ce75106258cbdd6f098aeded7799133",
+  "schemas/v2/execution-binding.schema.json": "2c0d35d0ab7dc24bcc4d8c09abe7ff702ded7b1ca4f1c1e54e7e4d8963cfe83f",
+  "schemas/v2/harness-installation.schema.json": "8d0bb0853c5ceb874ae7c06165a48ad3d3e7fc6c16292c7f31fc22715be4944a",
+  "schemas/v2/provider-profile.schema.json": "fb9cf76ad72bffc0a01a1dd3b3506f63f421aa0f5b97c9a2369d5d7d0898a95f"
+}

@@ -1,0 +1,55 @@
+{
+  "capability_results": [
+    {
+      "capability": "start",
+      "evidence_digests": [
+        "19cac8c61fb25007c0d8908d730712673c7f7c2b1ff9c199fb22b2cef038fb83"
+      ],
+      "outcome": "supported",
+      "reason_codes": [
+        "evidence_verified"
+      ]
+    }
+  ],
+  "decision_digest": "84903417e705cdb213fd116755bf69f57eaf5bf2c09611f3add1cf311b14c118",
+  "digest": "f60412b4327af26c30518f56f399d39ac76a67defbf17d25406ba2e467e94528",
+  "kind": "capability_report",
+  "limitations": [
+    "Offline evaluation only; production dispatch remains disabled.",
+    "Synthetic fixture; no provider proof."
+  ],
+  "mode": "start",
+  "overall_outcome": "supported",
+  "per_receipt_usage": [
+    {
+      "receipt_digest": "4a5061eba1f8e8e5b7461bb5946db7cf6998812c28164df1428233b1be813eee",
+      "usage": {
+        "cost_micro_usd": null,
+        "input_tokens": null,
+        "output_tokens": null
+      }
+    }
+  ],
+  "production_dispatch_allowed": false,
+  "schema_version": "2.1",
+  "subject": {
+    "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "backend_id": "fixture-only",
+    "binding_digest": "206b65a2e8e2cd6f9e255543c6b98d135262eb94d7be6c3622d5c472e41d1599",
+    "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+    "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "installation_digest": "e2b80840ca92c6b96f92f641bae9054d8dd9e876dc73569e45218ac52c2bee8e",
+    "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "native_resume_compatibility_digest": null,
+    "prior_invocation_digest": null,
+    "provider": "ollama-local",
+    "provider_profile_digest": "0cc62bc2806aca44452099d04ec45d8ae50c7ef76a2079c04bcbbdd4210115a0",
+    "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "session_digest": null,
+    "test_inputs_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+  }
+}

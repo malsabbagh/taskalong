@@ -74,6 +74,12 @@
       "verification": "M1_semantic_contracts_and_distribution_inventory"
     },
     {
+      "destination_path": "docs/adr/0002-offline-qualification.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
       "destination_path": "docs/architecture.md",
       "classification": "original",
       "license": "MIT",
@@ -260,6 +266,12 @@
       "verification": "candidate_manifest_and_distribution_inventory"
     },
     {
+      "destination_path": "src/taskalong/qualification.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
       "destination_path": "src/taskalong/resources/__init__.py",
       "classification": "original",
       "license": "MIT",
@@ -270,6 +282,48 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2.1/binding-fixture.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2.1/capability-report.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2.1/capture.txt",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2.1/evidence-observation.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2.1/qualification-decision.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2.1/qualification-receipt.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2.1/trust-policy.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
     },
     {
       "destination_path": "src/taskalong/resources/examples/v2/execution-binding.json",
@@ -362,6 +416,24 @@
       "verification": "candidate_manifest_and_distribution_inventory"
     },
     {
+      "destination_path": "src/taskalong/resources/schemas/v2.1/capability-report.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.1/qualification-decision.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.1/qualification-receipt.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
       "destination_path": "src/taskalong/resources/schemas/v2/execution-binding.schema.json",
       "classification": "original",
       "license": "MIT",
@@ -444,6 +516,12 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/m1-contract-hashes.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
     },
     {
       "destination_path": "tests/fixtures/reviewsensei/approved.yml",
@@ -594,6 +672,12 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_qualification.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M2_offline_qualification_and_distribution_inventory"
     },
     {
       "destination_path": "tests/test_recovery_regressions.py",
