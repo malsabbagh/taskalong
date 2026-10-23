@@ -49,14 +49,15 @@ def _refuse(code, message):
 def _represent_provider(config, provider, contract=ANTHROPIC_FIXTURE):
     """Pure declaration check, also usable when revoking an absent runtime."""
     _closed_contract(contract)
+    if provider["digest"] != config["provider_profile_digest"] or provider["harness"] != "claude-code":
+        _refuse("execution_projection_unsupported", "The driver configuration must bind this exact Claude provider.")
     if contract.ollama:
         from ..runtime_profiles import FixtureRouteObservation, resolve_ollama_route
         if provider["auth"]["credential_ref"] != config["credential_ref"]:
             _refuse("execution_projection_unsupported", "The exact fixture credential reference disagrees.")
         return resolve_ollama_route(ProviderProfile.from_dict(provider),
             FixtureRouteObservation.from_dict(config["fixture_route_observation"]))
-    if (provider["digest"] != config["provider_profile_digest"] or provider["harness"] != "claude-code"
-            or provider["provider"] not in {"anthropic-account", "anthropic-api"}
+    if (provider["provider"] not in {"anthropic-account", "anthropic-api"}
             or provider["auth"]["credential_ref"] != config["credential_ref"]
             or provider["service_tier"] is not None or provider["auxiliary_routes"]
             or provider["effort"] not in {"low", "medium", "high", "max"}):

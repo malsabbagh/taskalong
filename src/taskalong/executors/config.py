@@ -18,6 +18,8 @@ class OllamaDriverConfig(OllamaDocument):
 
 def read_driver_config(document: dict) -> DriverConfig | OllamaDriverConfig:
     """Select an explicit immutable family, without registering or qualifying it."""
+    if type(document) is not dict:
+        raise TaskAlongError("schema_validation", "A driver configuration must be a JSON object.")
     if document.get("schema_version") == "2.3":
         return DriverConfig.from_dict(document)
     if document.get("schema_version") == "2.4":

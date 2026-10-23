@@ -330,6 +330,12 @@ class OllamaCaptureBindingTests(unittest.TestCase):
 
 
 class OllamaSchemaTests(unittest.TestCase):
+    def test_driver_reader_rejects_non_object_inputs_with_a_typed_error(self):
+        from taskalong.executors.config import read_driver_config
+        for value in (None, [], True, "2.4", 24):
+            with self.subTest(value=value), self.assertRaises(TaskAlongError):
+                read_driver_config(value)
+
     def test_explicit_readers_preserve_legacy_bytes_and_reject_cross_version_input(self):
         from taskalong.executors.config import DriverConfig, OllamaDriverConfig, read_driver_config
         from taskalong.execution import DriverTaskSpec, OllamaTaskSpec, read_task_spec
@@ -381,6 +387,29 @@ class OllamaSchemaTests(unittest.TestCase):
 
 
 class OllamaDriverContractTests(unittest.TestCase):
+    def test_preflight_requires_the_same_exact_config_and_provider_for_both_routes(self):
+        import sys
+        from taskalong.executors.registry import contract_for
+        from test_claude_driver import example_driver_config
+        profiles = [local_profile(), local_profile(provider="ollama-cloud", endpoint="https://ollama.com",
+            allowed_disclosure="provider-only", auth={"mode":"credential-ref", "credential_ref":"fixture-ollama-cloud"})]
+        executable = Path(sys.executable).resolve()
+        for profile in profiles:
+            fields = example_driver_config() | {
+                "driver_version":"claude-print-ollama-fixture-1", "projection":"claude-ollama-fixture/1", "wire_version":"2.4",
+                "provider_profile_digest":profile.digest, "credential_ref":profile.to_dict()["auth"]["credential_ref"],
+                "executable":{"path":str(executable), "sha256":hashlib.sha256(executable.read_bytes()).hexdigest()},
+                "fixture_route_observation":route_observation(profile,
+                    model_origin="local" if profile.to_dict()["provider"] == "ollama-local" else "cloud")}
+            good = seal_versioned("driver-config", fields, version="2.4")
+            selected = contract_for(good, task_version="2.4", projection="claude-ollama-fixture/1")
+            # Fingerprint only: this does not execute the selected interpreter.
+            selected.factory(good, profile.to_dict()).preflight(qualification="synthetic", budget={})
+            bad = seal_versioned("driver-config", fields | {"provider_profile_digest":"e" * 64}, version="2.4")
+            with self.subTest(provider=profile.to_dict()["provider"]), self.assertRaises(TaskAlongError) as failure:
+                selected.factory(bad, profile.to_dict()).preflight(qualification="synthetic", budget={})
+            self.assertEqual(failure.exception.code, "execution_projection_unsupported")
+
     def test_closed_registry_reuses_claude_driver_with_explicit_packet_and_no_effort(self):
         from taskalong.executors.registry import contract_for
         from taskalong.executors.claude_code import ClaudeCode
