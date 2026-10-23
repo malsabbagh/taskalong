@@ -481,7 +481,13 @@ def run_bounded(
             if timed_out or cancelled or output_limited or protocol_error or callback_error:
                 termination_started = termination_started or now
                 if signal_stage == 0:
-                    _signal_owned(process, signal.SIGINT)
+                    # Closing an unreleased Linux gate already requests clean
+                    # helper completion. SIGINT here can race the helper's
+                    # finalizer after a valid no-target receipt and destroy its
+                    # protocol exit. Keep the existing absolute TERM/KILL and
+                    # hard-stop windows; ambiguous wrappers still fail closed.
+                    if gate_release_attempted or not isinstance(tracker, _LinuxTracker):
+                        _signal_owned(process, signal.SIGINT)
                     signal_stage = 1
                 elif signal_stage == 1 and now - termination_started >= signal_grace_seconds:
                     _signal_owned(process, signal.SIGTERM)

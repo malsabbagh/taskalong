@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import select
@@ -16,6 +17,8 @@ from typing import Callable
 from contextlib import contextmanager
 from taskalong.process import _LinuxTracker
 import taskalong
+import taskalong.process as boundary
+from unittest.mock import patch
 from taskalong.errors import TaskAlongError
 from taskalong.process import ProcessBoundaryError, run_bounded
 
@@ -122,6 +125,31 @@ class LinuxLifetimeTests(unittest.TestCase):
             self.assertEqual(child.read_status(), {"protocol_version": 2, "error": "invalid_gate_release"})
             self.assertEqual(child.process.wait(timeout=3), 125)
             self.assertFalse(marker.exists())
+
+    def test_real_closed_gate_driver_callbacks_pass_predetermined_repetitions(self):
+        from test_executor_contract import CodexFixtureContractTests
+        from test_claude_driver import ClaudeFixtureContractTests
+        outcomes = []
+        for fixture in (CodexFixtureContractTests, ClaudeFixtureContractTests):
+            for iteration in range(1,4):
+                started = time.monotonic()
+                case = fixture('test_cancel_before_owned_gate_release_is_acknowledged_without_dispatch')
+                result = unittest.TestResult()
+                case.run(result)
+                row = {'driver':fixture.__name__, 'iteration':iteration,
+                    'ok':result.wasSuccessful() and not result.skipped,
+                    'tests_run':result.testsRun, 'elapsed_ms':int((time.monotonic()-started)*1000)}
+                row['boundary'] = getattr(case,'_closed_gate_diagnostic',{'owned_boundary':'unobserved'})
+                if result.failures or result.errors:
+                    failure = (result.failures+result.errors)[0][1]
+                    row['first_failure'] = {'category':'assertion' if result.failures else 'error',
+                        'traceback_sha256':hashlib.sha256(failure.encode()).hexdigest()}
+                outcomes.append(row)
+                # Qualifier stdout is one machine-readable JSON receipt; retain
+                # bounded synthetic observations on the test's stderr stream.
+                print(json.dumps({'kind':'synthetic_actual_linux_callback_repetitions','outcome':row}),file=sys.stderr,flush=True)
+                self.assertEqual(result.testsRun,1,outcomes)
+                self.assertTrue(row['ok'],outcomes)
 
     def test_exact_nonzero_root_exit_is_reported(self):
         child = self.invoke("raise SystemExit(23)")
@@ -433,6 +461,106 @@ class LinuxStatusProtocolTests(unittest.TestCase):
             with self.subTest(index=index),self.tracker(raw) as tracker:
                 self.assertTrue(tracker.failed)
                 self.assertFalse(tracker.not_released_confirmed(gate_release_attempted=False,wrapper_returncode=0,wrapper_group_ceased=True))
+
+
+class ClosedGateShutdownTests(unittest.TestCase):
+    def test_unreleased_helper_that_never_finishes_remains_unconfirmed_and_bounded(self):
+        real_popen = subprocess.Popen
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            target = root/'must-not-execute'
+            helper = root/'stuck-helper.py'
+            helper.write_text("import json,os,signal,sys,time\n"
+                "for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGUSR1):signal.signal(sig,lambda *_:None)\n"
+                "gate,status=map(int,sys.argv[1:3])\n"
+                "os.write(status,b'{\"protocol_version\":2,\"ready\":true}\\n')\n"
+                "assert os.read(gate,1)==b''\n"
+                "os.close(gate)\n"
+                "time.sleep(5)\n")
+            def spawn(argv, **kwargs):
+                argv = list(argv)
+                self.assertEqual(Path(argv[3]).name, '_linux_lifetime.py')
+                argv[3] = str(helper)
+                return real_popen(argv, **kwargs)
+            def veto(_receipt):
+                raise TaskAlongError('cancel_pending','Synthetic closed-gate cancellation')
+            started = time.monotonic()
+            with patch.object(sys,'platform','linux'), patch.object(boundary.subprocess,'Popen',spawn):
+                with self.assertRaises(ProcessBoundaryError) as caught:
+                    run_bounded([sys.executable,'-I','-S','-c',f'from pathlib import Path;Path({str(target)!r}).touch()'],
+                                cwd=root,on_spawn=veto,timeout_seconds=3)
+            self.assertEqual(caught.exception.effect_outcome,'not_sent')
+            self.assertIsNotNone(caught.exception.process_result)
+            self.assertFalse(caught.exception.process_result.termination_confirmed)
+            self.assertTrue(caught.exception.process_result.unaccounted_descendants)
+            self.assertLess(time.monotonic()-started,3)
+            self.assertFalse(target.exists())
+
+    def test_closed_gate_protocol_completion_is_not_interrupted_by_an_unneeded_signal(self):
+        self.assertIs(run_bounded, boundary.run_bounded)
+        real_popen = subprocess.Popen
+        real_signal = boundary._signal_owned
+        real_selector = boundary.selectors.DefaultSelector
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            marker, release = root/'finalizing', root/'release-finalizer'
+            target = root/'must-not-execute'
+            helper = root/'controlled-helper.py'
+            # Exercise real owned Popen/group/EOF handling with a bounded
+            # producer. Its already closed gate never executes target code.
+            helper.write_text('''import json,os,signal,sys,time
+from pathlib import Path
+for sig in (signal.SIGINT,signal.SIGTERM,signal.SIGUSR1):signal.signal(sig,lambda *_:None)
+gate,status=map(int,sys.argv[1:3])
+def emit(value):os.write(status,json.dumps(value).encode()+b'\\n')
+emit({'protocol_version':2,'ready':True})
+assert os.read(gate,1)==b''
+os.close(gate)
+assert not Path('''+repr(str(target))+''').exists()
+emit({'protocol_version':2,'dispatch_state':'not_released','root_exit_code':None,'descendants_stopped':True,'root_pid':None,'root_pgid':None})
+os.close(status)
+signal.signal(signal.SIGINT,signal.SIG_DFL)
+marker=Path('''+repr(str(marker))+''');release=Path('''+repr(str(release))+''')
+marker.touch()
+deadline=time.monotonic()+5
+while not release.exists() and time.monotonic()<deadline:time.sleep(.005)
+''')
+            def spawn(argv, **kwargs):
+                argv = list(argv)
+                self.assertEqual(Path(argv[3]).name, '_linux_lifetime.py')
+                argv[3] = str(helper)
+                return real_popen(argv, **kwargs)
+            signals = []
+            def send(process, signum):
+                deadline = time.monotonic()+2
+                while not marker.exists() and time.monotonic()<deadline:time.sleep(.005)
+                self.assertTrue(marker.exists(), 'Controlled finalizer was not reached')
+                signals.append(signum)
+                return real_signal(process, signum)
+            def selector():
+                selected = real_selector()
+                select = selected.select
+                def observe(timeout=None):
+                    if marker.exists():release.touch()
+                    return select(timeout)
+                selected.select = observe
+                return selected
+            def veto(_receipt):
+                raise TaskAlongError('cancel_pending','Synthetic closed-gate cancellation')
+            try:
+                with patch.object(sys,'platform','linux'), patch.object(boundary.subprocess,'Popen',spawn), patch.object(boundary,'_signal_owned',send), patch.object(boundary.selectors,'DefaultSelector',selector):
+                    with self.assertRaises(ProcessBoundaryError) as caught:
+                        run_bounded([sys.executable,'-I','-S','-c',f'from pathlib import Path;Path({str(target)!r}).touch()'],cwd=root,on_spawn=veto,timeout_seconds=3)
+                self.assertEqual(caught.exception.code,'cancel_pending')
+                self.assertEqual(caught.exception.effect_outcome,'not_sent')
+                self.assertIsNotNone(caught.exception.process_result)
+                self.assertTrue(caught.exception.process_result.termination_confirmed,
+                    {'signals':signals,'group':caught.exception.process_result.group_termination_confirmed,
+                     'unaccounted':caught.exception.process_result.unaccounted_descendants})
+                self.assertEqual(signals,[])
+                self.assertIsNone(caught.exception.process_result.exit_code)
+                self.assertFalse(target.exists())
+            finally:release.touch()
 
 
 if __name__ == "__main__":

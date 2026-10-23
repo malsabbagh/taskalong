@@ -70,3 +70,9 @@ read/fork errors, killed/stopped wrappers and ambiguous descendants cannot use
 the no-target path. Both drivers retain `cancel_pending`, `not_sent` and actual
 confirmed ProcessResult requirements. No cancellation authority, task success,
 production support or runtime qualification follows from parsed status alone.
+
+For an unreleased Linux gate, EOF is the initial clean stop request. The owner
+must not race it with SIGINT during helper finalization: that can destroy an
+otherwise valid protocol exit. Existing absolute TERM/KILL, hard-stop and task
+deadline windows remain unchanged; a helper that does not complete within them
+still cannot earn cessation confirmation.
