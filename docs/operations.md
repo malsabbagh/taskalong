@@ -145,3 +145,96 @@ The runtime dependency floor is `jsonschema>=4.26,<5`, reflecting the exercised
 version; use the exact hashed qualification lock when replaying evidence.
 See [contracts](contracts.md), [provenance](provenance.json) and
 [qualification](qualification.md) for exact boundaries and evidence.
+
+## Quiescent store maintenance
+
+Database format 2 adds immutable installation/provider/binding/decision history.
+It is independent of document schema versions. New stores still use format 1;
+ordinary opening never silently upgrades an existing store. Original v1 records
+and the original legacy profiles remain unchanged.
+
+Close all Store/RunService clients and allow owned invocations to stop and their
+effects to reconcile before maintenance. Current clients hold a lifetime shared
+gate; maintenance requires its exclusive gate and actual SQLite exclusive
+ownership in rollback-journal mode. An open predecessor WAL client prevents that
+transition. `maintenance_busy`, `maintenance_exclusivity_unproven` or
+`maintenance_not_quiescent` is a refusal, not permission to ignore a lock or kill
+an unverified PID. Unknown effect kinds, inconsistent records and uncertain
+cessation remain blocked. Only local filesystems and a trusted OS operator are
+supported. A new advisory file alone cannot fence older clients.
+
+The trusted Python operator API performs the complete sequence:
+
+```python
+from taskalong.store import Store
+
+# All paths are operator-selected private local locations. Backup and restore
+# must be new, separate directories outside the original control directory.
+with Store.maintenance(state_path) as maintenance:
+    receipt = maintenance.upgrade(
+        operation_key="history-upgrade-1",
+        backup_dir=backup_path,
+        restore_dir=restore_verification_path,
+    )
+```
+
+The durable intent binds the operation key to store identity, target version and
+both target paths. A complete control backup and verified fresh restore precede
+DDL. OS aliases and case variations cannot make an existing control directory
+count as a separate backup or restore destination. Original application-table
+rows/digests, blob references, retained captures,
+instruction files and required control metadata are included privately. SQLite's
+backup captures committed WAL data; copying only state.sqlite3 is insufficient.
+SQLite WAL/SHM/rollback journals and empty coordination lock files are omitted
+explicitly because the snapshot replaces the journals and OS locks cannot be
+restored from bytes. External worktrees/repositories, executables, remote effects
+and referenced files outside the control directory require separate preservation
+and reconciliation. This is a complete control-state backup, not an environment
+or project backup.
+
+Files/directories retain their private modes. Symlinks, hard links, special files,
+insecure existing paths, missing/tampered registered or core-evidence blobs and
+inconsistent manifests refuse the operation. Existing permissions are never
+silently repaired. New attempt containers are created privately; an older store
+with shared-mode nested control paths needs explicit operator reconciliation.
+Inventories are bounded to 10,000 entries, 64 directory levels, 512 MiB total
+payload and the existing bounded JSON manifest size. Exceeding a bound refuses
+without deleting partial artifacts.
+
+Migration SQL 002 adds immutable history and atomically commits both schema
+markers and its receipt. Matching retries return the committed receipt or verify
+and reuse complete pre-migration artifacts. Changed paths/inputs under the same
+key conflict. ENOSPC, interrupted copying or incomplete artifacts keep the prior
+format and retained failure data; inspect and reconcile rather than overwriting
+their destinations. A later source change makes the old backup stale.
+
+For a complete backup without upgrading, use `maintenance.backup(new_path,
+complete=True)` inside the same maintenance context. The original
+`Store.backup(new_sqlite_path)` API remains a SQLite-only snapshot and is not a
+complete control backup or redacted export.
+
+`taskalong.maintenance.verify_backup(path, expected_digest=trusted_digest)` checks
+the complete manifest and payload. `restore_backup(path, new_directory,
+expected_digest=trusted_digest)` restores only to a fresh directory. The expected
+digest must come from the trusted operator's retained receipt, not a worker claim.
+Hashes establish identity, not authenticity. Restores are deliberately tagged
+`taskalong.restore-quarantine`; current and predecessor clients both refuse them.
+The restore is built and verified in a private sibling staging directory with a
+canonical quarantine database committed before any payload is copied. Atomic
+no-replace directory publication exposes only the complete quarantine at the
+selected destination. Unsupported platform/filesystem primitives refuse this
+step; a racing existing directory is never replaced, even when empty. Failures
+retain private stages for inspection. There is no automatic promotion, in-place
+rollback or restore over later effects.
+Preserve the original store and reconcile external state before any future
+forward-repair procedure. Backups contain private unredacted data: do not put them
+in source control, public issues or distribution artifacts.
+
+After upgrade, `Store.record_document(typed_document, operation_key=...)` appends
+validated immutable RuntimeProfile, HarnessInstallation, ProviderProfile,
+ExecutionBinding or QualificationDecision bytes. `Store.document_history(kind,
+identity)` returns frozen records and refuses histories larger than 1,000 entries
+instead of returning a partial result. Provider/installation identity uses its
+declared ID, bindings use their digest, and decisions use `binding_digest:mode`.
+No implicit latest/current selection is provided. Storing or reading a decision
+does not grant execution, publication or current qualification authority.

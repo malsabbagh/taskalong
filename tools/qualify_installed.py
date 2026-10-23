@@ -313,7 +313,9 @@ def child_journey(args: argparse.Namespace) -> dict:
                               and reason == "non-Linux refusal")
             darwin_fault_probe = (sys.platform == "linux" and test.id() == "test_supervisor.ProcessTests.test_unavailable_kernel_lifetime_boundary_never_releases_target"
                                  and reason == "Darwin kernel boundary fault injection")
-            assert darwin_opposite or linux_opposite or darwin_fault_probe, "a required behavior case was skipped"
+            darwin_alias_probe = (sys.platform == "linux" and test.id() == "test_store_migration.StoreMigrationTests.test_system_alias_and_directory_identity_cannot_hide_overlapping_targets"
+                                  and reason == "No trusted OS directory alias contains this fixture root")
+            assert darwin_opposite or linux_opposite or darwin_fault_probe or darwin_alias_probe, "a required behavior case was skipped"
             skipped_platform_cases.append({"test": test.id(), "reason": reason, "required_platform": "Linux" if darwin_opposite else "Darwin"})
         if skipped_platform_cases:
             lifetime_tests = sys.modules["test_linux_lifetime"]
@@ -322,6 +324,9 @@ def child_journey(args: argparse.Namespace) -> dict:
                               for name in unittest.defaultTestLoader.getTestCaseNames(opposite_class)}
             if sys.platform == "linux":
                 expected_skips.add("test_supervisor.ProcessTests.test_unavailable_kernel_lifetime_boundary_never_releases_target")
+                alias_case = "test_store_migration.StoreMigrationTests.test_system_alias_and_directory_identity_cannot_hide_overlapping_targets"
+                if any(case["test"] == alias_case for case in skipped_platform_cases):
+                    expected_skips.add(alias_case)
             assert {case["test"] for case in skipped_platform_cases} == expected_skips, "the platform-specific skip inventory changed"
         suite_count = result.testsRun - len(skipped_platform_cases)
         assert suite_count > 50, "installed qualification must include the complete reviewed behavior suite"

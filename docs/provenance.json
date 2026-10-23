@@ -1,7 +1,44 @@
 {
   "format_version": 1,
   "lineage_record": "maintained_privately_outside_this_snapshot",
-  "source_import_allowlist": [],
+  "source_import_allowlist": [
+    {
+      "destination_path": "docs/adr/0003-quiescent-store-maintenance.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/history.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/maintenance.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/sql/002-document-history.sql",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/legacy_store_v1.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_store_migration.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "candidate_manifest_and_distribution_inventory"
+    }
+  ],
   "adaptations": [],
   "project_license": "MIT",
   "copyright_holder": "Mohamad Alsabbagh",
