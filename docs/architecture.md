@@ -17,7 +17,8 @@ The offline Claude wire component validates synthetic framing and structured
 results only. It does not launch, observe, cancel or resume a real CLI. Provider
 profiles and versioned semantic bindings now have offline v2 data contracts;
 offline qualification evidence has separate v2.1 contracts and a pure evaluator.
-Durable admission and live provider profiles remain future work.
+Immutable store history now retains these definitions and historical decisions;
+durable admission and live provider profiles remain future work.
 Cross-harness continuation must use explicit immutable artifacts and a
 new session; opaque sessions are not transferable. No scheduler or task DAG is
 provided.
@@ -37,3 +38,9 @@ The [offline qualification ADR](adr/0002-offline-qualification.md) describes exa
 subjects, explicitly trusted approvals and bounded evidence snapshots. This
 evaluator changes no lifecycle or runtime admission; every report keeps production
 dispatch disabled. See the [offline example](contracts.md#offline-qualification-v21).
+
+The proposed [maintenance ADR](adr/0003-quiescent-store-maintenance.md) describes
+explicit format-2 migration under exclusive ownership, complete private control
+backups and quarantined fresh-directory restores. Stored decisions grant no
+current authority. The [operations guide](operations.md#quiescent-store-maintenance)
+describes the operator API and failure boundaries.

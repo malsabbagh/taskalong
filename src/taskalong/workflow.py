@@ -801,7 +801,10 @@ def drive_run(state_dir, run_id, attempt_id):
                 current["attempts"][-1]["status"] = "running"
             store.mutate(run_id, "executor.spawned", attempt_id, None, {"receipt": receipt}, spawned, events=[("executor.started", {"attempt_id": attempt_id})], fence=run["lease_generation"])
         output = store.root / "attempts" / attempt_id
-        output.mkdir(parents=True, mode=0o700)
+        # parents=True applies mode only to the leaf, leaving a new control
+        # container to the ambient umask. Never chmod an existing container.
+        output.parent.mkdir(mode=0o700, exist_ok=True)
+        output.mkdir(mode=0o700)
         from .executors.registry import executor_for
         try:
             result = executor_for(profile).run(packet, workspace=workspace["path"], output_dir=output, cancel_requested=lambda: store.run(run_id)["state"] == "cancel_pending", heartbeat=lambda: store.heartbeat(run_id, attempt_id), on_spawn=on_spawn, git_common_dir=store.repository(run["repository_registration_id"])["common_dir"], control_dir=str(store.root), mode="native_resume" if attempt["mode"] == "native_resume" else "start", thread_id=attempt.get("thread_id"))

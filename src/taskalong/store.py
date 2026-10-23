@@ -70,8 +70,12 @@ def initialization_guard(root: Path):
 class Store:
     """One store UUID, immutable records, expected-revision mutations and receipts."""
 
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, *, _maintenance: bool = False):
         self.root = Path(root).absolute()
+        self._gate_fd = None
+        self._maintenance_mode = _maintenance
+        if _maintenance and not (self.root / "state.sqlite3").is_file():
+            raise TaskAlongError("store_missing", "Maintenance requires an existing tagged store.", exit_code=3)
         # Validate every existing selected path component; never resolve an attacker link.
         for part in [self.root, *self.root.parents]:
             if part.is_symlink():
@@ -84,8 +88,42 @@ class Store:
         self.blob_root = self.root / "blobs"
         self.blob_root.mkdir(mode=0o700, exist_ok=True)
         _private(self.blob_root, directory=True)
-        with initialization_guard(self.root):
-            self._open_database()
+        import fcntl
+        gate = self.root / "maintenance.lock"
+        _private(gate, directory=False)
+        self._gate_fd = os.open(gate, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            try:
+                fcntl.flock(self._gate_fd, (fcntl.LOCK_EX if _maintenance else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise TaskAlongError("maintenance_busy", "A trusted client or maintenance operation still owns this store.", exit_code=4) from exc
+            with initialization_guard(self.root):
+                self._open_database()
+            if _maintenance:
+                self._exclusive_database()
+                from .maintenance import require_quiescent
+                require_quiescent(self)
+        except BaseException:
+            self.close()
+            raise
+
+    @classmethod
+    def maintenance(cls, root: str | Path):
+        """Open only after current clients and predecessor WAL clients are excluded."""
+        return cls(root, _maintenance=True)
+
+    def _exclusive_database(self):
+        try:
+            self.db.execute("PRAGMA busy_timeout=100")
+            if self.db.execute("PRAGMA locking_mode=EXCLUSIVE").fetchone()[0] != "exclusive":
+                raise sqlite3.OperationalError("exclusive locking unavailable")
+            if self.db.execute("PRAGMA journal_mode=DELETE").fetchone()[0] != "delete":
+                raise sqlite3.OperationalError("rollback journal unavailable")
+            self.db.execute("BEGIN EXCLUSIVE")
+            self.db.commit()
+            self.db.execute("PRAGMA busy_timeout=5000")
+        except sqlite3.Error as exc:
+            raise TaskAlongError("maintenance_exclusivity_unproven", "Exclusive SQLite ownership is unproven; close all older clients and preserve the store.", exit_code=3) from exc
 
     def _open_database(self):
         self.db_path = self.root / "state.sqlite3"
@@ -101,13 +139,13 @@ class Store:
         self.db.execute("PRAGMA busy_timeout=5000")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        if version not in (0, 1) or (version == 0 and tables):
+        if version not in (0, 1, 2) or (version == 0 and tables):
             self.db.close()
             raise TaskAlongError("unsupported_store_version", "Store format is unknown; preserve it and use a compatible runtime.", exit_code=70)
-        if version == 1:
+        if version in (1, 2):
             try:
                 current_metadata = dict(self.db.execute("SELECT key,value FROM metadata"))
-                if current_metadata.get("format_version") != "1":
+                if current_metadata.get("format_version") != str(version):
                     raise ValueError("unknown metadata format")
                 uuid.UUID(current_metadata["store_uuid"])
             except (KeyError, ValueError, TypeError, sqlite3.Error) as exc:
@@ -116,6 +154,10 @@ class Store:
             if current_metadata.get("application") != "taskalong":
                 self.db.close()
                 raise TaskAlongError("unsupported_store_application", "This is not a tagged TaskAlong store; preserve it and use its owning application.", exit_code=70)
+            if version == 2:
+                self.store_uuid = str(uuid.UUID(current_metadata["store_uuid"]))
+                from .maintenance import validate_history_schema
+                validate_history_schema(self)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
         if version == 0:
@@ -132,8 +174,9 @@ class Store:
                 if self.db.execute("PRAGMA user_version").fetchone()[0] != 1:
                     raise
         try:
+            version = self.db.execute("PRAGMA user_version").fetchone()[0]
             metadata = dict(self.db.execute("SELECT key,value FROM metadata"))
-            if metadata.get("format_version") != "1":
+            if metadata.get("format_version") != str(version):
                 raise ValueError("unknown metadata format")
             self.store_uuid = str(uuid.UUID(metadata["store_uuid"]))
         except (KeyError, ValueError, TypeError, sqlite3.Error) as exc:
@@ -142,6 +185,7 @@ class Store:
         if metadata.get("application") != "taskalong":
             self.db.close()
             raise TaskAlongError("unsupported_store_application", "This is not a tagged TaskAlong store; preserve it and use its owning application.", exit_code=70)
+        self.format_version = version
 
     @contextlib.contextmanager
     def guard(self, run_id: str, purpose: str):
@@ -169,7 +213,13 @@ class Store:
             os.close(descriptor)
 
     def close(self):
-        self.db.close()
+        try:
+            if hasattr(self, "db"):
+                self.db.close()
+        finally:
+            if self._gate_fd is not None:
+                os.close(self._gate_fd)
+                self._gate_fd = None
 
     def __enter__(self):
         return self
@@ -490,7 +540,25 @@ class Store:
             raise TaskAlongError("blob_integrity", "A referenced artifact has changed; preserve the store.", exit_code=70)
         return data
 
-    def backup(self, destination: str | Path):
+    def upgrade(self, *, operation_key: str, backup_dir: str | Path, restore_dir: str | Path):
+        from .maintenance import upgrade
+        try:
+            return upgrade(self, operation_key=operation_key, backup_dir=backup_dir, restore_dir=restore_dir)
+        except (OSError, sqlite3.Error) as exc:
+            raise TaskAlongError("store_upgrade_failed", "Upgrade did not complete; preserve the prior store and retained backup/restore artifacts.", exit_code=70) from exc
+
+    def record_document(self, document, *, operation_key: str):
+        from .history import record_document
+        return record_document(self, document, operation_key=operation_key)
+
+    def document_history(self, kind: str, identity: str):
+        from .history import document_history
+        return document_history(self, kind, identity)
+
+    def backup(self, destination: str | Path, *, complete: bool = False):
+        if complete:
+            from .maintenance import create_backup
+            return create_backup(self, destination)
         target = Path(destination)
         if target.exists() or target.is_symlink():
             raise TaskAlongError("backup_exists", "Backup destination must be new.")
