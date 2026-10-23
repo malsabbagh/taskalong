@@ -71,7 +71,7 @@ class RunService:
         run = self._store.run(run_id)
         spec = self._store.spec(run)
         binding, satisfied, decision, reasons = None, None, None, ["v1_runtime_unqualified"]
-        if spec["schema_version"] == "2.2":
+        if spec["schema_version"] in {"2.2", "2.3"}:
             binding = spec["execution"]["binding_digest"]
             try:
                 if mode not in {"start", "restart"}:
@@ -127,10 +127,32 @@ class RunService:
             self._store.get_blob(key)
         packet_digest = None
         if attempt and attempt.get("canonical_packet"):
-            packet = validate_versioned("worker-packet", attempt["canonical_packet"], expected_version="2.2")
-            mapping = validate_versioned("packet-projection", attempt["packet_projection"], expected_version="2.2")
+            version = attempt["canonical_packet"].get("schema_version")
+            if version not in {"2.2", "2.3"}:
+                raise TaskAlongError("store_integrity", "The stored packet version is unsupported.", exit_code=70)
+            packet = validate_versioned("worker-packet", attempt["canonical_packet"], expected_version=version)
+            mapping = validate_versioned("packet-projection", attempt["packet_projection"], expected_version=version)
             if mapping["canonical_packet_digest"] != packet["digest"] or mapping["wire_packet_digest"] != attempt["packet"]["digest"]:
                 raise TaskAlongError("store_integrity", "The stored canonical/wire packet identities disagree.", exit_code=70)
+            if version == "2.3":
+                spec = self._store.spec(run)
+                if spec["schema_version"] != "2.3":
+                    raise TaskAlongError("store_integrity", "The stored driver packet belongs to another task format.", exit_code=70)
+                wire = validate_versioned("worker-packet", attempt["packet"], expected_version="2.3")
+                dispatch = attempt["dispatch_admission"]
+                expected = {"driver_config_digest":spec["execution"]["driver_config_digest"],
+                            "provider_profile_digest":dispatch["provider"]["digest"]}
+                if (digest(dispatch) != dispatch["digest"]
+                        or packet["admission_digest"] != dispatch["digest"]
+                        or mapping["projection_digest"] != dispatch["projection"]["digest"]
+                        or packet["binding_digest"] != spec["execution"]["binding_digest"]
+                        or packet["spec_digest"] != run["spec_digest"] or packet["run_id"] != run_id
+                        or packet["attempt_id"] != attempt["attempt_id"] or packet["session_id"] != attempt["attempt_id"]
+                        or canonical_bytes(packet) != canonical_bytes(wire)
+                        or any(packet["bindings"][key] != value or mapping[key] != value for key,value in expected.items())
+                        or mapping["session_id"] != packet["session_id"]
+                        or any(mapping[key] != packet[key] for key in ("run_id","attempt_id","spec_digest","admission_digest"))):
+                    raise TaskAlongError("store_integrity", "The stored driver packet/context identities disagree.", exit_code=70)
             packet_digest = packet["digest"]
         return seal_versioned("result-view", {"run_id":run_id, "revision":run["revision"], "state":run["state"],
             "outcome":outcome, "independently_accepted":accepted, "acceptance_digest":digest(acceptance) if acceptance else None,

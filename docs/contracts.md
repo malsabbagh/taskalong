@@ -4,6 +4,41 @@ The original provisional contracts use schema version `1.0`; the package/API ver
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).
 
+## Claude fixture contracts v2.3
+
+The explicit 2.3 family contains `driver-config`, `task-spec`, `worker-packet`,
+`packet-projection` and `worker-result`. Earlier schema resources and readers
+retain their exact bytes and meanings. `read_task_spec` selects the declared
+version; no version or adapter is inferred. A 2.3 task names
+`execution.binding_digest` and `execution.driver_config_digest`; it never puts a
+DriverConfig digest in a legacy RuntimeProfile field. The separately retained
+2.0 ProviderProfile supplies the exact simulated model/provider/auth identities.
+The five schemas are available with `schema(name, version="2.3")`.
+
+The trusted `configure_execution` API accepts `driver_config=...` instead of
+`runtime_profile_digest` for the explicit `claude-print-fixture/1` projection.
+It requires a format-4 store and the same exact installation, binding, policies,
+trusted receipts, evidence and context as 2.2 admission. The effective-context
+digest binds `{policies: <documents sorted by digest>, driver_config_digest: ...}`.
+It admits only installation `synthetic-claude-1`, empty additional instructions,
+semantic tool `claude.edit`, the synthetic worker/check backends and no hard
+cost/token cap. Provider metadata describes a simulation, never actual routing.
+Configuration registration does not authorize a task or enable production.
+
+The owned supervisor emits one canonical 2.3 packet, the identical stdin wire
+packet and a mapping binding configuration/provider/admission/session identities.
+The session UUID equals the new attempt UUID. Decoder results bind all those
+identities; terminal reports are untrusted. Complete owned cessation precedes
+candidate freezing and independent verification with a separate genuine v1
+check profile. Existing 2.2 result/capabilities envelopes also describe 2.3 tasks
+without exposing private paths, policy bodies or credential data.
+
+Native resume refuses. Explicit restart creates a new attempt/session, keeps
+worktree fencing and consumes the persisted budget; reported token/cost counters
+remain unknown totals. No fallback, public registry release or real vendor
+execution is enabled. See the [driver ADR](adr/0005-claude-fixture-driver.md) and
+[wire component](claude-protocol.md) for exact limits.
+
 ## Single-step execution v2.2
 
 Explicit version `2.2` adds TaskSpecV2, WorkerPacketV2, ExecutionEvidence,
@@ -24,7 +59,7 @@ does not establish effective enforcement, trusted qualification or a launch rout
 `RunService.configure_execution(...)` is a trusted operating-system control-plane
 API, separate from task submission. It requires explicit installation, provider,
 binding, policy, exact runtime-profile digest, context, receipts, approved trust
-and evidence bytes. Currently its only projection is `codex-v1-fixture/1`: an
+and evidence bytes. Its 2.2 projection is `codex-v1-fixture/1`: an
 explicitly registered synthetic executable and independent fixture verifier
 launcher. Empty additional instructions, exactly `fixture.edit`, denied discovery
 and the `synthetic-fixture` sandbox backend are its closed policy subset. Legacy

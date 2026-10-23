@@ -274,3 +274,21 @@ become current authority. Registering a portable document, opening a store or
 reading a result cannot select a model, start inference or enable production.
 The [contracts guide](contracts.md#single-step-execution-v22) describes the current
 synthetic-only subset and refusal boundaries.
+
+## Claude fixture store boundary
+
+Executable 2.3 tasks and DriverConfig history require format 4. Under the same
+exclusive, quiescent maintenance procedure, upgrade an already format-3 store
+with `store.upgrade(operation_key=..., backup_dir=..., restore_dir=...,
+target_version=4)`. Use distinct private backup and fresh restore directories.
+Skipping a numbered version refuses before backup/mutation. The pinned format-3
+client refuses format 4; use a verified prior backup in a fresh directory for
+rollback rather than editing markers. Existing runs/history remain intact.
+
+Select `claude-print-fixture/1` explicitly through `configure_execution` with a
+2.3 DriverConfig and exact 2.0 installation/provider/binding plus policies and
+trusted synthetic evidence. This is a developer fixture, not a vendor launcher
+setup guide. Schema validity or installed Claude help cannot admit real execution.
+Production, native continuation, Ollama and hard cost/token enforcement refuse.
+Explicit restart has a new session and consumes the existing run budget. Unknown
+cessation/effects require inspection and reconciliation, never automatic retry.

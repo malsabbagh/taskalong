@@ -139,6 +139,84 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/adr/0005-claude-fixture-driver.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/claude_code.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/codex_projection.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/config.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/driver-config.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/task-spec.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/worker-packet.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/packet-projection.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/worker-result.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/sql/004-driver-compatibility.sql",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/fake_claude.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/legacy_store_v3.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_claude_driver.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
     }
   ],
   "adaptations": [],
@@ -217,6 +295,12 @@
       "classification": "original",
       "license": "MIT",
       "verification": "M2_offline_qualification_and_distribution_inventory"
+    },
+    {
+      "destination_path": "docs/adr/0005-claude-fixture-driver.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
     },
     {
       "destination_path": "docs/architecture.md",
@@ -357,6 +441,12 @@
       "verification": "candidate_manifest_and_distribution_inventory"
     },
     {
+      "destination_path": "src/taskalong/executors/claude_code.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
       "destination_path": "src/taskalong/executors/claude_protocol.py",
       "classification": "original",
       "license": "MIT",
@@ -367,6 +457,18 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/codex_projection.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/executors/config.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
     },
     {
       "destination_path": "src/taskalong/executors/registry.py",
@@ -573,6 +675,36 @@
       "verification": "M2_offline_qualification_and_distribution_inventory"
     },
     {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/driver-config.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/packet-projection.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/task-spec.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/worker-packet.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.3/worker-result.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
       "destination_path": "src/taskalong/resources/schemas/v2/execution-binding.schema.json",
       "classification": "original",
       "license": "MIT",
@@ -595,6 +727,12 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/sql/004-driver-compatibility.sql",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
     },
     {
       "destination_path": "src/taskalong/resources/templates/draft-pr.md",
@@ -645,6 +783,12 @@
       "verification": "candidate_manifest_and_distribution_inventory"
     },
     {
+      "destination_path": "tests/fixtures/fake_claude.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
+    },
+    {
       "destination_path": "tests/fixtures/fake_codex.py",
       "classification": "original",
       "license": "MIT",
@@ -655,6 +799,12 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/legacy_store_v3.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
     },
     {
       "destination_path": "tests/fixtures/m1-contract-hashes.json",
@@ -727,6 +877,12 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_claude_driver.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M5_synthetic_driver_and_distribution_inventory"
     },
     {
       "destination_path": "tests/test_claude_protocol.py",

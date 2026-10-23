@@ -1,16 +1,15 @@
 # Experimental Claude wire component
 
-This offline component is a preparation step for a future Claude driver. It has
-no launcher, process control, provider profile, registry entry or production
-admission. Installing it does not add Claude execution support. The existing v1
-runtime profile still admits only Codex; production dispatch remains disabled.
+The original v1 offline decoder remains available. M5 adds the explicitly
+versioned 2.3 `ClaudeDriverStreamDecoder` and a synthetic fixture driver through
+the same owned supervisor/runner and closed registry. This does not add qualified
+real Claude execution. The v1 RuntimeProfile still admits only its original
+adapter, and production dispatch remains disabled.
 
-The independent part implemented here is parsing bounded byte chunks into one
-immutable, packet-bound worker result. Starting, observing and cancelling a real
-CLI, proving every descendant stopped, and exact native resume require later
-bindings/admission and actual per-mode qualification. Linux capability is not a
-prerequisite for these offline tests; it remains a prerequisite for the intended
-actual lifetime campaign. No host, CLI, credential or model is installed or chosen.
+The 2.3 decoder additionally binds DriverConfig, ProviderProfile and the fresh
+attempt-session UUID. The [driver ADR](adr/0005-claude-fixture-driver.md) describes
+versioning, format-4 migration, launch and failure boundaries. Synthetic stream
+success supplies no acceptance, provider routing or cessation proof.
 
 ## Contract
 
@@ -44,7 +43,7 @@ canonical JSON with no decimal/floating-point values.
 
 The decoder bounds aggregate bytes (at most 8 MiB), line bytes (at most 1 MiB),
 frames (at most 4096), nesting, collection size and numeric representation. These
-stdout limits do not replace a future supervisor's aggregate stdout/stderr,
+stdout limits do not replace the owned runner's aggregate stdout/stderr,
 wall-time, cleanup or process-lifetime controls.
 
 ## Evidence and remaining dependencies
@@ -66,9 +65,17 @@ The implementation deliberately uses a stricter subset: unknown event semantics
 fail closed. Missing terminal denial metadata is unknown rather than evidence of
 an observed denial. It does not promise forward compatibility with future events.
 
-Before a future launcher can be registered, implement versioned semantic bindings,
-immutable provider/model profiles and qualification admission; select an explicit
-independent command sandbox; prove actual start/cancel/results and exact-session
-resume if supported. Retain applicable protective policy, no silent fallback and
-unknown-effect quarantine. Cross-harness continuation uses explicit artifacts and
-a new session. MIT licensing does not qualify a live runtime; public publication remains a separate owner decision.
+A real vendor launcher still needs exact-version mode qualification for effective
+managed context/tool policy, approved auth/routing and full process lifetime.
+The installed 2.1.220 help/version were observed without inference; the original
+synthetic installation is identified separately as `synthetic-claude-1`. Current
+[CLI reference](https://code.claude.com/docs/en/cli-reference),
+[programmatic use](https://code.claude.com/docs/en/headless) and
+[settings precedence](https://code.claude.com/docs/en/settings), read 2026-10-23,
+can describe later versions. Bare mode changes credential discovery; safe mode
+and settings/tool flags do not establish OS containment. No vendor transcript,
+SDK implementation or credential was copied into this package.
+
+Cross-harness continuation uses explicit artifacts and a new session. MIT
+licensing and public visibility do not qualify a live runtime. Registry
+publication remains a separate decision.

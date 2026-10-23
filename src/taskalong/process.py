@@ -23,10 +23,11 @@ import uuid
 class ProcessBoundaryError(RuntimeError):
     """An invocation was invalid or a boundary callback failed."""
     def __init__(self, message: str, *, code: str = "process_boundary_failed",
-                 effect_outcome: str = "uncertain"):
+                 effect_outcome: str = "uncertain", process_result: ProcessResult | None = None):
         super().__init__(message)
         self.code = code
         self.effect_outcome = effect_outcome
+        self.process_result = process_result
 
 
 class _DescendantTracker:
@@ -536,17 +537,17 @@ def run_bounded(
         if isinstance(tracker, _LinuxTracker):
             group_confirmed = group_confirmed and tracker.root_pgid is not None and not _group_exists(tracker.root_pgid)
         confirmed = group_confirmed and not unaccounted
+        exit_code = tracker.root_exit_code if isinstance(tracker, _LinuxTracker) else process.returncode
+        result = ProcessResult(exit_code, redact(bytes(buffers["stdout"]), secrets),
+                               redact(bytes(buffers["stderr"]), secrets), timed_out, cancelled,
+                               confirmed, group_confirmed, output_limited, receipt, int((time.monotonic()-started)*1000), total,
+                               tracker.backend, unaccounted, protocol_error)
         if callback_error:
             raise ProcessBoundaryError("process boundary callback failed",
                 code=getattr(callback_error, "code", "process_callback_failed"),
                 effect_outcome="uncertain" if gate_release_attempted else
-                    getattr(callback_error, "effect_outcome", "uncertain")) from callback_error
-        exit_code = tracker.root_exit_code if isinstance(tracker, _LinuxTracker) else process.returncode
-        return ProcessResult(exit_code, redact(bytes(buffers["stdout"]), secrets),
-                             redact(bytes(buffers["stderr"]), secrets), timed_out, cancelled,
-                             confirmed, group_confirmed, output_limited, receipt, int((time.monotonic()-started)*1000), total,
-                             tracker.backend, unaccounted,
-                             protocol_error)
+                    getattr(callback_error, "effect_outcome", "uncertain"), process_result=result) from callback_error
+        return result
     finally:
         selector.close()
         tracker.close()

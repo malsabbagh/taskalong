@@ -43,6 +43,26 @@ class DurableDriverContract:
         self.assertEqual(stopped["evidence_ids"], [])
         self.assertEqual(self.service.result(run["run_id"])["outcome"], "cancelled")
 
+    def test_cancel_before_owned_gate_release_is_acknowledged_without_dispatch(self):
+        from test_recovery_regressions import RecoveryRegressions
+        run = self.configured_task()
+        environment, marker, release = RecoveryRegressions.trace_environment(self, "on_spawn", mode="pause")
+        client = RecoveryRegressions.cli_start(self, run, "contract-gate", environment=environment)
+        self.assertEqual(client.returncode, 0, client.stderr)
+        try:
+            RecoveryRegressions.wait_file(self, marker)
+            before = self.service.inspect(run["run_id"])
+            self.service.cancel(run["run_id"], operation_key="contract-gate-cancel", expected_revision=before["revision"])
+        finally:
+            release.touch()
+        stopped = self.wait(run["run_id"])
+        self.assertEqual(stopped["state"], "cancelled")
+        self.assertIsNone(stopped["active_attempt_id"])
+        self.assertEqual(stopped["pending_effect_ids"], [])
+        self.assertEqual(self.invocations(), [])
+        self.assertIsNone(stopped["acceptance_id"])
+        self.assertEqual(sum(event["type"] == "cancel.confirmed" for event in self.service.events(run["run_id"])), 1)
+
     def test_unsupported_native_resume_never_restarts(self):
         run = self.configured_task()
         with self.assertRaises(TaskAlongError) as failure:
@@ -53,7 +73,7 @@ class DurableDriverContract:
 
     def test_production_task_cannot_use_fixture_qualification(self):
         self.service.configure_execution(**self.configuration)
-        task = seal_versioned("task-spec", self.task | {"qualification":"production"}, version="2.2")
+        task = seal_versioned("task-spec", self.task | {"qualification":"production"}, version=self.task["schema_version"])
         with self.assertRaises(TaskAlongError) as failure:
             self.service.submit(task, operation_key="contract-production")
         self.assertEqual(failure.exception.code, "execution_identity_mismatch")

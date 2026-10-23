@@ -3,8 +3,8 @@
 RunService and its thin CLI own durable task lifecycle operations, SQLite
 state/events, explicit authority, fenced worktrees and independent acceptance.
 An internal closed registry selects the worker driver; independent commands have
-a separate sandbox seam. Only the existing Codex v1 driver is registered, and
-its production preflight always refuses while actual runtime qualification is
+a separate sandbox seam. Explicit versioned Codex and Claude fixture contracts
+are registered; both refuse production while actual runtime qualification is
 incomplete. No task-selected imports, arbitrary vendor flags or fallback exist.
 
 Worker results are untrusted data bound to exact packet, task, attempt and
@@ -18,7 +18,8 @@ results only. It does not launch, observe, cancel or resume a real CLI. Provider
 profiles and versioned semantic bindings now have offline v2 data contracts;
 offline qualification evidence has separate v2.1 contracts and a pure evaluator.
 Immutable store history now retains these definitions and historical decisions;
-durable admission and live provider profiles remain future work.
+durable admission supports explicit synthetic projections; live provider execution
+remains unqualified.
 Cross-harness continuation must use explicit immutable artifacts and a
 new session; opaque sessions are not transferable. No scheduler or task DAG is
 provided.
@@ -52,3 +53,9 @@ family, independently bound verifier policies, a synthetic Codex wire projection
 and read-only capabilities/result views. Explicit format 3 excludes older clients
 before executable v2 state is interpreted. No new harness, scheduler or production
 dispatch is introduced.
+
+The [Claude fixture ADR](adr/0005-claude-fixture-driver.md) adds a separate 2.3
+DriverConfig and exact registry contract to the same lifecycle. Explicit format 4
+excludes predecessor clients before executable driver state. The original external
+fixture exercises protocol, cancellation and restart; actual CLI execution,
+routing and isolation remain unqualified and production remains disabled.

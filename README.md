@@ -16,8 +16,8 @@ ReviewSensei results govern acceptance; worker output cannot grant authority.
   verification and fixture publication journeys.
 - Installed read-only guides: `taskalong guide`, `taskalong guide operations`,
   `taskalong guide contracts` and `taskalong guide qualification`.
-- An offline Claude wire decoder with synthetic contract tests. It has no
-  launcher or registry admission; this is not Claude CLI execution support.
+- Explicit Codex and Claude synthetic driver projections sharing one supervisor,
+  with offline wire decoders and contract tests. Real CLI execution is unqualified.
 
 The Codex production path returns `runtime_policy_unsupported` before dispatch.
 Instruction/tool isolation, complete real-worker descendant lifetime, remote
