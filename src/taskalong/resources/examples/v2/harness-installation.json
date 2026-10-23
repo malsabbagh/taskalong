@@ -1,0 +1,18 @@
+{
+  "installation_id": "fixture-cli",
+  "revision": 1,
+  "harness": "claude-code",
+  "adapter_id": "not-registered",
+  "driver_version": "1.0",
+  "cli_version": "fixture-1",
+  "platform": {
+    "os": "linux",
+    "architecture": "x86_64",
+    "backend_id": "fixture-only"
+  },
+  "executable_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+  "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+  "kind": "harness_installation",
+  "schema_version": "2.0",
+  "digest": "e2b80840ca92c6b96f92f641bae9054d8dd9e876dc73569e45218ac52c2bee8e"
+}

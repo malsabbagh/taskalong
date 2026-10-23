@@ -68,6 +68,12 @@
       "verification": "candidate_manifest_and_distribution_inventory"
     },
     {
+      "destination_path": "docs/adr/0001-semantic-execution-documents.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
+    },
+    {
       "destination_path": "docs/architecture.md",
       "classification": "original",
       "license": "MIT",
@@ -156,6 +162,12 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/bindings.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
     },
     {
       "destination_path": "src/taskalong/cli.py",
@@ -260,6 +272,24 @@
       "verification": "candidate_manifest_and_distribution_inventory"
     },
     {
+      "destination_path": "src/taskalong/resources/examples/v2/execution-binding.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2/harness-installation.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/examples/v2/provider-profile.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
+    },
+    {
       "destination_path": "src/taskalong/resources/schemas/v1/acceptance.schema.json",
       "classification": "original",
       "license": "MIT",
@@ -330,6 +360,24 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2/execution-binding.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2/harness-installation.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2/provider-profile.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
     },
     {
       "destination_path": "src/taskalong/resources/sql/001-initial.sql",
@@ -422,6 +470,18 @@
       "verification": "candidate_manifest_and_distribution_inventory"
     },
     {
+      "destination_path": "tests/fixtures/v1-canonical.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/v1-schema-hashes.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
+    },
+    {
       "destination_path": "tests/helpers.py",
       "classification": "original",
       "license": "MIT",
@@ -438,6 +498,12 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_bindings.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "M1_semantic_contracts_and_distribution_inventory"
     },
     {
       "destination_path": "tests/test_cancel_resume.py",

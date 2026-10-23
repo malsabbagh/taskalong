@@ -1,0 +1,107 @@
+{
+  "task-spec": {
+    "task_id": "synthetic-task",
+    "revision": 1,
+    "goal": "Correct the bounded synthetic arithmetic function.",
+    "non_goals": [],
+    "repository": {
+      "registration_id": "11111111-1111-4111-8111-111111111111",
+      "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_ref": "main"
+    },
+    "scope": {
+      "files": [
+        "arithmetic.py"
+      ],
+      "operations": [
+        "modify"
+      ]
+    },
+    "criteria": [
+      {
+        "id": "arithmetic",
+        "description": "The function passes its declared unittest.",
+        "check_ids": [
+          "unit"
+        ]
+      }
+    ],
+    "checks": [
+      {
+        "id": "unit",
+        "argv": [
+          "python3",
+          "-m",
+          "unittest"
+        ],
+        "cwd": ".",
+        "timeout_seconds": 20,
+        "expected_exit_code": 0,
+        "criterion_ids": [
+          "arithmetic"
+        ],
+        "required": true
+      }
+    ],
+    "execution": {
+      "adapter": "codex-cli",
+      "profile_id": "fixture",
+      "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "permissions": {
+      "local_edit": true,
+      "local_commit": true,
+      "inference_destination_id": "fixture",
+      "allowed_effects": [
+        "commit_candidate",
+        "execute",
+        "verify"
+      ]
+    },
+    "budget": {
+      "max_attempts": 2,
+      "attempt_seconds": 30,
+      "total_active_seconds": 60,
+      "max_output_bytes": 1048576,
+      "hard_cost_usd": null,
+      "hard_tokens": null
+    },
+    "review": {
+      "required": true,
+      "integration": "reviewsensei",
+      "contract": "0.8.8/v1",
+      "config_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "require_full_coverage": true
+    },
+    "publication": null,
+    "qualification": "synthetic",
+    "kind": "task_spec",
+    "schema_version": "1.0",
+    "extensions": {},
+    "digest": "5e282061d9cb6aafbc0c104395799843e26ab6fcae782e1ab10db3fc4aeedb4d"
+  },
+  "runtime-profile": {
+    "profile_id": "fixture",
+    "qualification": "synthetic",
+    "adapter": "codex-cli",
+    "executable_path": "/usr/bin/false",
+    "executable_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "runtime_version": "0.163.0",
+    "model": "fixture",
+    "reasoning_effort": "low",
+    "service_tier": null,
+    "inference_destination_id": "fixture",
+    "permission_policy": {
+      "workspace_write": true,
+      "network": false
+    },
+    "permission_policy_digest": "a573b429124d23bf8ff382bf84aa8424728979d21be575c578a3a379f798cd54",
+    "toolchain_read_roots": [],
+    "credential_source_ref": null,
+    "qualification_receipt_ids": [],
+    "kind": "runtime_profile",
+    "schema_version": "1.0",
+    "extensions": {},
+    "digest": "950ef4d221d5d35bc548d40332eec0963614b96de521eaecc8685c5839217447"
+  }
+}

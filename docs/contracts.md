@@ -20,7 +20,7 @@ and worker output cannot invoke them or admit their own authority. Authority
 records identify that OS principal and retain `human_decision_observed=false`;
 no human approval is inferred from an identity string.
 
-The package contains exactly these twelve offline Draft 2020-12 schemas:
+Version `1.0` contains exactly these twelve offline Draft 2020-12 schemas:
 `task-spec`, `task-run`, `run-event`, `worker-packet`, `worker-result`,
 `execution-observation`, `evidence`, `acceptance`, `authority`, `effect-intent`,
 `command-result`, and `runtime-profile`. Their IDs are
@@ -134,3 +134,86 @@ exception. `ok` describes the command, not task acceptance. Exit codes are:
 No live task-to-verified-draft-PR, exactly-once remote effect, hard provider cost
 cap, arbitrary-runtime compatibility, public license or release claim follows
 from these contracts.
+
+## Offline semantic documents v2
+
+`taskalong.bindings.HarnessInstallation`, `ProviderProfile` and `ExecutionBinding`
+are frozen canonical documents using schema version `2.0`. Their three schemas
+have IDs `urn:taskalong:schema:v2:<name>`. They are descriptive data only: no
+registration, trusted resolution, DB migration, task v2, driver selection or
+production admission is implemented here. Existing v1 APIs, canonical bytes,
+digests and schema resources keep their original behavior.
+
+```python
+from importlib import resources
+from taskalong.bindings import HarnessInstallation
+from taskalong.validation import schema, schema_names, validate_versioned
+
+assert len(schema_names()) == 12  # Existing default remains v1.
+assert len(schema_names(version="2.0")) == 3
+resource = resources.files("taskalong.resources").joinpath(
+    "examples", "v2", "harness-installation.json")
+installation = HarnessInstallation(resource.read_bytes())
+document = validate_versioned("harness-installation", installation.to_dict(),
+                              expected_version="2.0")
+assert schema("harness-installation", version="2.0")["additionalProperties"] is False
+```
+
+The installed `examples/v2/` directory also contains `provider-profile.json` and
+`execution-binding.json`. Each example is complete, sealed and synthetic. The
+binding links the other two example digests. Its policy/check references and
+runtime/model digests are synthetic declarations, not existing approved objects
+or evidence. They cannot admit a launch. The provider example names loopback but
+does not connect to it or claim any server/model is installed.
+
+`seal_versioned(name, data, version="2.0")` supplies kind/version and seals strict
+JSON. `validate_versioned(..., expected_version=...)` requires the caller's
+selected format; it never guesses from input. Version `1.0` uses the existing
+validator/sealer unchanged. Schema enumeration and registries are explicitly
+version-scoped, installed and offline. Frozen `from_dict` and byte constructors
+validate, `to_dict` returns an independent copy, and `to_bytes` returns canonical
+bytes. Unknown fields/versions, malformed digests, duplicate keys, non-integer
+numbers, overflow and recognizable credentials are rejected. Sensitive-input
+screening is a secondary check, not arbitrary secret detection.
+
+Installation identity includes harness, adapter/driver and CLI versions, exact
+platform/backend, executable digest and a separate dependency-closure digest.
+Paths and arbitrary argv/imports are absent. Unknown adapter IDs can be stored as
+design data but are unavailable to the unchanged closed registry. A declared
+closure hash does not prove that the complete executable closure was captured.
+
+Provider profiles have closed harness/provider/auth variants for Codex account,
+Claude account/API, separate Claude/Ollama local and cloud destinations, Cursor
+account and Antigravity account. Model requested identity and resolved digest,
+endpoint, credential reference, effort/tier and auxiliary profile references are
+explicit semantic inputs. Account/API references are nonsecret identifiers, never
+secret values or credential file paths. Local Ollama requires an HTTP(S) literal
+loopback endpoint and local-no-secret auth; other variants require HTTPS and an
+explicit credential/account reference. Userinfo, query/fragment, invalid ports
+and control characters are refused. Endpoint validation performs no DNS lookup.
+Loopback does not prove local computation, effective egress or routing. A model
+digest is a declaration requiring later trusted evidence, not alias resolution.
+Unlisted auxiliary routes and fallback are forbidden. Supported data variants
+and option names make no claim that a corresponding installed CLI accepts them.
+
+Bindings reference installation/provider, instruction/tool policy, worker sandbox
+and independent check-binding digests. Complete policy records and trusted
+resolvers belong to a later milestone. No qualification receipt field exists;
+receipt rotation therefore cannot change binding identity. Capabilities form a
+nonempty unique set sorted before hashing. Auxiliary routes retain declared
+order. Budgets use integer seconds/tokens/micro-USD; null is unspecified, not zero
+usage or spending authority. A required hard cap needs a numeric limit and its
+required capability; declaring it still proves no enforcement.
+
+Native resume is null unless explicitly required. Its protocol version,
+`exact_stored_session` scope and compatibility digest bind every semantic binding
+input (including policies, independent check binding, required capabilities and
+budgets). `native_resume_compatibility_digest` computes this identity excluding
+only the two digest fields themselves. Use the complete kind/version-bearing
+document as input. Altering any compatibility subject requires a new digest.
+No session is transferred or resumed by these records; later admission must also
+verify the exact stored session, evidence and fresh authority.
+
+Future milestones must preserve these shipped v2 bytes/meanings or introduce an
+explicit new schema version/discriminant. Neither v1 nor v2 authority may be
+silently reinterpreted. Production refusal remains in force.

@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2:harness-installation",
+  "title": "harness-installation",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}(?![\\s\\S])"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "installation_id",
+    "revision",
+    "harness",
+    "adapter_id",
+    "driver_version",
+    "cli_version",
+    "platform",
+    "executable_digest",
+    "runtime_closure_digest",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "harness_installation"
+    },
+    "schema_version": {
+      "const": "2.0"
+    },
+    "installation_id": {
+      "$ref": "#/$defs/id"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "harness": {
+      "enum": [
+        "codex",
+        "claude-code",
+        "cursor",
+        "antigravity"
+      ]
+    },
+    "adapter_id": {
+      "$ref": "#/$defs/id"
+    },
+    "driver_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}(?![\\s\\S])"
+    },
+    "cli_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9.+_-]{0,127}(?![\\s\\S])"
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture",
+        "backend_id"
+      ],
+      "properties": {
+        "os": {
+          "enum": [
+            "linux",
+            "darwin",
+            "windows"
+          ]
+        },
+        "architecture": {
+          "enum": [
+            "x86_64",
+            "arm64"
+          ]
+        },
+        "backend_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "executable_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "runtime_closure_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "digest": {
+      "$ref": "#/$defs/sha256"
+    }
+  }
+}
