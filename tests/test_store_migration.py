@@ -543,12 +543,14 @@ maintenance.restore_backup(source,target,expected_digest=identity)
         fixture = Path(__file__).parent / "fixtures/legacy_store_v1.py"
         self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(),"356f4286ed1113d6d528093c208adb641dcb0c0dc5a3c8e8072cf75da5eeca55")
         program = r'''
-import importlib.util,os,signal,sqlite3,sys
+import importlib.util,os,signal,sqlite3,sys,time
 spec=importlib.util.spec_from_file_location('taskalong._legacy_store_v1',sys.argv[1])
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+if len(sys.argv)>4:
+    time.sleep(float(sys.argv[4]));os.write(int(sys.argv[3]),b'P')
 try:
     with module.Store(sys.argv[2]):
-        if len(sys.argv)>3:os.write(int(sys.argv[3]),b'R');signal.pause()
+        if len(sys.argv)==4:os.write(int(sys.argv[3]),b'R');signal.pause()
 except sqlite3.OperationalError:print('kernel-excluded')
 '''
         reader,writer=os.pipe()
@@ -564,8 +566,24 @@ except sqlite3.OperationalError:print('kernel-excluded')
             os.close(reader)
             child.kill();child.communicate(timeout=5)
         with Store.maintenance(self.state):
-            result=subprocess.run([sys.executable,"-c",program,str(fixture),str(self.state)],capture_output=True,text=True,check=True,timeout=10)
-            self.assertEqual(result.stdout.strip(),"kernel-excluded")
+            # Python startup is not SQLite exclusion. A delayed startup would
+            # exhaust the old combined ten-second deadline despite a correct
+            # five-second busy refusal. Keep the refusal deadline at ten seconds
+            # and require an independent bounded readiness handshake first.
+            reader,writer=os.pipe()
+            probe=subprocess.Popen([sys.executable,"-c",program,str(fixture),str(self.state),str(writer),"6"],
+                pass_fds=(writer,),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            os.close(writer)
+            try:
+                self.assertTrue(select.select([reader],[],[],15)[0],"predecessor startup did not complete")
+                self.assertEqual(os.read(reader,1),b"P")
+                output,error=probe.communicate(timeout=10)
+                self.assertEqual(probe.returncode,0,error[-1000:])
+                self.assertEqual(output.strip(),"kernel-excluded")
+            finally:
+                os.close(reader)
+                if probe.poll() is None:
+                    probe.kill();probe.communicate(timeout=5)
 
 
 class UpgradedStoreJourneyTests(ServiceFixture, unittest.TestCase):
