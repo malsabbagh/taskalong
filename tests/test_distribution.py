@@ -247,23 +247,31 @@ class DistributionTests(unittest.TestCase):
         self.assertIn('synthetic observation', stderr.getvalue())
 
     def test_every_installed_phase_refuses_checkout_package_reads(self):
-        import taskalong
-        source = Path(taskalong.__file__).resolve().parent.parent
         tool = Path(qualifier.__file__).resolve()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'diagnostics').mkdir()
+            # The parent can import src/ while this deliberately isolated child
+            # imports the wheel. Target the child's actual package in both modes.
+            source = Path(subprocess.check_output([sys.executable, '-I', '-c',
+                'import taskalong;from pathlib import Path;print(Path(taskalong.__file__).resolve().parent.parent)'],
+                cwd=root, env=qualifier.clean_environment(), text=True, timeout=5).strip())
+            self.assertIn('site-packages', source.parts)
             for phase in ('inventory', 'sample', 'tests-0', 'tests-1'):
-                identity = {'phase': phase, 'artifact_sha256': 'a'*64, 'harness_sha256': 'b'*64,
-                            'lock_sha256': 'c'*64, 'schedule_sha256': None}
-                path = root / 'phase-input.json'
-                path.write_text(json.dumps({'identity': identity, 'schedule': None}))
-                result = subprocess.run([sys.executable, str(tool), '--child', '--source-root', str(source),
-                    '--phase-input', str(path)], cwd=root, env=qualifier.clean_environment(),
-                    capture_output=True, text=True, timeout=5)
-                self.assertEqual(result.returncode, 1, phase)
-                self.assertEqual(result.stdout, '', phase)
-                self.assertIn('installed qualification attempted source checkout access', result.stderr, phase)
+                for boundary in ('source', 'build'):
+                    with self.subTest(phase=phase, boundary=boundary):
+                        identity = {'phase': phase, 'artifact_sha256': 'a'*64, 'harness_sha256': 'b'*64,
+                                    'lock_sha256': 'c'*64, 'schedule_sha256': None}
+                        path = root / 'phase-input.json'
+                        path.write_text(json.dumps({'identity': identity, 'schedule': None}))
+                        argv = [sys.executable, str(tool), '--child', '--source-root', str(source if boundary == 'source' else root / 'checkout')]
+                        if boundary == 'build':
+                            argv += ['--build-source-root', str(source)]
+                        result = subprocess.run(argv + ['--phase-input', str(path)], cwd=root,
+                            env=qualifier.clean_environment(), capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 1)
+                        self.assertEqual(result.stdout, '')
+                        self.assertIn('installed qualification attempted source checkout access', result.stderr)
 
     def test_ci_bundle_refuses_other_run_artifact_or_modified_checkout(self):
         tool = Path(qualifier.__file__).with_name('qualification_bundle.py')
