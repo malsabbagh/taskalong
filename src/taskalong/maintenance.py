@@ -171,7 +171,7 @@ def database_state(db):
         raise _failure("backup_integrity", "SQLite foreign-key verification failed.")
     metadata = dict(db.execute("SELECT key,value FROM metadata"))
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (1, 2, 3) or metadata.get("format_version") != str(version):
+    if version not in (1, 2, 3, 4) or metadata.get("format_version") != str(version):
         raise _failure("store_integrity", "Store schema markers disagree.")
     schema = [list(row) for row in db.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")]
     tables = {}
@@ -401,7 +401,8 @@ def verify_restored(directory, destination, *, expected_digest):
 
 
 def _migration_sql(number=2):
-    name = {2: "002-document-history.sql", 3: "003-execution-projections.sql"}[number]
+    name = {2: "002-document-history.sql", 3: "003-execution-projections.sql",
+            4: "004-driver-compatibility.sql"}[number]
     return files("taskalong.resources").joinpath("sql", name).read_text()
 
 
@@ -433,7 +434,7 @@ def validate_history_schema(store):
 def upgrade(store, *, operation_key, backup_dir, restore_dir, target_version=2):
     require_quiescent(store)
     key_check(operation_key)
-    if type(target_version) is not int or target_version not in (2, 3):
+    if type(target_version) is not int or target_version not in (2, 3, 4):
         raise _failure("unsupported_store_version", "Select an explicit supported numbered migration.")
     source_version = target_version - 1
     backup, restored = _path(backup_dir), _path(restore_dir)
@@ -452,6 +453,8 @@ def upgrade(store, *, operation_key, backup_dir, restore_dir, target_version=2):
             if recorded != prior["receipt"]:
                 raise _failure("store_integrity", "The migration operation and immutable receipt disagree.")
             return recorded
+        if store.format_version < source_version:
+            raise TaskAlongError("store_migration_order", "Apply each preceding numbered migration before the selected target.", exit_code=4)
         if store.format_version != source_version:
             raise TaskAlongError("store_already_upgraded", "This store already has numbered history; use its original operation receipt.", exit_code=4)
         if prior is None:

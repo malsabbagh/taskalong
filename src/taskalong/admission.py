@@ -1,4 +1,4 @@
-"""Trusted local resolution for one explicitly simulated protocol projection.
+"""Trusted local resolution for explicitly simulated protocol projections.
 
 Portable histories supply identity, never current authority. The OS operator
 registers exact fixture transport/policy content separately from task submission.
@@ -8,13 +8,12 @@ or production policy enforcement is admitted by this module.
 from __future__ import annotations
 
 import hashlib
-import platform
-import sys
 
 from .bindings import ExecutionBinding, HarnessInstallation, ProviderProfile
 from .contracts import RuntimeProfile
 from .errors import TaskAlongError
 from .execution import CheckBinding, InstructionBundle, PolicyResolver, SandboxPolicy, ToolPolicy
+from .executors.config import DriverConfig
 from .qualification import EvidenceStore, QualificationReceipt, TrustPolicy, evaluate
 from .store import encode, now
 from .validation import canonical_bytes, digest, loads, screen_sensitive
@@ -30,7 +29,7 @@ def _refuse(code="execution_projection_unsupported"):
 
 
 def _require(store):
-    if store.format_version != 3:
+    if store.format_version not in (3, 4):
         _refuse("store_upgrade_required")
 
 
@@ -47,7 +46,7 @@ def exact_document(store, content_digest, cls):
 
 
 def configure_execution(store, *, binding, installation, provider, policies,
-                        runtime_profile_digest, receipts, trust, evidence, context, projection):
+                        runtime_profile_digest=None, driver_config=None, receipts, trust, evidence, context, projection):
     """Trusted OS control-plane registration, not a worker/task JSON command.
 
     Registration does not qualify dispatch. The immutable projection freezes
@@ -55,7 +54,10 @@ def configure_execution(store, *, binding, installation, provider, policies,
     Evidence bytes are private content-addressed blobs, not arbitrary paths.
     """
     _require(store)
-    if projection != PROJECTION:
+    is_driver = driver_config is not None
+    if is_driver and (store.format_version != 4 or runtime_profile_digest is not None):
+        _refuse("store_upgrade_required" if store.format_version != 4 else "execution_registration_conflict")
+    if not is_driver and projection != PROJECTION:
         _refuse()
     b = ExecutionBinding.from_dict(binding)
     i = HarnessInstallation.from_dict(installation)
@@ -77,18 +79,25 @@ def configure_execution(store, *, binding, installation, provider, policies,
     # an unsatisfied decision as authority or as a registration error.
     evaluate(b, installation=i, provider=p, context=context, mode="start", receipts=receipts,
              trust=trust, evidence=evidence, now=now(), minimum_level="offline_fixture")
-    profile = exact_document(store, runtime_profile_digest, RuntimeProfile)
+    profile = DriverConfig.from_dict(driver_config) if is_driver else exact_document(store, runtime_profile_digest, RuntimeProfile)
     sandbox = store.setting("command_sandbox")
     if not sandbox or sandbox.get("qualification") != "synthetic":
         _refuse("check_binding_unresolved")
     registration = {"projection": projection, "binding_digest": b.digest,
-                    "runtime_profile_digest": profile.digest, "context": context,
+                    "context": context,
                     "policy_digests": sorted(doc.digest for doc in resolver.documents),
                     "check_launcher_digest": digest(sandbox), "transport": "operator_registered_fixture"}
+    if is_driver:
+        registration.update(schema_version="2.3", driver_config_digest=profile.digest)
+    else:
+        registration["runtime_profile_digest"] = profile.digest
     registration["digest"] = digest(registration)
     # Check identity links and representability before persisting this route.
-    _projection(b, i, p, resolver, profile.to_dict(), registration)
-    for document in (b, i, p, *resolver.documents):
+    from .executors.registry import contract_for
+    contract_for(profile.to_dict(), task_version="2.3" if is_driver else "2.2", projection=projection).represent(
+        b, i, p, resolver, profile.to_dict(), registration)
+    documents = (b, i, p, *resolver.documents, profile) if is_driver else (b, i, p, *resolver.documents)
+    for document in documents:
         store.record_document(document, operation_key="execution-document:" + document.digest)
     refs = []
     for key, data in evidence._entries:
@@ -107,7 +116,7 @@ def configure_execution(store, *, binding, installation, provider, policies,
             "trust_digest": trust.digest, "production_dispatch_allowed": False}
 
 
-def registered_profile(store, binding_digest):
+def _registration(store, binding_digest):
     _require(store)
     row = store.db.execute("SELECT document FROM execution_projections WHERE binding_digest=?", (binding_digest,)).fetchone()
     if row is None:
@@ -115,45 +124,49 @@ def registered_profile(store, binding_digest):
     registration = loads(row[0])
     if registration.get("binding_digest") != binding_digest or digest(registration) != registration.get("digest"):
         _refuse("store_integrity")
+    return registration
+
+
+def registered_profile(store, binding_digest):
+    registration = _registration(store, binding_digest)
+    if registration.get("projection") != PROJECTION or "runtime_profile_digest" not in registration:
+        _refuse()
     return exact_document(store, registration["runtime_profile_digest"], RuntimeProfile).to_dict(), registration
 
 
-def _projection(binding, installation, provider, policies, profile, registration):
-    b, i, p = binding.to_dict(), installation.to_dict(), provider.to_dict()
-    for field, document in (("installation_digest", installation), ("provider_profile_digest", provider)):
-        if b[field] != document.digest:
-            _refuse("execution_identity_mismatch")
-    instructions = policies.resolve(b["instruction_bundle_digest"], InstructionBundle).to_dict()
-    tools = policies.resolve(b["tool_policy_digest"], ToolPolicy).to_dict()
-    worker = policies.resolve(b["worker_sandbox_digest"], SandboxPolicy).to_dict()
-    check = policies.resolve(b["check_binding_digest"], CheckBinding).to_dict()
-    verifier = policies.resolve(check["sandbox_digest"], SandboxPolicy).to_dict()
-    architecture = "arm64" if platform.machine().lower() in {"arm64", "aarch64"} else "x86_64"
-    if (registration["projection"] != PROJECTION or profile["qualification"] != "synthetic"
-            or i["harness"] != "codex" or i["adapter_id"] != profile["adapter"] or i["adapter_id"] != "codex-cli"
-            or i["driver_version"] != "codex-v1-fixture-1" or i["cli_version"] != profile["runtime_version"]
-            or i["executable_digest"] != profile["executable_sha256"]
-            or i["platform"] != {"os": sys.platform, "architecture": architecture, "backend_id": "synthetic-fixture"}
-            or profile["permission_policy"] != {} or profile["toolchain_read_roots"]
-            or instructions["texts"] or tools["allowed_tools"] != ["fixture.edit"]
-            or instructions["protective_policy_digest"] != profile["permission_policy_digest"]
-            or worker["role"] != "worker" or verifier["role"] != "independent_check"
-            or worker["backend_id"] != "synthetic-fixture" or verifier["backend_id"] != "synthetic-fixture"
-            or worker["permission_policy_digest"] != profile["permission_policy_digest"]
-            or p["harness"] != "codex" or p["provider"] != "openai-account"
-            or p["model"]["requested"] != profile["model"] or p["effort"] != profile["reasoning_effort"]
-            or p["service_tier"] != profile["service_tier"] or p["auth"]["credential_ref"] != profile["credential_source_ref"]
-            or p["auxiliary_routes"]):
+def registered_driver_config(store, binding_digest):
+    if store.format_version != 4:
+        _refuse("store_upgrade_required")
+    registration = _registration(store, binding_digest)
+    if registration.get("schema_version") != "2.3" or "driver_config_digest" not in registration:
         _refuse()
-    # Even a non-hard non-null limit cannot be silently discarded by v1.
-    if b["budget"]["max_cost_micro_usd"] is not None or b["budget"]["max_tokens"] is not None:
-        _refuse("hard_budget_unsupported")
-    return check, verifier
+    config = exact_document(store, registration["driver_config_digest"], DriverConfig).to_dict()
+    from .executors.registry import contract_for
+    contract_for(config, task_version="2.3", projection=registration["projection"])
+    return config, registration
+
+
+def worker_contract(store, spec, configuration):
+    """Resolve an immutable driver selection; this does not grant dispatch."""
+    from .executors.registry import contract_for
+    if spec["schema_version"] == "1.0":
+        return contract_for(configuration), None
+    getter = registered_driver_config if spec["schema_version"] == "2.3" else registered_profile
+    retained, registration = getter(store, spec["execution"]["binding_digest"])
+    if retained != configuration:
+        _refuse("execution_identity_mismatch")
+    binding = exact_document(store, registration["binding_digest"], ExecutionBinding).to_dict()
+    provider = exact_document(store, binding["provider_profile_digest"], ProviderProfile).to_dict()
+    return contract_for(configuration, task_version=spec["schema_version"], projection=registration["projection"]), provider
 
 
 def resolve(store, spec, *, mode="start", authority_id=None):
     """Resolve current trusted facts; caller owns the transaction/fence boundary."""
-    profile, registration = registered_profile(store, spec["execution"]["binding_digest"])
+    is_driver = spec["schema_version"] == "2.3"
+    getter = registered_driver_config if is_driver else registered_profile
+    profile, registration = getter(store, spec["execution"]["binding_digest"])
+    if is_driver and spec["execution"]["driver_config_digest"] != profile["digest"]:
+        _refuse("execution_identity_mismatch")
     b = exact_document(store, registration["binding_digest"], ExecutionBinding)
     bv = b.to_dict()
     installation = exact_document(store, bv["installation_digest"], HarnessInstallation)
@@ -165,7 +178,9 @@ def resolve(store, spec, *, mode="start", authority_id=None):
             _refuse("policy_unresolved")
         docs.append(exact_document(store, key, _POLICIES[row[0]]))
     policies = PolicyResolver(tuple(docs))
-    check, sandbox = _projection(b, installation, provider, policies, profile, registration)
+    from .executors.registry import contract_for
+    contract = contract_for(profile, task_version=spec["schema_version"], projection=registration["projection"])
+    check, sandbox = contract.represent(b, installation, provider, policies, profile, registration)
     check_profile = exact_document(store, check["runtime_profile_digest"], RuntimeProfile).to_dict()
     if (check_profile["qualification"] != "synthetic" or check_profile["adapter"] != "codex-cli"
             or check_profile["permission_policy"] != {} or check_profile["toolchain_read_roots"]
@@ -173,10 +188,12 @@ def resolve(store, spec, *, mode="start", authority_id=None):
             or check_profile["permission_policy_digest"] != sandbox["permission_policy_digest"]
             or digest(store.setting("command_sandbox")) != registration["check_launcher_digest"]):
         _refuse("check_binding_mismatch")
-    effective_context = digest([doc.to_dict() for doc in sorted(policies.documents, key=lambda item: item.digest)])
+    policy_values = [doc.to_dict() for doc in sorted(policies.documents, key=lambda item: item.digest)]
+    effective_context = digest({"policies":policy_values,"driver_config_digest":profile["digest"]}) if is_driver else digest(policy_values)
     if registration["context"]["effective_context_digest"] != effective_context:
         _refuse("execution_context_mismatch")
-    if (spec["qualification"] != "synthetic" or spec["permissions"]["inference_destination_id"] != profile["inference_destination_id"]
+    destination = provider.to_dict()["profile_id"] if is_driver else profile["inference_destination_id"]
+    if (spec["qualification"] != "synthetic" or spec["permissions"]["inference_destination_id"] != destination
             or digest(spec["checks"]) != check["checks_digest"] or spec["review"]["config_digest"] != check["review_config_digest"]):
         _refuse("execution_identity_mismatch")
     budget = spec["budget"]
@@ -194,7 +211,7 @@ def resolve(store, spec, *, mode="start", authority_id=None):
     if not decision.decision.to_dict()["requirements_satisfied"]:
         _refuse("qualification_unsatisfied")
     from .executors.registry import executor_for
-    executor_for(profile).preflight(qualification=spec["qualification"], budget=budget)
+    contract.factory(profile, provider.to_dict()).preflight(qualification=spec["qualification"], budget=budget)
     executor_for(check_profile).preflight(qualification=spec["qualification"], budget=budget)
     # The check executable is independent of worker selection; its actual bytes
     # are checked before any verifier effect, including fixture launches.
@@ -205,12 +222,16 @@ def resolve(store, spec, *, mode="start", authority_id=None):
             _refuse("sandbox_changed")
     except OSError:
         _refuse("sandbox_changed")
-    snapshot = {"kind": "admission_snapshot", "schema_version": "2.2", "spec_digest": spec["digest"],
+    snapshot = {"kind": "admission_snapshot", "schema_version": spec["schema_version"], "spec_digest": spec["digest"],
                 "binding": bv, "installation": installation.to_dict(), "provider": provider.to_dict(),
                 "policies": [doc.to_dict() for doc in policies.documents], "projection": registration,
                 "decision": decision.decision.to_dict(), "report": decision.report.to_dict(),
-                "runtime_profile_digest": profile["digest"], "check_profile_digest": check_profile["digest"],
+                "check_profile_digest": check_profile["digest"],
                 "trust_digest": trust.digest, "authority_id": authority_id,
                 "limitations": ["Synthetic protocol transport; no actual provider, instruction/tool isolation or containment proof."]}
+    if is_driver:
+        snapshot["driver_config"] = profile
+    else:
+        snapshot["runtime_profile_digest"] = profile["digest"]
     snapshot["digest"] = digest(snapshot)
     return snapshot, profile, check_profile

@@ -3,14 +3,14 @@
 Synthetic tests establish decoding only, not compatibility with an installed CLI,
 actual model routing, permissions, cancellation, resume or process cessation.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 from decimal import Decimal, DecimalException
 from uuid import UUID
 
 from ..errors import TaskAlongError
-from ..validation import canonical_bytes, loads, validate
+from ..validation import canonical_bytes, loads, validate, validate_versioned
 
 
 _MAX_INT = 2**53 - 1
@@ -110,7 +110,7 @@ class ClaudeStreamDecoder:
             valid_session = False
         if not valid_session or type(expected_model) is not str or not 1 <= len(expected_model) <= 256:
             raise TaskAlongError("claude_decoder_binding_invalid", "An exact session and reported-model expectation are required.")
-        self._packet = loads(canonical_bytes(validate("worker-packet", packet)))
+        self._packet = self._admit_packet(packet)
         self._session = expected_session_id
         self._model = expected_model
         self._line_limit, self._byte_limit, self._frame_limit = line_limit, max_output_bytes, max_frames
@@ -123,6 +123,13 @@ class ClaudeStreamDecoder:
         self._terminal_usage = None
         self._error = None
         self._finished = None
+
+    @staticmethod
+    def _admit_packet(packet):
+        return loads(canonical_bytes(validate("worker-packet", packet)))
+
+    def _admit_worker_result(self, worker):
+        validate("worker-result", worker)
 
     def _fail(self, code):
         if self._error is None:
@@ -212,7 +219,7 @@ class ClaudeStreamDecoder:
                     self._model_matches(model)
             worker = event.get("structured_output")
             try:
-                validate("worker-result", worker)
+                self._admit_worker_result(worker)
                 encoded = canonical_bytes(worker)
             except (TaskAlongError, TypeError):
                 self._fail("claude_result_invalid")
@@ -305,4 +312,67 @@ class ClaudeStreamDecoder:
             self._fail("claude_terminal_missing")
         self._finished = DecodedClaudeTurn(self._session, self._model, self._tools, self._terminal,
                                           self._terminal_usage, self._hash.hexdigest(), self._bytes, self._frames)
+        return self._finished
+
+
+class ClaudeDriverStreamDecoder(ClaudeStreamDecoder):
+    """Versioned 2.3 fixture envelope; the original v1 entry stays unchanged.
+
+    This validates reported identities and tools, not actual vendor enforcement,
+    provider provenance, acceptance or owned process cessation.
+    """
+    def __init__(self, packet, **options):
+        super().__init__(packet, **options)
+        if self._session != self._packet["session_id"] or self._session != self._packet["attempt_id"]:
+            raise TaskAlongError("claude_decoder_binding_invalid", "The session must bind the exact fresh attempt.")
+
+    @staticmethod
+    def _admit_packet(packet):
+        return validate_versioned("worker-packet", packet, expected_version="2.3")
+
+    def _admit_worker_result(self, worker):
+        validate_versioned("worker-result", worker, expected_version="2.3")
+        expected = {key:self._packet["bindings"][key] for key in ("driver_config_digest", "provider_profile_digest")}
+        expected["session_id"] = self._packet["session_id"]
+        if any(worker[key] != value for key,value in expected.items()):
+            self._fail("claude_result_binding_mismatch")
+
+    def _consume(self, line):
+        super()._consume(line)
+        if self._initialized and self._tools != tuple(self._packet["allowed_tools"]):
+            self._fail("claude_tools_mismatch")
+        # The v1 decoder's broad message handling is retained. This explicitly
+        # versioned projection also checks reported invocations, not merely the
+        # initialization inventory. Reports still cannot prove enforcement.
+        event = _wire_frame(line)
+        if event["type"] in {"assistant", "user"}:
+            content = event["message"].get("content")
+            if type(content) is list:
+                for block in content:
+                    self._admit_block(block)
+        elif event["type"] == "stream_event":
+            inner = event["event"]
+            if inner["type"] == "content_block_start":
+                self._admit_block(inner.get("content_block"))
+            elif inner["type"] == "message_start":
+                content = inner["message"].get("content")
+                if type(content) is not list:
+                    self._fail("claude_frame_invalid")
+                for block in content:
+                    self._admit_block(block)
+            elif inner["type"] not in {"content_block_delta", "content_block_stop",
+                                       "message_delta", "message_stop", "ping"}:
+                self._fail("claude_event_unsupported")
+
+    def _admit_block(self, block):
+        if type(block) is not dict or block.get("type") not in (
+                "text", "thinking", "redacted_thinking", "tool_use", "tool_result"):
+            self._fail("claude_tool_unsupported")
+        if block["type"] == "tool_use" and block.get("name") not in self._packet["allowed_tools"]:
+            self._fail("claude_tool_unsupported")
+
+    def finish(self, *, exit_code):
+        result = super().finish(exit_code=exit_code)
+        if result.protocol_version != 2:
+            self._finished = replace(result, protocol_version=2)
         return self._finished

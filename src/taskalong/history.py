@@ -4,6 +4,7 @@ from .contracts import RuntimeProfile
 from .errors import TaskAlongError
 from .qualification import QualificationDecision
 from .execution import InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding
+from .executors.config import DriverConfig
 from .store import encode, key_check, now
 from .validation import digest, loads
 
@@ -11,10 +12,11 @@ from .validation import digest, loads
 _TYPES = {"runtime_profile":RuntimeProfile, "harness_installation":HarnessInstallation, "provider_profile":ProviderProfile,
           "execution_binding":ExecutionBinding, "qualification_decision":QualificationDecision}
 _TYPES.update({cls.schema_name.replace("-", "_"): cls for cls in (InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding)})
+_TYPES["driver_config"] = DriverConfig
 
 
 def _require(store):
-    if store.format_version not in (2, 3):
+    if store.format_version not in (2, 3, 4):
         raise TaskAlongError("store_upgrade_required", "Versioned history requires the explicit backed-up store upgrade.", exit_code=3)
 
 
@@ -38,6 +40,8 @@ def record_document(store, document, *, operation_key):
     value = document.to_dict()
     if value["schema_version"] == "2.2" and store.format_version < 3:
         raise TaskAlongError("store_upgrade_required", "V2 execution policy history requires format 3.", exit_code=3)
+    if value["schema_version"] == "2.3" and store.format_version < 4:
+        raise TaskAlongError("store_upgrade_required", "Driver configuration history requires explicit format-4 maintenance.", exit_code=3)
     request = {"kind":value["kind"], "identity":_identity(value), "digest":document.digest, "schema_version":value["schema_version"]}
     request_digest = digest(request, exclude_digest=False)
     response = request | {"historical_only":True}

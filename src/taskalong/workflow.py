@@ -11,11 +11,15 @@ import time
 
 from .errors import TaskAlongError
 from .store import Store, encode, identifier, now
-from .validation import canonical_bytes, digest, load_json, seal, validate, screen_sensitive
+from .validation import canonical_bytes, digest, load_json, seal, validate, validate_versioned, screen_sensitive
 from .workspace import WorkspaceManager, inspect_repository, repository_guard
 
 EFFECTS = {"execute", "verify", "commit_candidate", "push_branch", "create_draft_pr"}
 TERMINAL = {"cancelled", "failed", "draft_published"}
+
+
+def _worker_identity_key(spec):
+    return "driver_config_digest" if spec["schema_version"] == "2.3" else "profile_digest"
 
 
 def _internal_key(prefix, value):
@@ -119,7 +123,7 @@ class Workflow:
         screen_sensitive(spec)
         # Select only the newly supported version explicitly. All other input
         # retains the original v1 CLI admission/error boundary.
-        if spec.get("schema_version") != "2.2":
+        if spec.get("schema_version") not in ("2.2", "2.3"):
             spec = seal("task-spec", spec)
         else:
             from .execution import read_task_spec
@@ -134,7 +138,12 @@ class Workflow:
         if info["identity"] != repository["identity"]:
             raise TaskAlongError("repository_identity_changed", "Registered Git identity has changed.", exit_code=3)
         profile = self._profile(spec)
-        if profile["qualification"] != spec["qualification"] or profile["inference_destination_id"] != spec["permissions"]["inference_destination_id"]:
+        destination = profile.get("inference_destination_id")
+        if spec["schema_version"] == "2.3":
+            from .admission import worker_contract
+            _, provider = worker_contract(self.store, spec, profile)
+            destination = provider["profile_id"]
+        if profile["qualification"] != spec["qualification"] or destination != spec["permissions"]["inference_destination_id"]:
             raise TaskAlongError("runtime_profile_mismatch", "The task must bind the exact registered profile and inference destination.", exit_code=3)
         # Resolve/validate only an existing commit; no fetch and no ref-dependent authority.
         from .workspace import git
@@ -164,6 +173,9 @@ class Workflow:
         return WorkspaceManager(repository["path"], self.store.store_uuid)
 
     def _profile(self, spec):
+        if spec["schema_version"] == "2.3":
+            from .admission import registered_driver_config
+            return registered_driver_config(self.store, spec["execution"]["binding_digest"])[0]
         if spec["schema_version"] == "2.2":
             from .admission import registered_profile
             return registered_profile(self.store, spec["execution"]["binding_digest"])[0]
@@ -171,6 +183,11 @@ class Workflow:
         if profile["digest"] != spec["execution"]["profile_digest"]:
             raise TaskAlongError("runtime_profile_mismatch", "Runtime policy changed after submission.", exit_code=3)
         return profile
+
+    def _executor(self, spec, configuration):
+        from .admission import worker_contract
+        contract, provider = worker_contract(self.store, spec, configuration)
+        return contract.factory(configuration, provider)
 
     def retire_workspace(self, run_id, *, operation_key, expected_revision):
         """Explicitly release repository exclusivity after a terminal run.
@@ -225,14 +242,14 @@ class Workflow:
         spec = self.store.spec(run)
         authority = self.store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], authority_id)
         admission = None
-        if spec["schema_version"] == "2.2":
+        if spec["schema_version"] in {"2.2", "2.3"}:
             from .admission import resolve
             admission, _, _ = resolve(self.store, spec, mode=mode, authority_id=authority["authority_id"])
         if not spec["permissions"]["local_edit"] or not spec["permissions"]["local_commit"] or not {"execute", "verify", "commit_candidate"} <= set(spec["permissions"]["allowed_effects"]):
             raise TaskAlongError("task_effect_forbidden", "This task does not permit the required local effects.", exit_code=3)
         from .executors.registry import executor_for
         profile = self._profile(spec)
-        executor = executor_for(profile)
+        executor = self._executor(spec, profile)
         executor.preflight(qualification=run["qualification"], budget=spec["budget"])
         if mode == "start" and run["state"] != "created":
             raise TaskAlongError("invalid_run_state", "Start requires a newly created run; reconcile interrupted work explicitly.", exit_code=3)
@@ -249,7 +266,7 @@ class Workflow:
             checkpoint = last.get("checkpoint") or {}
             current_workspace = self.store.lease(run)["workspace"]
             snapshot = self._manager(run).snapshot(current_workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])
-            if (checkpoint.get("content_digest") != snapshot["content_digest"] or checkpoint.get("spec_digest") != spec["digest"] or checkpoint.get("profile_digest") != profile["digest"]):
+            if (checkpoint.get("content_digest") != snapshot["content_digest"] or checkpoint.get("spec_digest") != spec["digest"] or checkpoint.get(_worker_identity_key(spec)) != profile["digest"]):
                 raise TaskAlongError("checkpoint_stale", "The stopped checkpoint no longer matches workspace, task and runtime policy.", exit_code=3)
         budget = spec["budget"]
         used = run["budget_consumed"]
@@ -263,7 +280,8 @@ class Workflow:
         else:
             workspace_intent = self.store.lease(run)["workspace"]
         attempt_id = identifier()
-        attempt = {"attempt_id": attempt_id, "run_id": run_id, "ordinal": len(run["attempts"]) + 1, "mode": "start" if mode == "start" else ("native_resume" if mode == "native" else "restart"), "profile_digest": profile["digest"], "lease_generation": generation, "status": "prepared", "spawn_phase": "not_dispatched", "process_receipt": None, "created_at": now(), "deadline": (datetime.now(timezone.utc) + timedelta(seconds=budget["attempt_seconds"])).isoformat(timespec="seconds").replace("+00:00", "Z"), "thread_id": last.get("thread_id") if mode == "native" else None, "termination_confirmed": False, "packet": None, "workspace": workspace_intent}
+        attempt = {"attempt_id": attempt_id, "run_id": run_id, "ordinal": len(run["attempts"]) + 1, "mode": "start" if mode == "start" else ("native_resume" if mode == "native" else "restart"), "lease_generation": generation, "status": "prepared", "spawn_phase": "not_dispatched", "process_receipt": None, "created_at": now(), "deadline": (datetime.now(timezone.utc) + timedelta(seconds=budget["attempt_seconds"])).isoformat(timespec="seconds").replace("+00:00", "Z"), "thread_id": last.get("thread_id") if mode == "native" else None, "termination_confirmed": False, "packet": None, "workspace": workspace_intent}
+        attempt[_worker_identity_key(spec)] = profile["digest"]
         def prepare(current, db):
             if current["state"] in TERMINAL:
                 raise TaskAlongError("terminal_run", "Terminal runs require a separately authorized successor.", exit_code=3)
@@ -374,7 +392,7 @@ class Workflow:
                     observed = manager.observe_generation(effect["request"], run["lease_generation"] - 1, run["lease_generation"])
                     snapshot = manager.snapshot(observed, spec["scope"], expected_head=spec["repository"]["base_commit"])
                     if (not previous.get("termination_confirmed") or checkpoint.get("content_digest") != snapshot["content_digest"]
-                            or checkpoint.get("profile_digest") != self._profile(spec)["digest"] or checkpoint.get("spec_digest") != spec["digest"]):
+                            or checkpoint.get(_worker_identity_key(spec)) != self._profile(spec)["digest"] or checkpoint.get("spec_digest") != spec["digest"]):
                         raise TaskAlongError("checkpoint_stale", "The stopped checkpoint changed during interrupted reacquisition; preserve it.", exit_code=3)
                     workspace = manager.reconcile_generation(effect["request"], run["lease_generation"] - 1, run["lease_generation"])
                 else:
@@ -438,7 +456,7 @@ class Workflow:
         spec = self.store.spec(run)
         self.store.authority(run, {"verify", "commit_candidate"}, spec["digest"])
         check_profile = None
-        if spec["schema_version"] == "2.2":
+        if spec["schema_version"] in {"2.2", "2.3"}:
             from .admission import resolve
             _, _, check_profile = resolve(self.store, spec)
         if run["active_attempt_id"] is not None or run["state"] not in {"verifying", "blocked", "accepted"}:
@@ -832,7 +850,7 @@ def drive_run(state_dir, run_id, attempt_id):
         if seconds_remaining <= 0:
             _finish_attempt(store, run_id, attempt_id, {"state": "failed", "error": "attempt_deadline_exhausted", "thread_id": None, "process": {"termination_confirmed": True, "duration_ms": 0, "output_bytes": 0}, "usage": {}}, None)
             return
-        if spec["schema_version"] == "2.2":
+        if spec["schema_version"] in {"2.2", "2.3"}:
             try:
                 from .admission import resolve
                 authority = store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], attempt["admission"]["authority_id"])
@@ -849,31 +867,45 @@ def drive_run(state_dir, run_id, attempt_id):
             previous = store.detail("attempts", run["attempts"][-2]["attempt_id"])
             checkpoint = previous.get("checkpoint") or {}
             if (not previous.get("termination_confirmed") or checkpoint.get("content_digest") != snapshot["content_digest"]
-                    or checkpoint.get("spec_digest") != spec["digest"] or checkpoint.get("profile_digest") != profile["digest"]):
+                    or checkpoint.get("spec_digest") != spec["digest"] or checkpoint.get(_worker_identity_key(spec)) != profile["digest"]):
                 _finish_attempt(store, run_id, attempt_id, {"state": "failed", "error": "checkpoint_stale", "thread_id": None,
                     "process": {"termination_confirmed": True, "duration_ms": 0, "output_bytes": 0}, "usage": {}}, None)
                 return
-        packet = seal("worker-packet", {"packet_id": identifier(), "run_id": run_id, "attempt_id": attempt_id, "spec_digest": spec["digest"], "goal": spec["goal"], "non_goals": spec["non_goals"], "scope": spec["scope"], "checks": spec["checks"], "bindings": {"base_commit": spec["repository"]["base_commit"], "initial_head": snapshot["head"], "initial_content_digest": snapshot["content_digest"], "workspace_id": workspace["workspace_id"], "lease_generation": run["lease_generation"], "runtime_profile_digest": profile["digest"]}, "remaining_budget": {**spec["budget"], "attempt_seconds": min(seconds_remaining, spec["budget"]["attempt_seconds"]), "max_attempts": spec["budget"]["max_attempts"] - run["budget_consumed"]["attempts"] + 1, "max_output_bytes": spec["budget"]["max_output_bytes"] - run["budget_consumed"]["output_bytes"]}, "result_schema_id": "urn:taskalong:schema:v1:worker-result", "qualification": run["qualification"]})
-        if spec["schema_version"] == "2.2":
-            from .execution import project_packet
-            canonical_packet, packet, projection = project_packet(packet, attempt["dispatch_admission"])
+        packet_fields = {"packet_id":identifier(), "run_id":run_id, "attempt_id":attempt_id, "spec_digest":spec["digest"],
+            "goal":spec["goal"], "non_goals":spec["non_goals"], "scope":spec["scope"], "checks":spec["checks"],
+            "bindings":{"base_commit":spec["repository"]["base_commit"], "initial_head":snapshot["head"],
+                "initial_content_digest":snapshot["content_digest"], "workspace_id":workspace["workspace_id"],
+                "lease_generation":run["lease_generation"]},
+            "remaining_budget":{**spec["budget"], "attempt_seconds":min(seconds_remaining,spec["budget"]["attempt_seconds"]),
+                "max_attempts":spec["budget"]["max_attempts"]-run["budget_consumed"]["attempts"]+1,
+                "max_output_bytes":spec["budget"]["max_output_bytes"]-run["budget_consumed"]["output_bytes"]},
+            "qualification":run["qualification"], "extensions":{}}
+        if spec["schema_version"] != "2.3":
+            packet_fields["bindings"]["runtime_profile_digest"] = profile["digest"]
+            packet_fields["result_schema_id"] = "urn:taskalong:schema:v1:worker-result"
+        from .admission import worker_contract
+        contract, provider = worker_contract(store, spec, profile)
+        canonical_packet, packet, projection = contract.compile_packet(packet_fields, attempt.get("dispatch_admission"))
+        if canonical_packet is not None:
             store.put_blob(canonical_bytes(canonical_packet))
             store.put_blob(canonical_bytes(projection))
         store.put_blob(canonical_bytes(packet))
         def prepared(current, db):
             item = store.detail("attempts", attempt_id)
-            if spec["schema_version"] == "2.2":
+            if spec["schema_version"] in {"2.2", "2.3"}:
                 if current["state"] == "cancel_pending":
                     raise TaskAlongError("cancel_pending", "Cancellation prevents worker dispatch.", exit_code=6)
                 item.update(canonical_packet=canonical_packet, packet_projection=projection, dispatch_admission=attempt["dispatch_admission"])
+                if spec["schema_version"] == "2.3":
+                    item["driver_session_id"] = packet["session_id"]
             item["packet"] = packet
             item["spawn_phase"] = "dispatching"
             db.execute("UPDATE attempts SET document=? WHERE attempt_id=?", (encode(item), attempt_id))
-            _effect(db, current, "executor.start", attempt_id, {"packet_digest": packet["digest"], "profile_digest": profile["digest"]})
+            _effect(db, current, "executor.start", attempt_id, {"packet_digest": packet["digest"], _worker_identity_key(spec): profile["digest"]})
         try:
             store.mutate(run_id, "executor.prepare", attempt_id, None, {"packet_digest": packet["digest"]}, prepared, events=[("effect.prepared", {"kind": "executor.start"})], fence=run["lease_generation"])
         except TaskAlongError as exc:
-            if (spec["schema_version"] == "2.2" and exc.code == "cancel_pending"
+            if (spec["schema_version"] in {"2.2", "2.3"} and exc.code == "cancel_pending"
                     and store.detail("attempts", attempt_id)["spawn_phase"] == "not_dispatched"):
                 # This supervisor has not created a worker gate or sent target
                 # code. The rolled-back preparation cannot leave a dispatch.
@@ -885,7 +917,7 @@ def drive_run(state_dir, run_id, attempt_id):
             if hasattr(receipt, "to_dict"):
                 receipt = receipt.to_dict()
             def spawned(current, db):
-                if spec["schema_version"] == "2.2":
+                if spec["schema_version"] in {"2.2", "2.3"}:
                     # run_bounded invokes this callback while the owned gate is
                     # still closed. An exception prevents target execve.
                     if current["state"] == "cancel_pending":
@@ -913,15 +945,26 @@ def drive_run(state_dir, run_id, attempt_id):
         output.mkdir(mode=0o700)
         from .executors.registry import executor_for
         try:
-            result = executor_for(profile).run(packet, workspace=workspace["path"], output_dir=output, cancel_requested=lambda: store.run(run_id)["state"] == "cancel_pending", heartbeat=lambda: store.heartbeat(run_id, attempt_id), on_spawn=on_spawn, git_common_dir=store.repository(run["repository_registration_id"])["common_dir"], control_dir=str(store.root), mode="native_resume" if attempt["mode"] == "native_resume" else "start", thread_id=attempt.get("thread_id"))
+            result = contract.factory(profile, provider).run(packet, workspace=workspace["path"], output_dir=output, cancel_requested=lambda: store.run(run_id)["state"] == "cancel_pending", heartbeat=lambda: store.heartbeat(run_id, attempt_id), on_spawn=on_spawn, git_common_dir=store.repository(run["repository_registration_id"])["common_dir"], control_dir=str(store.root), mode="native_resume" if attempt["mode"] == "native_resume" else "start", thread_id=attempt.get("thread_id"))
             worker = result.get("result")
             try:
                 stopped_snapshot = manager.snapshot(workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])
-                result["checkpoint"] = {"thread_id": result.get("thread_id"), "profile_digest": profile["digest"], "spec_digest": spec["digest"], "content_digest": stopped_snapshot["content_digest"]}
+                result["checkpoint"] = {_worker_identity_key(spec):profile["digest"], "spec_digest":spec["digest"], "content_digest":stopped_snapshot["content_digest"]}
+                if spec["schema_version"] == "2.3":
+                    result["checkpoint"].update(requested_session_id=packet["session_id"], observed_session_id=result.get("session_id"))
+                else:
+                    result["checkpoint"]["thread_id"] = result.get("thread_id")
             except TaskAlongError:
                 result["checkpoint"] = None
             if result["state"] == "completed":
-                validate("worker-result", worker)
+                if spec["schema_version"] == "2.3":
+                    validate_versioned("worker-result", worker, expected_version="2.3")
+                    expected = {key:packet["bindings"][key] for key in ("driver_config_digest", "provider_profile_digest")}
+                    expected["session_id"] = packet["session_id"]
+                    if any(worker[key] != value for key,value in expected.items()):
+                        raise TaskAlongError("worker_binding_mismatch", "The worker result names another driver context.", exit_code=3)
+                else:
+                    validate("worker-result", worker)
                 for name in ("run_id", "attempt_id", "spec_digest", "packet_id"):
                     if worker[name] != packet[name]:
                         raise TaskAlongError("worker_binding_mismatch", "Worker result belongs to different immutable inputs.", exit_code=3)
@@ -952,6 +995,9 @@ def _finish_attempt(store, run_id, attempt_id, result, worker):
         item = store.detail("attempts", attempt_id)
         confirmed = bool(process.get("termination_confirmed"))
         item.update(status=result["state"], termination_confirmed=confirmed, thread_id=result.get("thread_id"), finished_at=now(), result_artifact=artifact, process=process, checkpoint=result.get("checkpoint"), error=result.get("error"))
+        if "driver_config_digest" in item:
+            item["driver_report"] = {"reported_session_id":result.get("session_id"),
+                "reported_usage":result.get("reported_usage"), "diagnostics":result.get("diagnostics")}
         db.execute("UPDATE attempts SET active=?,document=? WHERE attempt_id=?", (0 if confirmed else 1, encode(item), attempt_id))
         current["attempts"][-1]["status"] = result["state"]
         if confirmed:

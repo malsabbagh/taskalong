@@ -26,7 +26,7 @@ _PR_GET_CHILD_SUBREAPER = 37
 
 def _write_status(fd: int, value: dict) -> None:
     """One bounded atomic pipe write; a lost reader cannot grant success."""
-    data = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    data = (json.dumps({"protocol_version": 2, **value}, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
     try:
         # Each status is far below POSIX PIPE_BUF. Never emit target data here.
         if os.write(fd, data) != len(data):
@@ -138,13 +138,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         token = os.read(gate_fd, 1)
     except OSError:
-        token = b""
+        token = None
     finally:
         os.close(gate_fd)
+    if token == b"":
+        if not _descendants_stopped():
+            _write_status(status_fd, {"error": "unexpected_prefork_descendant"})
+            return 125
+        _write_status(status_fd, {"dispatch_state": "not_released", "root_exit_code": None,
+                                  "descendants_stopped": True, "root_pid": None, "root_pgid": None})
+        os.close(status_fd)
+        return 0
     if token != b"1":
-        _write_status(status_fd, {"root_exit_code": 125, "descendants_stopped": True,
-                                  "root_pid": None, "root_pgid": None,
-                                  "error": "dispatch_not_released"})
+        _write_status(status_fd, {"error": "invalid_gate_release"})
         return 125
 
     old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, _FORWARD_SIGNALS)
@@ -202,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
                 observed = 0
             except ChildProcessError:
                 root_pid = None
-                _write_status(status_fd, {"root_exit_code": 125, "descendants_stopped": False,
+                _write_status(status_fd, {"dispatch_state": "started", "root_exit_code": 125, "descendants_stopped": False,
                                           "root_pid": child, "root_pgid": child,
                                           "error": "root_status_unknown"})
                 return 125
@@ -216,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
 
     stopped = _descendants_stopped()
     code = _wait_code(root_status)
-    _write_status(status_fd, {"root_exit_code": code, "descendants_stopped": stopped,
+    _write_status(status_fd, {"dispatch_state": "started", "root_exit_code": code, "descendants_stopped": stopped,
                               "root_pid": child, "root_pgid": child})
     os.close(status_fd)
     # The pipe carries signed subprocess exit semantics. The wrapper's own exit

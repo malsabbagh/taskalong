@@ -69,3 +69,14 @@ the approved MIT metadata and license bytes in source, wheel and sdist, while
 rejecting additional identity/contact/source metadata. License and notice changes
 require rebuilding and fresh qualification. Public visibility and registry
 publication remain separate owner decisions.
+
+## Claude fixture qualification scope
+
+M5 implements the synthetic `claude-print-fixture/1` contract through the existing
+owned supervisor/runner. The same public durable-driver tests cover Codex and
+Claude fixtures. Adversarial stream, denial, identity, output/time, cancellation,
+restart and lifetime cases are fixture evidence only. A separate independent
+check profile and released offline reviewer fixture are required for acceptance.
+No real Claude start/cancel/resume, auth/routing, protective context/tool policy
+or complete vendor descendant lifetime is qualified. Production stays disabled;
+native resume, hard token/cost enforcement and Ollama remain unsupported here.

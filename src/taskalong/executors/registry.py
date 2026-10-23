@@ -4,25 +4,64 @@ Only implemented drivers are admitted. Discovery of a vendor binary does not
 register it or qualify dispatch. Task data cannot select an import or fallback.
 """
 from types import MappingProxyType
+from dataclasses import dataclass
+from typing import Callable
 
 from ..errors import TaskAlongError
 from .base import HarnessDriver
 from .codex_cli import CodexCLI
+from .claude_code import ClaudeCode, compile_packet as compile_claude_packet, represent as represent_claude
+from .codex_projection import represent as represent_codex
+from ..validation import seal
 
-_DRIVERS = MappingProxyType({"codex-cli": CodexCLI})
+@dataclass(frozen=True, slots=True)
+class DriverContract:
+    factory: Callable
+    compile_packet: Callable
+    represent: Callable
 
 
-def executor_for(profile: dict) -> HarnessDriver:
-    """Select a driver without spawning; its preflight still owns admission.
+def _codex_packet(fields, admission):
+    packet = seal("worker-packet", fields)
+    if admission is None:
+        return None, packet, None
+    from ..execution import project_packet
+    return project_packet(packet, admission)
+
+
+def _claude_driver(configuration, provider):
+    if provider is None:
+        raise TaskAlongError("execution_document_unresolved", "An exact provider document is required.", exit_code=3)
+    return ClaudeCode(configuration, provider=provider)
+
+
+_CODEX = DriverContract(lambda configuration, provider: CodexCLI(configuration), _codex_packet, represent_codex)
+_CONTRACTS = MappingProxyType({
+    ("1.0", "codex-v1", "runtime_profile", "1.0"): _CODEX,
+    ("2.2", "codex-v1-fixture/1", "runtime_profile", "1.0"): _CODEX,
+    ("2.3", "claude-print-fixture/1", "driver_config", "2.3"): DriverContract(_claude_driver, compile_claude_packet, represent_claude),
+})
+
+
+def contract_for(configuration: dict, *, task_version="1.0", projection="codex-v1") -> DriverContract:
+    """Select one closed version/projection/config tuple without discovery.
 
     New drivers require versioned contracts and independent qualification,
     rather than conditionals or optimistic placeholder implementations here.
     """
-    adapter = profile.get("adapter")
-    if not isinstance(adapter, str) or adapter not in _DRIVERS:
+    kind = configuration.get("kind", "runtime_profile") if isinstance(configuration, dict) else None
+    version = configuration.get("schema_version", "1.0") if isinstance(configuration, dict) else None
+    key = (task_version, projection, kind, version)
+    contract = _CONTRACTS.get(key) if all(type(value) is str for value in key) else None
+    if contract is None or kind == "runtime_profile" and configuration.get("adapter") != "codex-cli":
         raise TaskAlongError("adapter_unavailable", "No implemented driver is registered for the selected adapter.",
                            exit_code=3, recovery=[{"action": "select_implemented_adapter"}])
-    return _DRIVERS[adapter](profile)
+    return contract
+
+
+def executor_for(profile: dict, *, provider=None, task_version="1.0", projection="codex-v1") -> HarnessDriver:
+    """No launch, automatic fallback or authority from portable task data."""
+    return contract_for(profile, task_version=task_version, projection=projection).factory(profile, provider)
 
 
 def default_runtime_requirements() -> dict:

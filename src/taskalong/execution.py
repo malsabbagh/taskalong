@@ -53,6 +53,19 @@ class ExecutionEvidence(ExecutionDocument):
     schema_name: ClassVar[str] = "evidence"
 
 
+@dataclass(frozen=True, slots=True)
+class DriverDocument(JsonDocument):
+    """Explicit 2.3 family; legacy 2.2 documents retain their own reader."""
+    def __post_init__(self):
+        admitted = validate_versioned(self.schema_name, loads(self._canonical), expected_version="2.3")
+        object.__setattr__(self, "_canonical", canonical_bytes(admitted))
+
+
+@dataclass(frozen=True, slots=True)
+class DriverTaskSpec(DriverDocument):
+    schema_name: ClassVar[str] = "task-spec"
+
+
 def project_packet(packet, admission):
     """Freeze canonical packet, then exact wire bytes, then their mapping.
 
@@ -99,10 +112,12 @@ class PolicyResolver:
         raise TaskAlongError("policy_unresolved", "The exact policy content and type are unavailable.", exit_code=3)
 
 
-def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2:
+def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec:
     """Select only an explicit version; never upgrade or rewrite legacy bytes."""
     if document.get("schema_version") == "1.0":
         return TaskSpec.from_dict(document)
     if document.get("schema_version") == "2.2":
         return TaskSpecV2.from_dict(document)
+    if document.get("schema_version") == "2.3":
+        return DriverTaskSpec.from_dict(document)
     raise TaskAlongError("unknown_schema_version", "The task specification version is unsupported.")

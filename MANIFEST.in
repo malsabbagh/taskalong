@@ -152,3 +152,16 @@ include src/taskalong/resources/sql/003-execution-projections.sql
 include tests/fixtures/legacy_store_v2.py
 include tests/test_execution_bindings.py
 include tests/test_executor_contract.py
+include docs/adr/0005-claude-fixture-driver.md
+include src/taskalong/executors/claude_code.py
+include src/taskalong/executors/codex_projection.py
+include src/taskalong/executors/config.py
+include src/taskalong/resources/schemas/v2.3/driver-config.schema.json
+include src/taskalong/resources/schemas/v2.3/task-spec.schema.json
+include src/taskalong/resources/schemas/v2.3/worker-packet.schema.json
+include src/taskalong/resources/schemas/v2.3/packet-projection.schema.json
+include src/taskalong/resources/schemas/v2.3/worker-result.schema.json
+include src/taskalong/resources/sql/004-driver-compatibility.sql
+include tests/fixtures/fake_claude.py
+include tests/fixtures/legacy_store_v3.py
+include tests/test_claude_driver.py

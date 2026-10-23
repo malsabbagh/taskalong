@@ -313,9 +313,14 @@ class CodexCLI:
                     heartbeat=heartbeat, on_spawn=(lambda receipt: on_spawn(receipt.to_dict())) if on_spawn else None,
                     on_stdout_line=consume)
             except ProcessBoundaryError as exc:
-                raise TaskAlongError(exc.code, "The owned runtime process boundary could not complete safely",
-                    exit_code=3 if exc.effect_outcome == "not_sent" else 5,
-                    effect_outcome=exc.effect_outcome) from exc
+                if (exc.code == "cancel_pending" and exc.effect_outcome == "not_sent"
+                        and exc.process_result is not None and exc.process_result.termination_confirmed):
+                    process = exc.process_result
+                    protocol_errors.append("cancel_pending")
+                else:
+                    raise TaskAlongError(exc.code, "The owned runtime process boundary could not complete safely",
+                        exit_code=3 if exc.effect_outcome == "not_sent" else 5,
+                        effect_outcome=exc.effect_outcome) from exc
         summary = process.to_dict()
         summary.pop("stdout", None)
         # Even stderr is only a private bounded diagnostic, never event payload.

@@ -632,7 +632,11 @@ if len(sys.argv)>4:
 try:
     with module.Store(sys.argv[2]):
         if len(sys.argv)==4:os.write(int(sys.argv[3]),b'R');signal.pause()
-except sqlite3.OperationalError:print('kernel-excluded',flush=True)
+except sqlite3.OperationalError as exc:
+    code=getattr(exc,'sqlite_errorcode',None)
+    print('predecessor-error code='+str(code)+' name='+str(getattr(exc,'sqlite_errorname',None)),file=sys.stderr,flush=True)
+    if type(code) is not int or code & 0xff != sqlite3.SQLITE_BUSY:raise
+    print('kernel-excluded',flush=True)
 finally:faulthandler.cancel_dump_traceback_later()
 '''
         reader,writer=os.pipe()

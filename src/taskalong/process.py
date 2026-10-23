@@ -23,10 +23,11 @@ import uuid
 class ProcessBoundaryError(RuntimeError):
     """An invocation was invalid or a boundary callback failed."""
     def __init__(self, message: str, *, code: str = "process_boundary_failed",
-                 effect_outcome: str = "uncertain"):
+                 effect_outcome: str = "uncertain", process_result: ProcessResult | None = None):
         super().__init__(message)
         self.code = code
         self.effect_outcome = effect_outcome
+        self.process_result = process_result
 
 
 class _DescendantTracker:
@@ -80,8 +81,21 @@ class _DescendantTracker:
             self.queue.close()
 
 
+def _status_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate private status key")
+        result[key] = value
+    return result
+
+
+def _status_noninteger(_value):
+    raise ValueError("noninteger private status number")
+
+
 class _LinuxTracker:
-    """A private subreaper's bounded, target-inaccessible status pipe."""
+    """A private subreaper's bounded, versioned, target-inaccessible pipe."""
     def __init__(self, fd: int):
         self.fd = fd
         os.set_blocking(fd, False)
@@ -91,8 +105,45 @@ class _LinuxTracker:
         self.ready = False
         self.eof = False
         self.buffer = bytearray()
+        self.bytes_seen = 0
+        self.dispatch_state = None
         self.root_exit_code = None
         self.root_pgid = None
+
+    def _admit_status(self, value):
+        if (type(value) is not dict or type(value.get("protocol_version")) is not int
+                or value["protocol_version"] != 2 or self.dispatch_state is not None):
+            self.failed = True
+            return
+        if set(value) == {"protocol_version", "ready"} and value["ready"] is True:
+            if self.ready:
+                self.failed = True
+            self.ready = True
+            return
+        fields = {"protocol_version", "dispatch_state", "root_exit_code", "descendants_stopped", "root_pid", "root_pgid"}
+        if not self.ready or set(value) != fields:
+            self.failed = True
+            return
+        state = value["dispatch_state"]
+        code, stopped = value["root_exit_code"], value["descendants_stopped"]
+        root, root_pid = value["root_pgid"], value["root_pid"]
+        if state == "not_released":
+            if code is not None or root is not None or root_pid is not None or stopped is not True:
+                self.failed = True
+                return
+            self.dispatch_state = state
+            self.active = set()
+        elif state == "started":
+            if (type(code) is not int or not -128 <= code <= 255 or type(stopped) is not bool
+                    or type(root) is not int or root <= 1 or type(root_pid) is not int or root_pid != root):
+                self.failed = True
+                return
+            self.dispatch_state = state
+            self.root_exit_code = code
+            self.root_pgid = root
+            self.active = set() if stopped else {"descendants-unreconciled"}
+        else:
+            self.failed = True
 
     def poll(self) -> None:
         try:
@@ -103,36 +154,29 @@ class _LinuxTracker:
                     break
                 if not data:
                     self.eof = True
+                    if self.buffer or self.dispatch_state is None:
+                        self.failed = True
                     break
-                self.buffer.extend(data)
-                if len(self.buffer) > 4096:
+                self.bytes_seen += len(data)
+                if self.bytes_seen > 4096:
                     self.failed = True
                     break
+                self.buffer.extend(data)
                 while b"\n" in self.buffer:
                     line, _, rest = self.buffer.partition(b"\n")
                     self.buffer = bytearray(rest)
-                    value = json.loads(line)
-                    if value.get("ready") is True:
-                        if self.ready or set(value) != {"ready"}:
-                            self.failed = True
-                        self.ready = True
-                    elif "root_exit_code" in value:
-                        code, stopped = value["root_exit_code"], value.get("descendants_stopped")
-                        root, root_pid = value.get("root_pgid"), value.get("root_pid")
-                        if (not self.ready or self.root_exit_code is not None or type(code) is not int or not -128 <= code <= 255 or type(stopped) is not bool
-                                or type(root) is not int or root <= 1 or type(root_pid) is not int or root_pid != root
-                                or set(value) - {"root_exit_code", "descendants_stopped", "root_pid", "root_pgid", "error"}):
-                            self.failed = True
-                        else:
-                            self.root_exit_code = code
-                            self.root_pgid = root if type(root) is int and root > 1 else None
-                            self.active = set() if stopped else {"descendants-unreconciled"}
-                    else:
-                        self.failed = True
-                    if value.get("error"):
-                        self.failed = True
-        except (OSError, ValueError, TypeError, AttributeError):
+                    value = json.loads(line, object_pairs_hook=_status_object,
+                                       parse_float=_status_noninteger, parse_constant=_status_noninteger)
+                    self._admit_status(value)
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
             self.failed = True
+
+    def not_released_confirmed(self, *, gate_release_attempted, wrapper_returncode, wrapper_group_ceased):
+        """Parsed data alone never proves cleanup; combine owned observations."""
+        return (self.ready and self.dispatch_state == "not_released" and self.eof and not self.buffer
+                and not self.failed and not self.active and gate_release_attempted is False
+                and type(wrapper_returncode) is int and wrapper_returncode == 0
+                and wrapper_group_ceased is True)
 
     def wait_ready(self, process: subprocess.Popen) -> bool:
         deadline = time.monotonic() + 5
@@ -437,7 +481,13 @@ def run_bounded(
             if timed_out or cancelled or output_limited or protocol_error or callback_error:
                 termination_started = termination_started or now
                 if signal_stage == 0:
-                    _signal_owned(process, signal.SIGINT)
+                    # Closing an unreleased Linux gate already requests clean
+                    # helper completion. SIGINT here can race the helper's
+                    # finalizer after a valid no-target receipt and destroy its
+                    # protocol exit. Keep the existing absolute TERM/KILL and
+                    # hard-stop windows; ambiguous wrappers still fail closed.
+                    if gate_release_attempted or not isinstance(tracker, _LinuxTracker):
+                        _signal_owned(process, signal.SIGINT)
                     signal_stage = 1
                 elif signal_stage == 1 and now - termination_started >= signal_grace_seconds:
                     _signal_owned(process, signal.SIGTERM)
@@ -531,22 +581,32 @@ def run_bounded(
         tracker.poll()
         if isinstance(tracker, _LinuxTracker) and process.returncode != 0:
             tracker.failed = True
-        unaccounted = tracker.failed or bool(tracker.active)
         group_confirmed = process.poll() is not None and not _group_exists(process.pid)
         if isinstance(tracker, _LinuxTracker):
-            group_confirmed = group_confirmed and tracker.root_pgid is not None and not _group_exists(tracker.root_pgid)
+            if tracker.dispatch_state == "not_released":
+                group_confirmed = tracker.not_released_confirmed(
+                    gate_release_attempted=gate_release_attempted,
+                    wrapper_returncode=process.returncode, wrapper_group_ceased=group_confirmed)
+                if not group_confirmed:
+                    tracker.failed = True
+            else:
+                if not tracker.eof or tracker.buffer or tracker.dispatch_state != "started":
+                    tracker.failed = True
+                group_confirmed = group_confirmed and tracker.root_pgid is not None and not _group_exists(tracker.root_pgid)
+        unaccounted = tracker.failed or bool(tracker.active)
         confirmed = group_confirmed and not unaccounted
+        exit_code = (tracker.root_exit_code if isinstance(tracker, _LinuxTracker)
+                     else process.returncode if gate_release_attempted else None)
+        result = ProcessResult(exit_code, redact(bytes(buffers["stdout"]), secrets),
+                               redact(bytes(buffers["stderr"]), secrets), timed_out, cancelled,
+                               confirmed, group_confirmed, output_limited, receipt, int((time.monotonic()-started)*1000), total,
+                               tracker.backend, unaccounted, protocol_error)
         if callback_error:
             raise ProcessBoundaryError("process boundary callback failed",
                 code=getattr(callback_error, "code", "process_callback_failed"),
                 effect_outcome="uncertain" if gate_release_attempted else
-                    getattr(callback_error, "effect_outcome", "uncertain")) from callback_error
-        exit_code = tracker.root_exit_code if isinstance(tracker, _LinuxTracker) else process.returncode
-        return ProcessResult(exit_code, redact(bytes(buffers["stdout"]), secrets),
-                             redact(bytes(buffers["stderr"]), secrets), timed_out, cancelled,
-                             confirmed, group_confirmed, output_limited, receipt, int((time.monotonic()-started)*1000), total,
-                             tracker.backend, unaccounted,
-                             protocol_error)
+                    getattr(callback_error, "effect_outcome", "uncertain"), process_result=result) from callback_error
+        return result
     finally:
         selector.close()
         tracker.close()
