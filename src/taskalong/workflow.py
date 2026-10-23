@@ -263,6 +263,9 @@ class Workflow:
                 raise TaskAlongError("native_resume_unavailable", "No observed exact runtime thread can be resumed.", exit_code=3)
             if run["candidate"]:
                 raise TaskAlongError("resume_candidate_unsupported", "A frozen candidate requires verification, not another worker attempt.", exit_code=3)
+            if spec["schema_version"] == "2.5" and last["status"] == "completed":
+                from .executors.cursor_capture import validate_handoff
+                validate_handoff(self.store, run, spec, last)
             checkpoint = last.get("checkpoint") or {}
             current_workspace = self.store.lease(run)["workspace"]
             snapshot = self._manager(run).snapshot(current_workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])
@@ -390,6 +393,9 @@ class Workflow:
                     self.store.require_fence(run, run["lease_generation"])
                     previous = self.store.detail("attempts", run["attempts"][-2]["attempt_id"])
                     spec = self.store.spec(run)
+                    if spec["schema_version"] == "2.5" and previous["status"] == "completed":
+                        from .executors.cursor_capture import validate_handoff
+                        validate_handoff(self.store, run, spec, previous)
                     checkpoint = previous.get("checkpoint") or {}
                     observed = manager.observe_generation(effect["request"], run["lease_generation"] - 1, run["lease_generation"])
                     snapshot = manager.snapshot(observed, spec["scope"], expected_head=spec["repository"]["base_commit"])
@@ -873,6 +879,18 @@ def drive_run(state_dir, run_id, attempt_id):
         snapshot = manager.snapshot(workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])
         if attempt["mode"] in {"native_resume", "restart"}:
             previous = store.detail("attempts", run["attempts"][-2]["attempt_id"])
+            if spec["schema_version"] == "2.5" and previous["status"] == "completed":
+                from .executors.cursor_capture import validate_handoff
+                try:
+                    validate_handoff(store, run, spec, previous)
+                except TaskAlongError as exc:
+                    # No worker gate or executor.start effect has been created
+                    # for this prepared attempt. A bad predecessor is no proof
+                    # of a successful new handoff or uncertain target dispatch.
+                    _finish_attempt(store, run_id, attempt_id, {"state": "failed", "error": exc.code,
+                        "thread_id": None, "process": {"termination_confirmed": True,
+                            "duration_ms": 0, "output_bytes": 0}, "usage": {}}, None)
+                    return
             checkpoint = previous.get("checkpoint") or {}
             if (not previous.get("termination_confirmed") or checkpoint.get("content_digest") != snapshot["content_digest"]
                     or checkpoint.get("spec_digest") != spec["digest"] or checkpoint.get(_worker_identity_key(spec)) != profile["digest"]):
@@ -999,6 +1017,11 @@ def drive_run(state_dir, run_id, attempt_id):
             if "result" in locals() and store.run(run_id)["active_attempt_id"] == attempt_id:
                 result.update(state="failed", error=exc.code)
                 _finish_attempt(store, run_id, attempt_id, result, None)
+                if spec["schema_version"] == "2.5":
+                    # The fenced finish already recorded the exact failure.
+                    # A later generic blocker could overwrite a new restart
+                    # admitted after that durable, settled state became visible.
+                    return
             if spec["schema_version"] == "2.5" and "result" in locals():
                 confirmed = (result.get("process") or {}).get("termination_confirmed") is True
                 _block(store, run_id, exc.code, phase="running", uncertain=not confirmed,

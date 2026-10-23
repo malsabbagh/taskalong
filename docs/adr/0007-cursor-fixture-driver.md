@@ -15,6 +15,13 @@ The original external fixture allocates a distinct UUID. Model display text and
 synthetic resolved identity remain separate. No session/model field is repaired
 into the worker result. Native continuation and cross-harness transfer refuse.
 
+The runner exposes an optional trusted pre-redaction callback only to in-process
+code. Cursor supplies a local bounded assignment closure; task/config cannot
+select it. Existing ProcessResult/to_dict defaults remain redacted. A distinct
+capture-callback failure preserves actual cleanup evidence and cannot be hidden
+by an earlier closed-gate cancellation. No original data is reconstructed from
+redacted output.
+
 Retain actual bounded immutable stdout/stderr bytes in private blobs before
 finalization. The core independently re-decodes retained stdout under the frozen
 dispatch context and checks worker/observation identity, process accounting and
@@ -23,6 +30,11 @@ config/provider, session/model, stream references and result artifact. Its diges
 enters the fenced finish request and checkpoint. Check exact active attempt and
 generation and known prior session reuse inside that transaction. Revalidate
 completion at result, verification/acceptance and dependent recovery/publication.
+This includes the exact completed predecessor at restart reservation, supervisor
+dispatch and interrupted generation reacquisition; the latest prepared attempt
+does not substitute. Failed/nonzero restart keeps its separately proved cessation
+and checkpoint rules. A 2.5 failed finish records its blocker once, so its old
+supervisor cannot overwrite a newly prepared restart with a redundant blocker.
 Missing/corrupt capture refuses; a valid stream cannot establish cessation or
 authority. Crashes before finish leave orphan blobs and existing uncertainty.
 

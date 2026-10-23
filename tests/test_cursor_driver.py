@@ -258,6 +258,48 @@ class CursorPublicLifecycleTests(CursorBindingFixture, unittest.TestCase):
     from test_execution_bindings import ExecutionAdmissionTests as _Cases
     test_full_independent_acceptance_keeps_verifier_binding_distinct = _Cases.test_full_independent_acceptance_keeps_verifier_binding_distinct
 
+    def test_same_length_redactor_canary_is_preserved_in_private_worker_bytes(self):
+        canary = "Bearer abc"
+        self.mode_file.write_text(json.dumps({"mode":"good", "summary":canary}))
+        self.service.configure_execution(**self.configuration)
+        run, _ = self.submit(self.task)
+        self.start(run)
+        stopped = self.wait(run["run_id"])
+        attempt = self.service._store.detail("attempts", stopped["attempts"][-1]["attempt_id"])
+        worker = loads(self.service._store.get_blob(attempt["result_artifact"]["sha256"]))
+        self.assertEqual(worker["summary"], canary)
+        capture = self.service._store.get_blob(attempt["cursor_capture"]["stdout"]["sha256"])
+        self.assertIn(canary.encode(), capture)
+        public = [self.service.result(run["run_id"]), self.service.events(run["run_id"]), self.export(run["run_id"])]
+        self.assertNotIn(canary, canonical_bytes(public).decode())
+
+    def test_finished_failure_cannot_block_a_newly_prepared_restart(self):
+        import taskalong.workflow as workflow
+        self.mode_file.write_text('{"mode":"scope_claim_mismatch"}')
+        self.service.configure_execution(**self.configuration)
+        run, _ = self.submit(self.task)
+        with patch.object(self.service._workflow, "_launch_supervisor"):
+            prepared = self.start(run)
+        original = workflow._finish_attempt
+        restarts = []
+        def interleave(store, run_id, attempt_id, result, worker):
+            finished = original(store, run_id, attempt_id, result, worker)
+            if result["state"] == "failed" and not restarts:
+                stopped = self.service.inspect(run_id)
+                with patch.object(self.service._workflow, "_launch_supervisor"):
+                    restarts.append(self.service.resume(run_id, mode="restart", operation_key="interleaved-restart",
+                        expected_revision=stopped["revision"]))
+            return finished
+        with patch.object(workflow, "_finish_attempt", interleave):
+            workflow.drive_run(self.state, run["run_id"], prepared["active_attempt_id"])
+        current = self.service.inspect(run["run_id"])
+        self.assertEqual(len(restarts), 1)
+        self.assertEqual(current["state"], "ready")
+        self.assertEqual(current["blockers"], [])
+        self.assertEqual(current["active_attempt_id"], restarts[0]["active_attempt_id"])
+        self.assertNotEqual(current["active_attempt_id"], prepared["active_attempt_id"])
+        self.assertEqual(len(self.invocations()), 1)
+
     def test_fresh_restart_refuses_known_prior_observed_session_inside_finish(self):
         self.mode_file.write_text('{"mode":"scope_claim_mismatch"}')
         self.service.configure_execution(**self.configuration)
@@ -302,7 +344,7 @@ class CursorPublicLifecycleTests(CursorBindingFixture, unittest.TestCase):
             self.assertIsNone(stopped["budget_consumed"][name])
 
     def test_zero_exit_stderr_denial_retains_private_bytes_without_public_leak(self):
-        canary = "SYNTHETIC_CURSOR_PRIVATE_DIAGNOSTIC_7"
+        canary = "Bearer SYNTHETIC_CURSOR_PRIVATE_DIAGNOSTIC_7"
         self.mode_file.write_text(json.dumps({"mode": "stderr", "diagnostic": canary}))
         self.service.configure_execution(**self.configuration)
         run, _ = self.submit(self.task)
@@ -499,6 +541,193 @@ class CursorRecoveryTests(CursorBindingFixture, unittest.TestCase):
         self.assertTrue(rows, "Raw output was retained before the deliberately lost durable finish.")
         for row in rows:
             self.assertEqual(len(self.service._store.get_blob(row["sha256"])), row["bytes"])
+
+
+class CursorPredecessorTests(CursorBindingFixture, unittest.TestCase):
+    def completed_before_freeze(self):
+        from taskalong.workflow import Workflow, drive_run
+        self.service.configure_execution(**self.configuration)
+        run, _ = self.submit(self.task)
+        with patch.object(self.service._workflow, "_launch_supervisor"):
+            prepared = self.start(run)
+        # A controlled refusal, not a fake successful verifier or new authority.
+        with patch.object(Workflow, "verify", side_effect=TaskAlongError("authority_missing", "Synthetic expired verifier boundary.", exit_code=3)):
+            drive_run(self.state, run["run_id"], prepared["active_attempt_id"])
+        stopped = self.service.inspect(run["run_id"])
+        attempt = self.service._store.detail("attempts", prepared["active_attempt_id"])
+        self.assertEqual(attempt["status"], "completed")
+        self.assertIs(attempt["termination_confirmed"], True)
+        self.assertIsNone(stopped["candidate"])
+        self.assertIsNone(stopped["active_attempt_id"])
+        self.assertEqual(stopped["pending_effect_ids"], [])
+        self.assertEqual(self.service.result(run["run_id"])["outcome"], "worker_completed")
+        return stopped, attempt
+
+    def corrupt_previous(self, attempt):
+        from taskalong.store import encode
+        attempt = deepcopy(attempt)
+        attempt["cursor_capture"]["observation"]["frame_count"] += 1
+        attempt["cursor_capture"]["digest"] = digest(attempt["cursor_capture"])
+        attempt["checkpoint"]["capture_digest"] = attempt["cursor_capture"]["digest"]
+        with self.service._store.transaction() as db:
+            db.execute("UPDATE attempts SET document=? WHERE attempt_id=?", (encode(attempt), attempt["attempt_id"]))
+
+    def test_restart_refuses_corrupt_completed_predecessor_without_reservation(self):
+        stopped, previous = self.completed_before_freeze()
+        self.corrupt_previous(previous)
+        lease = self.service._store.lease(stopped)
+        before = self.service._store.db.total_changes
+        with self.assertRaises(TaskAlongError) as failure:
+            self.service.resume(stopped["run_id"], mode="restart", operation_key="corrupt-predecessor", expected_revision=stopped["revision"])
+        self.assertEqual(failure.exception.code, "cursor_capture_invalid")
+        self.assertEqual(self.service._store.db.total_changes, before)
+        self.assertEqual(self.service.inspect(stopped["run_id"]), stopped)
+        self.assertEqual(self.service._store.lease(stopped), lease)
+        self.assertEqual(len(self.invocations()), 1)
+
+    def test_intact_completed_predecessor_allows_explicit_fresh_restart(self):
+        from taskalong.workflow import drive_run
+        stopped, previous = self.completed_before_freeze()
+        with patch.object(self.service._workflow, "_launch_supervisor"):
+            prepared = self.service.resume(stopped["run_id"], mode="restart", operation_key="intact-predecessor", expected_revision=stopped["revision"])
+        drive_run(self.state, stopped["run_id"], prepared["active_attempt_id"])
+        self.assertEqual(self.service.result(stopped["run_id"])["outcome"], "worker_completed")
+        self.assertEqual(len(self.invocations()), 2)
+        self.assertNotEqual(self.invocations()[0]["session_id"], self.invocations()[1]["session_id"])
+
+    def test_corruption_after_restart_prepare_prevents_target_dispatch(self):
+        from taskalong.workflow import drive_run
+        stopped, previous = self.completed_before_freeze()
+        with patch.object(self.service._workflow, "_launch_supervisor"):
+            prepared = self.service.resume(stopped["run_id"], mode="restart", operation_key="prepared-predecessor", expected_revision=stopped["revision"])
+        self.corrupt_previous(previous)
+        drive_run(self.state, stopped["run_id"], prepared["active_attempt_id"])
+        current = self.service.inspect(stopped["run_id"])
+        last = self.service._store.detail("attempts", prepared["active_attempt_id"])
+        self.assertEqual(last["error"], "cursor_capture_invalid")
+        self.assertIs(last["termination_confirmed"], True)
+        self.assertEqual(len(self.invocations()), 1)
+        self.assertIsNone(current["candidate"])
+        self.assertIsNone(current["acceptance_id"])
+        self.assertIsNone(current["active_attempt_id"])
+        self.assertEqual(current["pending_effect_ids"], [])
+
+    def test_interrupted_reacquisition_validates_completed_predecessor(self):
+        stopped, previous = self.completed_before_freeze()
+        with patch.object(self.service._workflow, "_workspace_ready", side_effect=TaskAlongError("synthetic_reacquire_interruption", "Synthetic interruption after generation advance.", effect_outcome="uncertain")):
+            with self.assertRaises(TaskAlongError):
+                self.service.resume(stopped["run_id"], mode="restart", operation_key="interrupted-predecessor", expected_revision=stopped["revision"])
+        self.corrupt_previous(previous)
+        interrupted = self.service.inspect(stopped["run_id"])
+        before = self.service._store.db.total_changes
+        with patch.object(self.service._workflow, "_launch_supervisor") as launch:
+            with self.assertRaises(TaskAlongError) as failure:
+                self.service.reconcile(stopped["run_id"], operation_key="recover-predecessor", expected_revision=interrupted["revision"])
+        self.assertEqual(failure.exception.code, "cursor_capture_invalid")
+        launch.assert_not_called()
+        self.assertEqual(self.service._store.db.total_changes, before)
+        self.assertEqual(self.service.inspect(stopped["run_id"]), interrupted)
+        self.assertEqual(len(self.invocations()), 1)
+
+class CursorRawOutputTests(unittest.TestCase):
+    def test_trusted_capture_gets_original_bytes_while_default_result_stays_redacted(self):
+        from taskalong.process import run_bounded
+        seen = []
+        code = "import sys;sys.stdout.buffer.write(b'Bearer abc');sys.stderr.buffer.write(b'Bearer xyz')"
+        for enabled in (False, True):
+            options = {"_capture_private_output": lambda out, err: seen.append((out, err))} if enabled else {}
+            result = run_bounded([sys.executable, "-c", code], cwd=tempfile.gettempdir(), **options)
+            self.assertEqual((result.stdout, result.stderr), (b"[REDACTED]", b"[REDACTED]"))
+            self.assertNotIn("Bearer", json.dumps(result.to_dict()))
+            self.assertIs(result.termination_confirmed, True)
+        self.assertEqual(seen, [(b"Bearer abc", b"Bearer xyz")])
+        self.assertTrue(all(type(raw) is bytes for pair in seen for raw in pair))
+
+    def test_closed_gate_refusal_still_delivers_exact_empty_capture_once(self):
+        from taskalong.process import ProcessBoundaryError, run_bounded
+        seen = []
+        def refuse(_):
+            raise TaskAlongError("cancel_pending", "Synthetic closed-gate cancellation.", effect_outcome="not_sent")
+        with self.assertRaises(ProcessBoundaryError) as failure:
+            run_bounded([sys.executable, "-c", "raise SystemExit(93)"], cwd=tempfile.gettempdir(),
+                on_spawn=refuse, _capture_private_output=lambda out, err: seen.append((out, err)))
+        self.assertEqual(failure.exception.code, "cancel_pending")
+        self.assertEqual(failure.exception.effect_outcome, "not_sent")
+        self.assertIs(failure.exception.process_result.termination_confirmed, True)
+        self.assertEqual(seen, [(b"", b"")])
+
+    def test_capture_failure_cannot_hide_behind_earlier_gate_cancellation(self):
+        from taskalong.process import ProcessBoundaryError, run_bounded
+        for gated in (False, True):
+            seen = []
+            def capture(out, err):
+                seen.append((out, err))
+                raise RuntimeError("SYNTHETIC_CALLBACK_PRIVATE_DETAIL")
+            def refuse(_):
+                raise TaskAlongError("cancel_pending", "Synthetic closed-gate cancellation.", effect_outcome="not_sent")
+            with self.subTest(gated=gated), self.assertRaises(ProcessBoundaryError) as failure:
+                run_bounded([sys.executable, "-c", "print('Bearer abc')"], cwd=tempfile.gettempdir(),
+                    on_spawn=refuse if gated else None, _capture_private_output=capture)
+            self.assertEqual(failure.exception.code, "process_capture_failed")
+            self.assertNotIn("SYNTHETIC_CALLBACK_PRIVATE_DETAIL", str(failure.exception))
+            import traceback
+            self.assertNotIn("SYNTHETIC_CALLBACK_PRIVATE_DETAIL", "".join(traceback.format_exception(failure.exception)))
+            self.assertNotIn("Bearer", json.dumps(failure.exception.process_result.to_dict()))
+            self.assertEqual(len(seen), 1)
+            self.assertIs(failure.exception.process_result.termination_confirmed, True)
+            self.assertEqual(failure.exception.process_result.exit_code, None if gated else 0)
+
+    def test_setup_refusal_does_not_invent_capture(self):
+        from taskalong.process import ProcessBoundaryError, run_bounded
+        seen = []
+        with self.assertRaises(ProcessBoundaryError):
+            run_bounded([sys.executable, "-c", "pass"], cwd=tempfile.gettempdir(), timeout_seconds=0,
+                _capture_private_output=lambda out, err: seen.append((out, err)))
+        self.assertEqual(seen, [])
+
+    def test_output_limit_delivers_bounded_partial_bytes_without_completion(self):
+        from taskalong.process import run_bounded
+        seen = []
+        result = run_bounded([sys.executable, "-c", "import sys;sys.stdout.buffer.write(b'x'*10000)"],
+            cwd=tempfile.gettempdir(), max_output_bytes=100,
+            _capture_private_output=lambda out, err: seen.append((out, err)))
+        self.assertEqual(len(seen), 1)
+        self.assertLessEqual(sum(len(raw) for raw in seen[0]), 100)
+        self.assertIs(result.output_limited, True)
+        self.assertIs(result.termination_confirmed, True)
+
+class CursorRemoteCapabilityTests(CursorBindingFixture, unittest.TestCase):
+    def test_remote_cancellation_refuses_even_when_approved_start_evidence_satisfies_binding(self):
+        from taskalong.bindings import ExecutionBinding, HarnessInstallation, ProviderProfile
+        from taskalong.qualification import EvidenceStore, QualificationReceipt, TrustPolicy, evaluate
+        from taskalong.store import now
+        from test_qualification import policy_for, reference
+        self.binding = seal_versioned("execution-binding", self.binding | {
+            "required_capabilities": ["remote_cancellation", "start"]}, version="2.0")
+        self.refresh_binding()
+        blobs = self.configuration["evidence"]
+        observation = loads(blobs[self.receipt["results"][0]["evidence_refs"][0]["sha256"]])
+        observation.update(capability="remote_cancellation", criterion_id="fixture-remote-refusal",
+            observations={"provider_acknowledged":True,"remote_work_stopped":True,"accounting_final":True})
+        raw = canonical_bytes(observation)
+        ref = reference(raw)
+        blobs[ref["sha256"]] = raw
+        self.receipt = seal_versioned("qualification-receipt", self.receipt | {
+            "results":self.receipt["results"] + [{"capability":"remote_cancellation","outcome":"supported","evidence_refs":[ref]}]}, version="2.1")
+        self.trust = policy_for(self.receipt)
+        self.configuration.update(receipts=[self.receipt], trust=self.trust)
+        decision = evaluate(ExecutionBinding.from_dict(self.binding),
+            installation=HarnessInstallation.from_dict(self.installation), provider=ProviderProfile.from_dict(self.provider),
+            context=self.context, mode="start", receipts=[QualificationReceipt.from_dict(self.receipt)],
+            trust=TrustPolicy.from_dict(self.trust), evidence=EvidenceStore.from_blobs(blobs), now=now(), minimum_level="offline_fixture")
+        self.assertTrue(decision.decision.to_dict()["requirements_satisfied"])
+        before = self.service._store.db.total_changes
+        with self.assertRaises(TaskAlongError) as failure:
+            self.service.configure_execution(**self.configuration)
+        self.assertEqual(failure.exception.code, "remote_cancellation_unsupported")
+        self.assertEqual(self.service._store.db.total_changes, before)
+        self.assertEqual(self.service._store.db.execute("SELECT count(*) FROM execution_projections").fetchone()[0], 0)
+        self.assertEqual(self.invocations(), [])
 
 
 if __name__ == "__main__":

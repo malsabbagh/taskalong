@@ -36,6 +36,13 @@ it is retained privately and never parsed as a result. Actual vendor diagnostics
 need separate qualification. Nonzero exit, timeout, output limit, cancellation
 or unconfirmed owned cessation cannot become a successful handoff.
 
+The owned runner's optional trusted final-output callback freezes bounded
+original bytes before redaction. Cursor's local closure only retains those
+bytes; task/config data cannot select a callback. Ordinary ProcessResult and
+other callers retain their redacted output. Capture-callback failure has its own
+fixed error, with safe process/lifetime evidence, including on closed-gate
+cancellation; missing originals never fall back to redacted text.
+
 The driver returns immutable private stream bytes, untouched worker JSON and a
 separate observation. The core consumes those bytes before serialization, stores
 private unredacted content-addressed blobs, re-reads and independently decodes
@@ -46,6 +53,9 @@ the existing maintenance contract. Hashes prove consistency, not independent
 vendor or same-user attestation. Known prior observed-session reuse refuses;
 no global uniqueness or cross-harness opaque-session transfer is claimed.
 
+Restart and interrupted workspace reacquisition revalidate an exact completed
+predecessor before consuming its checkpoint, even when the latest attempt is
+only prepared. Settled-failed attempts retain their existing restart rules.
 Restart after confirmed cessation uses a new attempt/session with retained
 budget. Supervisor loss remains unknown and quarantined; captured bytes never
 clear an uncertain effect. Token/cost totals remain unknown, not zero. Real

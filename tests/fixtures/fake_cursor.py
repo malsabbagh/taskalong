@@ -53,7 +53,7 @@ worker = {"kind": "worker_result", "schema_version": "2.5", "extensions": {}, "r
     "driver_config_digest": packet["bindings"]["driver_config_digest"],
     "provider_profile_digest": packet["bindings"]["provider_profile_digest"],
     "status": "completed", "changed_files": [{"path": path, "operation": "modify"}], "command_claims": [],
-    "summary": "Synthetic Cursor edit; independent checks remain required.", "blockers": [], "deviations": [],
+    "summary": mode.get("summary", "Synthetic Cursor edit; independent checks remain required."), "blockers": [], "deviations": [],
     "residual_risks": [], "qualification": "synthetic"}
 if mode["mode"] == "scope_claim_mismatch":
     worker["changed_files"] = []

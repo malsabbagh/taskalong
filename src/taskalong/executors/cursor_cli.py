@@ -62,6 +62,8 @@ def represent(binding, installation, provider, policies, configuration, registra
         _refuse("execution_projection_unsupported", "The selected policy or installation is outside the Cursor fixture projection.")
     if b["budget"]["max_cost_micro_usd"] is not None or b["budget"]["max_tokens"] is not None:
         _refuse("hard_budget_unsupported", "The Cursor fixture cannot enforce a cost or token cap.")
+    if "remote_cancellation" in b["required_capabilities"]:
+        _refuse("remote_cancellation_unsupported", "The Cursor fixture cannot establish external-server cessation.")
     _represent_provider(config, p)
     return check, verifier
 
@@ -125,11 +127,16 @@ class CursorCLI:
                            XDG_CACHE_HOME=str(home), XDG_DATA_HOME=str(home))
         budget = packet["remaining_budget"]
         forced_cancel = False
+        capture = None
+        def capture_original(stdout, stderr):
+            nonlocal capture
+            capture = {"stdout": stdout, "stderr": stderr}
         try:
             process = run_bounded(argv, cwd=workspace, stdin=canonical_bytes(packet),
                 timeout_seconds=budget["attempt_seconds"], max_output_bytes=budget["max_output_bytes"], env=environment,
                 cancel_requested=cancel_requested, heartbeat=heartbeat,
-                on_spawn=(lambda receipt: on_spawn(receipt.to_dict())) if on_spawn else None)
+                on_spawn=(lambda receipt: on_spawn(receipt.to_dict())) if on_spawn else None,
+                _capture_private_output=capture_original)
         except ProcessBoundaryError as exc:
             if (exc.code == "cancel_pending" and exc.effect_outcome == "not_sent"
                     and exc.process_result is not None and exc.process_result.termination_confirmed):
@@ -138,6 +145,8 @@ class CursorCLI:
             else:
                 raise TaskAlongError(exc.code, "The owned Cursor fixture boundary could not complete safely.",
                     exit_code=3 if exc.effect_outcome == "not_sent" else 5, effect_outcome=exc.effect_outcome) from exc
+        if capture is None:
+            _refuse("cursor_capture_missing", "The owned boundary returned no original private output capture.")
         summary = process.to_dict()
         summary.pop("stdout", None)
         summary.pop("stderr", None)
@@ -157,7 +166,7 @@ class CursorCLI:
             error = "runtime_timeout"
         elif forced_cancel or process.cancelled:
             state, error = "cancelled", "cancel_pending" if forced_cancel else "cancellation_confirmed_local"
-        elif process.stderr:
+        elif capture["stderr"]:
             # This original fixture contract declares no benign stderr text.
             # Unknown diagnostics or a zero-exit denial cannot become success.
             error = "cursor_stderr_unsupported"
@@ -167,7 +176,7 @@ class CursorCLI:
             try:
                 # Decode exact retained bytes after EOF; a line callback must
                 # not manufacture a newline for a truncated terminal frame.
-                decoder.feed(process.stdout)
+                decoder.feed(capture["stdout"])
                 turn = decoder.finish(exit_code=process.exit_code)
                 worker = loads(turn.worker_result_json)
                 state = "completed"
@@ -177,8 +186,8 @@ class CursorCLI:
                 "thread_id": None, "process": summary, "error": error, "checkpoint": None,
                 "usage": {"input_tokens": None, "output_tokens": None, "cost_usd": None}, "reported_usage": None,
                 "cursor_observation": turn.observation() if turn else None,
-                "_private_capture": {"stdout": process.stdout, "stderr": process.stderr},
-                "diagnostics": {"protocol_version": 1, "stdout_sha256": hashlib.sha256(process.stdout).hexdigest(),
+                "_private_capture": capture,
+                "diagnostics": {"protocol_version": 1, "stdout_sha256": hashlib.sha256(capture["stdout"]).hexdigest(),
                                 "reported_model_verified": turn is not None}}
 
     def doctor(self, **_):
