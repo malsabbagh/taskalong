@@ -57,3 +57,16 @@ can describe later versions. Safe/bare/settings flags are not containment proof,
 and bare changes credential discovery. Production remains disabled until a
 separate exact-version, exact-mode qualification; Ollama routing is a later
 milestone. No registry publication follows this change.
+
+The private Linux helper/status reader use protocol 2 as a matched package pair.
+A separate `not_released` terminal describes EOF at the closed gate before any
+fork, with null target identities/exit and a kernel no-child check. It confirms
+cleanup only when the owner never attempted release, reaped the wrapper with
+protocol exit 0, proved its group ceased and read the complete status-channel EOF.
+Version/type/field/sequence errors and partial/post-terminal data remain unknown.
+Started targets retain positive root PID/PGID and signed exit semantics; a
+missing root identity is never generic cessation proof. Invalid gate tokens,
+read/fork errors, killed/stopped wrappers and ambiguous descendants cannot use
+the no-target path. Both drivers retain `cancel_pending`, `not_sent` and actual
+confirmed ProcessResult requirements. No cancellation authority, task success,
+production support or runtime qualification follows from parsed status alone.

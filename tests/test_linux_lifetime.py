@@ -13,6 +13,8 @@ import tempfile
 import time
 import unittest
 from typing import Callable
+from contextlib import contextmanager
+from taskalong.process import _LinuxTracker
 import taskalong
 from taskalong.errors import TaskAlongError
 from taskalong.process import ProcessBoundaryError, run_bounded
@@ -72,11 +74,13 @@ class LinuxLifetimeTests(unittest.TestCase):
     def invoke(self, script: str) -> LifetimeChild:
         child = LifetimeChild([sys.executable, "-I", "-S", "-c", script])
         self.addCleanup(child.close)
-        self.assertEqual(child.read_status(), {"ready": True})
+        self.assertEqual(child.read_status(), {"protocol_version": 2, "ready": True})
         return child
 
     def assert_final(self, child: LifetimeChild, code: int, stopped: bool) -> dict:
         final = child.read_status()
+        self.assertEqual(final["protocol_version"], 2)
+        self.assertEqual(final["dispatch_state"], "started")
         self.assertEqual(final["root_exit_code"], code)
         self.assertEqual(final["descendants_stopped"], stopped)
         self.assertIs(type(final["root_pid"]), int)
@@ -93,6 +97,31 @@ class LinuxLifetimeTests(unittest.TestCase):
             self.assert_final(child, 0, True)
             child.process.wait(timeout=3)
             self.assertTrue(marker.exists())
+
+    def test_gate_eof_reports_no_target_only_after_complete_owned_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "must-not-execute"
+            child = self.invoke(f"import pathlib;pathlib.Path({str(marker)!r}).touch()")
+            os.close(child.gate_write)
+            child.gate_write = -1
+            self.assertEqual(child.read_status(), {
+                "protocol_version": 2, "dispatch_state": "not_released", "root_exit_code": None,
+                "descendants_stopped": True, "root_pid": None, "root_pgid": None})
+            self.assertEqual(child.process.wait(timeout=3), 0)
+            self.assertEqual(child.pending, b"")
+            self.assertEqual(os.read(child.status_read, 1), b"")
+            self.assertFalse(marker.exists())
+
+    def test_invalid_gate_token_cannot_supply_no_target_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "must-not-execute"
+            child = self.invoke(f"import pathlib;pathlib.Path({str(marker)!r}).touch()")
+            os.write(child.gate_write, b"x")
+            os.close(child.gate_write)
+            child.gate_write = -1
+            self.assertEqual(child.read_status(), {"protocol_version": 2, "error": "invalid_gate_release"})
+            self.assertEqual(child.process.wait(timeout=3), 125)
+            self.assertFalse(marker.exists())
 
     def test_exact_nonzero_root_exit_is_reported(self):
         child = self.invoke("raise SystemExit(23)")
@@ -142,7 +171,7 @@ class LinuxLifetimeTests(unittest.TestCase):
             return [sys.executable, "-I", "-S", "-c", script]
         child = LifetimeChild(target)
         self.addCleanup(child.close)
-        self.assertEqual(child.read_status(), {"ready": True})
+        self.assertEqual(child.read_status(), {"protocol_version": 2, "ready": True})
         child.release()
         self.assert_final(child, 0, True)
 
@@ -158,7 +187,7 @@ class LinuxLifetimeTests(unittest.TestCase):
             return [sys.executable, "-I", "-S", "-c", script]
         child = LifetimeChild(target)
         self.addCleanup(child.close)
-        self.assertEqual(child.read_status(), {"ready": True})
+        self.assertEqual(child.read_status(), {"protocol_version": 2, "ready": True})
         child.release()
         self.assert_final(child, 0, True)
 
@@ -268,18 +297,26 @@ class CallbackOutcomeTests(unittest.TestCase):
                     self.assertFalse(marker.exists())
 
     def test_predispatch_callback_failure_keeps_not_sent(self):
-        with tempfile.TemporaryDirectory() as directory:
-            marker = Path(directory) / "must-not-run"
+        for code in ("fixture_callback", "cancel_pending"):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                marker = Path(directory) / "must-not-run"
 
-            def fail(_receipt):
-                raise TaskAlongError("fixture_callback", "Synthetic callback failure")
+                def fail(_receipt):
+                    raise TaskAlongError(code, "Synthetic callback failure")
 
-            with self.assertRaises(ProcessBoundaryError) as caught:
-                run_bounded([sys.executable, "-I", "-S", "-c",
-                    f"from pathlib import Path;Path({str(marker)!r}).touch()"],
-                    cwd=directory, on_spawn=fail, signal_grace_seconds=.05)
-            self.assertEqual(caught.exception.effect_outcome, "not_sent")
-            self.assertFalse(marker.exists())
+                with self.assertRaises(ProcessBoundaryError) as caught:
+                    run_bounded([sys.executable, "-I", "-S", "-c",
+                        f"from pathlib import Path;Path({str(marker)!r}).touch()"],
+                        cwd=directory, on_spawn=fail, signal_grace_seconds=.05)
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual(caught.exception.effect_outcome, "not_sent")
+                result = caught.exception.process_result
+                self.assertIsNotNone(result)
+                self.assertTrue(result.termination_confirmed)
+                self.assertTrue(result.group_termination_confirmed)
+                self.assertFalse(result.unaccounted_descendants)
+                self.assertIsNone(result.exit_code)
+                self.assertFalse(marker.exists())
 
     def test_callback_after_dispatch_cannot_claim_not_sent(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -325,8 +362,77 @@ class UnsupportedLifetimeTests(unittest.TestCase):
     def test_non_linux_helper_never_releases_target(self):
         child = LifetimeChild([sys.executable, "-I", "-S", "-c", "raise SystemExit(99)"])
         self.addCleanup(child.close)
-        self.assertEqual(child.read_status(), {"ready": False, "error": "lifetime_unsupported"})
+        self.assertEqual(child.read_status(), {"protocol_version": 2, "ready": False, "error": "lifetime_unsupported"})
         self.assertEqual(child.process.wait(timeout=3), 125)
+
+
+READY = {"protocol_version":2,"ready":True}
+CLOSED = {"protocol_version":2,"dispatch_state":"not_released","root_exit_code":None,
+          "descendants_stopped":True,"root_pid":None,"root_pgid":None}
+STARTED = {"protocol_version":2,"dispatch_state":"started","root_exit_code":-2,
+           "descendants_stopped":True,"root_pid":12345,"root_pgid":12345}
+
+def frames(*values):
+    return b''.join(json.dumps(x).encode()+b'\n' for x in values)
+
+class LinuxStatusProtocolTests(unittest.TestCase):
+    @contextmanager
+    def tracker(self, raw, *, eof=True):
+        reader,writer=os.pipe()
+        tracker=_LinuxTracker(reader)
+        try:
+            os.write(writer,raw)
+            if eof:
+                os.close(writer);writer=-1
+            tracker.poll()
+            yield tracker
+        finally:
+            if writer!=-1:os.close(writer)
+            tracker.close()
+
+    def test_valid_closed_gate_needs_owned_release_wrapper_and_complete_channel(self):
+        with self.tracker(frames(READY,CLOSED)) as tracker:
+            self.assertFalse(tracker.failed)
+            self.assertEqual(tracker.dispatch_state,'not_released')
+            self.assertIsNone(tracker.root_exit_code)
+            self.assertIsNone(tracker.root_pgid)
+            self.assertTrue(tracker.not_released_confirmed(gate_release_attempted=False,wrapper_returncode=0,wrapper_group_ceased=True))
+            for kwargs in ({'gate_release_attempted':True},{'gate_release_attempted':None},
+                           {'wrapper_returncode':None},{'wrapper_returncode':-9},{'wrapper_returncode':125},
+                           {'wrapper_returncode':False},{'wrapper_group_ceased':False}):
+                base={'gate_release_attempted':False,'wrapper_returncode':0,'wrapper_group_ceased':True}
+                self.assertFalse(tracker.not_released_confirmed(**(base|kwargs)))
+        with self.tracker(frames(READY,CLOSED),eof=False) as tracker:
+            self.assertFalse(tracker.not_released_confirmed(gate_release_attempted=False,wrapper_returncode=0,wrapper_group_ceased=True))
+
+    def test_started_terminal_retains_exact_target_and_group_semantics(self):
+        with self.tracker(frames(READY,STARTED)) as tracker:
+            self.assertFalse(tracker.failed)
+            self.assertEqual(tracker.dispatch_state,'started')
+            self.assertEqual(tracker.root_exit_code,-2)
+            self.assertEqual(tracker.root_pgid,12345)
+            self.assertFalse(tracker.active)
+            self.assertFalse(tracker.not_released_confirmed(gate_release_attempted=False,wrapper_returncode=0,wrapper_group_ceased=True))
+        with self.tracker(frames(READY,STARTED|{'descendants_stopped':False})) as tracker:
+            self.assertFalse(tracker.failed)
+            self.assertTrue(tracker.active)
+
+    def test_malformed_missing_mixed_or_postterminal_data_cannot_prove_cleanup(self):
+        cases=[frames(CLOSED),frames(READY),frames(READY,READY,CLOSED),frames(READY,CLOSED,CLOSED),
+            frames(READY,CLOSED,READY),frames({'ready':True},CLOSED),frames(READY|{'protocol_version':1},CLOSED),
+            frames(READY,CLOSED|{'protocol_version':True}),frames(READY,CLOSED|{'unexpected':True}),
+            frames(READY,CLOSED|{'error':'dispatch_failed'}),frames(READY,CLOSED|{'root_pid':12345}),
+            frames(READY,CLOSED|{'root_exit_code':0}),frames(READY,CLOSED|{'descendants_stopped':1}),
+            frames(READY,CLOSED|{'descendants_stopped':False}),frames(READY,STARTED|{'root_pid':None}),
+            frames(READY,STARTED|{'root_pgid':54321}),frames(READY,STARTED|{'root_exit_code':True}),
+            frames(READY,STARTED|{'root_pid':True}),frames(READY,STARTED|{'root_exit_code':256}),
+            frames(READY,CLOSED)[:-1],frames(READY,CLOSED)+b'garbage',frames(READY)+b'['*4100,
+            frames(READY)+b'{"protocol_version":2,"protocol_version":2,"ready":true}\n',
+            frames(READY)+b'NaN\n',frames(READY)+b'\xff\n',frames(READY,[]),frames(READY,CLOSED|{'dispatch_state':[]})]
+        for index,raw in enumerate(cases):
+            with self.subTest(index=index),self.tracker(raw) as tracker:
+                self.assertTrue(tracker.failed)
+                self.assertFalse(tracker.not_released_confirmed(gate_release_attempted=False,wrapper_returncode=0,wrapper_group_ceased=True))
 
 
 if __name__ == "__main__":
