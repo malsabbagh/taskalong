@@ -6,11 +6,12 @@ register it or qualify dispatch. Task data cannot select an import or fallback.
 from types import MappingProxyType
 from dataclasses import dataclass
 from typing import Callable
+from functools import partial
 
 from ..errors import TaskAlongError
 from .base import HarnessDriver
 from .codex_cli import CodexCLI
-from .claude_code import ClaudeCode, compile_packet as compile_claude_packet, represent as represent_claude
+from .claude_code import ClaudeCode, OLLAMA_FIXTURE, compile_packet as compile_claude_packet, represent as represent_claude
 from .codex_projection import represent as represent_codex
 from ..validation import seal
 
@@ -35,11 +36,19 @@ def _claude_driver(configuration, provider):
     return ClaudeCode(configuration, provider=provider)
 
 
+def _ollama_driver(configuration, provider):
+    if provider is None:
+        raise TaskAlongError("execution_document_unresolved", "An exact provider document is required.", exit_code=3)
+    return ClaudeCode(configuration, provider=provider, contract=OLLAMA_FIXTURE)
+
+
 _CODEX = DriverContract(lambda configuration, provider: CodexCLI(configuration), _codex_packet, represent_codex)
 _CONTRACTS = MappingProxyType({
     ("1.0", "codex-v1", "runtime_profile", "1.0"): _CODEX,
     ("2.2", "codex-v1-fixture/1", "runtime_profile", "1.0"): _CODEX,
     ("2.3", "claude-print-fixture/1", "driver_config", "2.3"): DriverContract(_claude_driver, compile_claude_packet, represent_claude),
+    ("2.4", "claude-ollama-fixture/1", "driver_config", "2.4"): DriverContract(_ollama_driver,
+        partial(compile_claude_packet, contract=OLLAMA_FIXTURE), partial(represent_claude, contract=OLLAMA_FIXTURE)),
 })
 
 

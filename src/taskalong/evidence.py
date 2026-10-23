@@ -57,7 +57,7 @@ def acceptance_reasons(
     owned = set(owned_invocation_ids or ())
     expected_attempt = run.get("attempts", [{}])[-1].get("attempt_id") if run.get("attempts") else None
     records = list(evidence)
-    expected_profile = (verification_profile_digest if spec.get("schema_version") in {"2.2", "2.3"}
+    expected_profile = (verification_profile_digest if spec.get("schema_version") in {"2.2", "2.3", "2.4"}
                         else spec["execution"]["profile_digest"])
     if expected_profile is None:
         block("evidence_binding_missing", "V2 acceptance needs the exact independently resolved check profile.")

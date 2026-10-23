@@ -19,7 +19,7 @@ TERMINAL = {"cancelled", "failed", "draft_published"}
 
 
 def _worker_identity_key(spec):
-    return "driver_config_digest" if spec["schema_version"] == "2.3" else "profile_digest"
+    return "driver_config_digest" if spec["schema_version"] in {"2.3", "2.4"} else "profile_digest"
 
 
 def _internal_key(prefix, value):
@@ -123,7 +123,7 @@ class Workflow:
         screen_sensitive(spec)
         # Select only the newly supported version explicitly. All other input
         # retains the original v1 CLI admission/error boundary.
-        if spec.get("schema_version") not in ("2.2", "2.3"):
+        if spec.get("schema_version") not in ("2.2", "2.3", "2.4"):
             spec = seal("task-spec", spec)
         else:
             from .execution import read_task_spec
@@ -139,7 +139,7 @@ class Workflow:
             raise TaskAlongError("repository_identity_changed", "Registered Git identity has changed.", exit_code=3)
         profile = self._profile(spec)
         destination = profile.get("inference_destination_id")
-        if spec["schema_version"] == "2.3":
+        if spec["schema_version"] in {"2.3", "2.4"}:
             from .admission import worker_contract
             _, provider = worker_contract(self.store, spec, profile)
             destination = provider["profile_id"]
@@ -173,7 +173,7 @@ class Workflow:
         return WorkspaceManager(repository["path"], self.store.store_uuid)
 
     def _profile(self, spec):
-        if spec["schema_version"] == "2.3":
+        if spec["schema_version"] in {"2.3", "2.4"}:
             from .admission import registered_driver_config
             return registered_driver_config(self.store, spec["execution"]["binding_digest"])[0]
         if spec["schema_version"] == "2.2":
@@ -242,7 +242,7 @@ class Workflow:
         spec = self.store.spec(run)
         authority = self.store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], authority_id)
         admission = None
-        if spec["schema_version"] in {"2.2", "2.3"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
             from .admission import resolve
             admission, _, _ = resolve(self.store, spec, mode=mode, authority_id=authority["authority_id"])
         if not spec["permissions"]["local_edit"] or not spec["permissions"]["local_commit"] or not {"execute", "verify", "commit_candidate"} <= set(spec["permissions"]["allowed_effects"]):
@@ -456,7 +456,7 @@ class Workflow:
         spec = self.store.spec(run)
         self.store.authority(run, {"verify", "commit_candidate"}, spec["digest"])
         check_profile = None
-        if spec["schema_version"] in {"2.2", "2.3"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
             from .admission import resolve
             _, _, check_profile = resolve(self.store, spec)
         if run["active_attempt_id"] is not None or run["state"] not in {"verifying", "blocked", "accepted"}:
@@ -850,7 +850,7 @@ def drive_run(state_dir, run_id, attempt_id):
         if seconds_remaining <= 0:
             _finish_attempt(store, run_id, attempt_id, {"state": "failed", "error": "attempt_deadline_exhausted", "thread_id": None, "process": {"termination_confirmed": True, "duration_ms": 0, "output_bytes": 0}, "usage": {}}, None)
             return
-        if spec["schema_version"] in {"2.2", "2.3"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
             try:
                 from .admission import resolve
                 authority = store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], attempt["admission"]["authority_id"])
@@ -880,7 +880,7 @@ def drive_run(state_dir, run_id, attempt_id):
                 "max_attempts":spec["budget"]["max_attempts"]-run["budget_consumed"]["attempts"]+1,
                 "max_output_bytes":spec["budget"]["max_output_bytes"]-run["budget_consumed"]["output_bytes"]},
             "qualification":run["qualification"], "extensions":{}}
-        if spec["schema_version"] != "2.3":
+        if spec["schema_version"] not in {"2.3", "2.4"}:
             packet_fields["bindings"]["runtime_profile_digest"] = profile["digest"]
             packet_fields["result_schema_id"] = "urn:taskalong:schema:v1:worker-result"
         from .admission import worker_contract
@@ -892,11 +892,11 @@ def drive_run(state_dir, run_id, attempt_id):
         store.put_blob(canonical_bytes(packet))
         def prepared(current, db):
             item = store.detail("attempts", attempt_id)
-            if spec["schema_version"] in {"2.2", "2.3"}:
+            if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
                 if current["state"] == "cancel_pending":
                     raise TaskAlongError("cancel_pending", "Cancellation prevents worker dispatch.", exit_code=6)
                 item.update(canonical_packet=canonical_packet, packet_projection=projection, dispatch_admission=attempt["dispatch_admission"])
-                if spec["schema_version"] == "2.3":
+                if spec["schema_version"] in {"2.3", "2.4"}:
                     item["driver_session_id"] = packet["session_id"]
             item["packet"] = packet
             item["spawn_phase"] = "dispatching"
@@ -905,7 +905,7 @@ def drive_run(state_dir, run_id, attempt_id):
         try:
             store.mutate(run_id, "executor.prepare", attempt_id, None, {"packet_digest": packet["digest"]}, prepared, events=[("effect.prepared", {"kind": "executor.start"})], fence=run["lease_generation"])
         except TaskAlongError as exc:
-            if (spec["schema_version"] in {"2.2", "2.3"} and exc.code == "cancel_pending"
+            if (spec["schema_version"] in {"2.2", "2.3", "2.4"} and exc.code == "cancel_pending"
                     and store.detail("attempts", attempt_id)["spawn_phase"] == "not_dispatched"):
                 # This supervisor has not created a worker gate or sent target
                 # code. The rolled-back preparation cannot leave a dispatch.
@@ -917,7 +917,7 @@ def drive_run(state_dir, run_id, attempt_id):
             if hasattr(receipt, "to_dict"):
                 receipt = receipt.to_dict()
             def spawned(current, db):
-                if spec["schema_version"] in {"2.2", "2.3"}:
+                if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
                     # run_bounded invokes this callback while the owned gate is
                     # still closed. An exception prevents target execve.
                     if current["state"] == "cancel_pending":
@@ -950,14 +950,14 @@ def drive_run(state_dir, run_id, attempt_id):
             try:
                 stopped_snapshot = manager.snapshot(workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])
                 result["checkpoint"] = {_worker_identity_key(spec):profile["digest"], "spec_digest":spec["digest"], "content_digest":stopped_snapshot["content_digest"]}
-                if spec["schema_version"] == "2.3":
+                if spec["schema_version"] in {"2.3", "2.4"}:
                     result["checkpoint"].update(requested_session_id=packet["session_id"], observed_session_id=result.get("session_id"))
                 else:
                     result["checkpoint"]["thread_id"] = result.get("thread_id")
             except TaskAlongError:
                 result["checkpoint"] = None
             if result["state"] == "completed":
-                if spec["schema_version"] == "2.3":
+                if spec["schema_version"] in {"2.3", "2.4"}:
                     validate_versioned("worker-result", worker, expected_version="2.3")
                     expected = {key:packet["bindings"][key] for key in ("driver_config_digest", "provider_profile_digest")}
                     expected["session_id"] = packet["session_id"]

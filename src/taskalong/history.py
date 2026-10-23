@@ -4,7 +4,7 @@ from .contracts import RuntimeProfile
 from .errors import TaskAlongError
 from .qualification import QualificationDecision
 from .execution import InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding
-from .executors.config import DriverConfig
+from .executors.config import DriverConfig, OllamaDriverConfig, read_driver_config
 from .store import encode, key_check, now
 from .validation import digest, loads
 
@@ -16,7 +16,7 @@ _TYPES["driver_config"] = DriverConfig
 
 
 def _require(store):
-    if store.format_version not in (2, 3, 4):
+    if store.format_version not in (2, 3, 4, 5):
         raise TaskAlongError("store_upgrade_required", "Versioned history requires the explicit backed-up store upgrade.", exit_code=3)
 
 
@@ -34,7 +34,7 @@ def _identity(document):
 def record_document(store, document, *, operation_key):
     _require(store)
     key_check(operation_key)
-    if type(document) not in _TYPES.values():
+    if type(document) not in (*_TYPES.values(), OllamaDriverConfig):
         raise TaskAlongError("history_document_invalid", "Only validated immutable profile/binding/decision documents can be stored.")
     document = type(document)(document.to_bytes())
     value = document.to_dict()
@@ -42,6 +42,8 @@ def record_document(store, document, *, operation_key):
         raise TaskAlongError("store_upgrade_required", "V2 execution policy history requires format 3.", exit_code=3)
     if value["schema_version"] == "2.3" and store.format_version < 4:
         raise TaskAlongError("store_upgrade_required", "Driver configuration history requires explicit format-4 maintenance.", exit_code=3)
+    if value["schema_version"] == "2.4" and store.format_version < 5:
+        raise TaskAlongError("store_upgrade_required", "Ollama fixture history requires explicit format-5 maintenance.", exit_code=3)
     request = {"kind":value["kind"], "identity":_identity(value), "digest":document.digest, "schema_version":value["schema_version"]}
     request_digest = digest(request, exclude_digest=False)
     response = request | {"historical_only":True}
@@ -66,7 +68,8 @@ def document_history(store, kind, identity):
     for row in store.db.execute("SELECT digest,schema_version,document FROM document_history WHERE kind=? AND identity=? ORDER BY recorded_at,digest LIMIT 1001", (kind,identity)):
         if len(records) == 1000:
             raise TaskAlongError("history_limit", "This history exceeds the bounded reader; no partial history is returned.", exit_code=3)
-        document = _TYPES[kind].from_dict(loads(row["document"]))
+        value = loads(row["document"])
+        document = read_driver_config(value) if kind == "driver_config" else _TYPES[kind].from_dict(value)
         value = document.to_dict()
         if document.digest != row["digest"] or _identity(value) != identity or value["schema_version"] != row["schema_version"]:
             raise TaskAlongError("store_integrity", "Historical columns disagree with the immutable document.", exit_code=70)

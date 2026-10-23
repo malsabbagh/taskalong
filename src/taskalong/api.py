@@ -71,7 +71,7 @@ class RunService:
         run = self._store.run(run_id)
         spec = self._store.spec(run)
         binding, satisfied, decision, reasons = None, None, None, ["v1_runtime_unqualified"]
-        if spec["schema_version"] in {"2.2", "2.3"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
             binding = spec["execution"]["binding_digest"]
             try:
                 if mode not in {"start", "restart"}:
@@ -128,17 +128,17 @@ class RunService:
         packet_digest = None
         if attempt and attempt.get("canonical_packet"):
             version = attempt["canonical_packet"].get("schema_version")
-            if version not in {"2.2", "2.3"}:
+            if version not in {"2.2", "2.3", "2.4"}:
                 raise TaskAlongError("store_integrity", "The stored packet version is unsupported.", exit_code=70)
             packet = validate_versioned("worker-packet", attempt["canonical_packet"], expected_version=version)
             mapping = validate_versioned("packet-projection", attempt["packet_projection"], expected_version=version)
             if mapping["canonical_packet_digest"] != packet["digest"] or mapping["wire_packet_digest"] != attempt["packet"]["digest"]:
                 raise TaskAlongError("store_integrity", "The stored canonical/wire packet identities disagree.", exit_code=70)
-            if version == "2.3":
+            if version in {"2.3", "2.4"}:
                 spec = self._store.spec(run)
-                if spec["schema_version"] != "2.3":
+                if spec["schema_version"] != version:
                     raise TaskAlongError("store_integrity", "The stored driver packet belongs to another task format.", exit_code=70)
-                wire = validate_versioned("worker-packet", attempt["packet"], expected_version="2.3")
+                wire = validate_versioned("worker-packet", attempt["packet"], expected_version=version)
                 dispatch = attempt["dispatch_admission"]
                 expected = {"driver_config_digest":spec["execution"]["driver_config_digest"],
                             "provider_profile_digest":dispatch["provider"]["digest"]}
