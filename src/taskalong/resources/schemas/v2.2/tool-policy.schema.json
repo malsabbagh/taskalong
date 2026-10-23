@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.2:tool-policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "allowed_tools",
+    "discovery",
+    "network",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "tool_policy"
+    },
+    "schema_version": {
+      "const": "2.2"
+    },
+    "allowed_tools": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-z][a-z0-9_.-]*(?![\\s\\S])"
+      }
+    },
+    "discovery": {
+      "const": "deny"
+    },
+    "network": {
+      "const": "deny"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  }
+}

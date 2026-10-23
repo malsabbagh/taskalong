@@ -238,3 +238,39 @@ instead of returning a partial result. Provider/installation identity uses its
 declared ID, bindings use their digest, and decisions use `binding_digest:mode`.
 No implicit latest/current selection is provided. Storing or reading a decision
 does not grant execution, publication or current qualification authority.
+
+## V2 execution store boundary
+
+Executable 2.2 tasks require store format 3, which deliberately excludes older
+clients that cannot enforce v2 restrictions. Ordinary opening, inspection and v1
+operation never upgrade a store. After closing all clients and proving quiescence,
+use the same complete-backup and quarantined-restore boundary for each numbered
+migration. From a format-2 store:
+
+```python
+from taskalong.store import Store
+
+with Store.maintenance(state_dir) as store:
+    receipt = store.upgrade(
+        operation_key="explicit-format3-upgrade",
+        backup_dir=new_private_backup_directory,
+        restore_dir=new_quarantined_restore_directory,
+        target_version=3,
+    )
+```
+
+A format-1 store must first explicitly complete its existing format-2 migration
+with separate backup/restore paths and operation key. SQL001/002, their receipts
+and legacy canonical state remain intact. SQL003 adds immutable execution
+projection registrations and advances both format markers in one transaction.
+Same-key/same-input replay returns its retained receipt; changed inputs conflict.
+Failures preserve the source, prior state and private backup/restore evidence.
+No downgrade, rollback over later effects or restore promotion is implemented.
+
+After upgrade, trusted local execution configuration stores exact policy history
+and an immutable fixture projection. Explicit trust/receipt updates remain
+operator settings and are re-evaluated before dispatch; historical decisions never
+become current authority. Registering a portable document, opening a store or
+reading a result cannot select a model, start inference or enable production.
+The [contracts guide](contracts.md#single-step-execution-v22) describes the current
+synthetic-only subset and refusal boundaries.

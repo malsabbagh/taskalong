@@ -171,7 +171,7 @@ def database_state(db):
         raise _failure("backup_integrity", "SQLite foreign-key verification failed.")
     metadata = dict(db.execute("SELECT key,value FROM metadata"))
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (1, 2) or metadata.get("format_version") != str(version):
+    if version not in (1, 2, 3) or metadata.get("format_version") != str(version):
         raise _failure("store_integrity", "Store schema markers disagree.")
     schema = [list(row) for row in db.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")]
     tables = {}
@@ -400,52 +400,59 @@ def verify_restored(directory, destination, *, expected_digest):
         raise _failure("restore_integrity", "The quarantined restoration cannot be verified.") from exc
 
 
-def _migration_sql():
-    return files("taskalong.resources").joinpath("sql/002-document-history.sql").read_text()
+def _migration_sql(number=2):
+    name = {2: "002-document-history.sql", 3: "003-execution-projections.sql"}[number]
+    return files("taskalong.resources").joinpath("sql", name).read_text()
 
 
 def validate_history_schema(store):
     try:
+        version = store.db.execute("PRAGMA user_version").fetchone()[0]
         with closing(sqlite3.connect(":memory:")) as expected:
-            expected.executescript(_migration_sql())
+            for number in range(2, version + 1):
+                expected.executescript(_migration_sql(number))
             definitions = {row[0]:tuple(row[1:]) for row in expected.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
         actual = {row[0]:tuple(row[1:]) for row in store.db.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
         if any(actual.get(name) != value for name,value in definitions.items()):
             raise ValueError("missing or altered immutable history")
-        row = store.db.execute("SELECT operation_key,request_digest,document FROM store_migrations WHERE number=2").fetchone()
-        receipt = loads(row["document"])
-        if (receipt["store_uuid"] != store.store_uuid or receipt["to_version"] != 2 or digest(receipt) != receipt["digest"]
-                or receipt["from_version"] != 1 or receipt["number"] != 2 or receipt["operation_key"] != row["operation_key"]
-                or receipt["request_digest"] != row["request_digest"]
-                or receipt["migration_sql_sha256"] != hashlib.sha256(_migration_sql().encode()).hexdigest()):
-            raise ValueError("invalid migration identity")
-        operation = store.db.execute("SELECT request_digest,response FROM operations WHERE command='maintenance.upgrade' AND run_id='' AND operation_key=?", (row["operation_key"],)).fetchone()
-        if operation is None or operation["request_digest"] != row["request_digest"] or loads(operation["response"]) != {"phase":"observed", "receipt":receipt}:
-            raise ValueError("inconsistent migration operation")
+        for number in range(2, version + 1):
+            row = store.db.execute("SELECT operation_key,request_digest,document FROM store_migrations WHERE number=?", (number,)).fetchone()
+            receipt = loads(row["document"])
+            if (receipt["store_uuid"] != store.store_uuid or receipt["to_version"] != number or digest(receipt) != receipt["digest"]
+                    or receipt["from_version"] != number - 1 or receipt["number"] != number or receipt["operation_key"] != row["operation_key"]
+                    or receipt["request_digest"] != row["request_digest"]
+                    or receipt["migration_sql_sha256"] != hashlib.sha256(_migration_sql(number).encode()).hexdigest()):
+                raise ValueError("invalid migration identity")
+            operation = store.db.execute("SELECT request_digest,response FROM operations WHERE command='maintenance.upgrade' AND run_id='' AND operation_key=?", (row["operation_key"],)).fetchone()
+            if operation is None or operation["request_digest"] != row["request_digest"] or loads(operation["response"]) != {"phase":"observed", "receipt":receipt}:
+                raise ValueError("inconsistent migration operation")
     except (sqlite3.Error, KeyError, TypeError, ValueError) as exc:
         raise _failure("store_integrity", "The numbered immutable-history schema/receipt is inconsistent.") from exc
 
 
-def upgrade(store, *, operation_key, backup_dir, restore_dir):
+def upgrade(store, *, operation_key, backup_dir, restore_dir, target_version=2):
     require_quiescent(store)
     key_check(operation_key)
+    if type(target_version) is not int or target_version not in (2, 3):
+        raise _failure("unsupported_store_version", "Select an explicit supported numbered migration.")
+    source_version = target_version - 1
     backup, restored = _path(backup_dir), _path(restore_dir)
     targets = (store.root, backup, restored)
     if any(_overlap(a,b) for i,a in enumerate(targets) for b in targets[i+1:]):
         raise _failure("maintenance_target", "Source, backup and restore must be separate non-overlapping directories.")
-    request = {"store_uuid":store.store_uuid, "from_version":1, "to_version":2,
+    request = {"store_uuid":store.store_uuid, "from_version":source_version, "to_version":target_version,
                "backup_target_digest":digest({"path":str(backup)}), "restore_target_digest":digest({"path":str(restored)})}
     request_digest = digest(request)
     with store.transaction() as db:
         prior = store._prior(db, "maintenance.upgrade", "", operation_key, request_digest)
         if prior is not None and prior.get("phase") == "observed":
-            if store.format_version != 2:
+            if store.format_version < target_version:
                 raise _failure("store_integrity", "The completed migration receipt disagrees with its format.")
-            recorded = loads(db.execute("SELECT document FROM store_migrations WHERE number=2").fetchone()[0])
+            recorded = loads(db.execute("SELECT document FROM store_migrations WHERE number=?", (target_version,)).fetchone()[0])
             if recorded != prior["receipt"]:
                 raise _failure("store_integrity", "The migration operation and immutable receipt disagree.")
             return recorded
-        if store.format_version != 1:
+        if store.format_version != source_version:
             raise TaskAlongError("store_already_upgraded", "This store already has numbered history; use its original operation receipt.", exit_code=4)
         if prior is None:
             db.execute("INSERT INTO operations VALUES(?,?,?,?,?)", ("maintenance.upgrade", "", operation_key, request_digest, encode({"phase":"prepared"})))
@@ -467,15 +474,15 @@ def upgrade(store, *, operation_key, backup_dir, restore_dir):
         restoration = verify_restored(backup, restored, expected_digest=manifest["digest"])
     else:
         restoration = restore_backup(backup, restored, expected_digest=manifest["digest"])
-    sql = _migration_sql()
-    receipt = {"kind":"store_migration_receipt", "format_version":1, "number":2, "from_version":1, "to_version":2,
+    sql = _migration_sql(target_version)
+    receipt = {"kind":"store_migration_receipt", "format_version":1, "number":target_version, "from_version":source_version, "to_version":target_version,
                "store_uuid":store.store_uuid, "operation_key":operation_key, "request_digest":request_digest,
                "backup_manifest_digest":manifest["digest"], "restore_receipt_digest":restoration["digest"],
                "migration_sql_sha256":hashlib.sha256(sql.encode()).hexdigest(), "applied_at":now()}
     receipt["digest"] = digest(receipt)
     with store.transaction() as db:
         require_quiescent(store)
-        if db.execute("PRAGMA user_version").fetchone()[0] != 1:
+        if db.execute("PRAGMA user_version").fetchone()[0] != source_version:
             raise _failure("store_integrity", "Store format changed during exclusive maintenance.")
         statement = ""
         for line in sql.splitlines(keepends=True):
@@ -485,17 +492,18 @@ def upgrade(store, *, operation_key, backup_dir, restore_dir):
                 statement = ""
         if statement.strip():
             raise _failure("store_integrity", "The numbered migration is incomplete.")
-        for row in db.execute("SELECT profile_id,digest,document FROM profiles").fetchall():
-            document = validate("runtime-profile", loads(row["document"]))
-            if document["profile_id"] != row["profile_id"] or document["digest"] != row["digest"]:
-                raise _failure("store_integrity", "A legacy profile disagrees with its immutable identity.")
-            db.execute("INSERT INTO document_history VALUES(?,?,?,?,?,?)", ("runtime_profile", row["profile_id"], row["digest"], "1.0", row["document"], receipt["applied_at"]))
-        db.execute("INSERT INTO store_migrations VALUES(?,?,?,?)", (2, operation_key, request_digest, encode(receipt)))
-        db.execute("UPDATE metadata SET value='2' WHERE key='format_version'")
-        db.execute("PRAGMA user_version=2")
+        if target_version == 2:
+            for row in db.execute("SELECT profile_id,digest,document FROM profiles").fetchall():
+                document = validate("runtime-profile", loads(row["document"]))
+                if document["profile_id"] != row["profile_id"] or document["digest"] != row["digest"]:
+                    raise _failure("store_integrity", "A legacy profile disagrees with its immutable identity.")
+                db.execute("INSERT INTO document_history VALUES(?,?,?,?,?,?)", ("runtime_profile", row["profile_id"], row["digest"], "1.0", row["document"], receipt["applied_at"]))
+        db.execute("INSERT INTO store_migrations VALUES(?,?,?,?)", (target_version, operation_key, request_digest, encode(receipt)))
+        db.execute("UPDATE metadata SET value=? WHERE key='format_version'", (str(target_version),))
+        db.execute("PRAGMA user_version=" + str(target_version))
         db.execute("UPDATE operations SET response=? WHERE command='maintenance.upgrade' AND run_id='' AND operation_key=?",
                    (encode({"phase":"observed", "receipt":receipt}), operation_key))
-    store.format_version = 2
+    store.format_version = target_version
     validate_history_schema(store)
     return receipt
 

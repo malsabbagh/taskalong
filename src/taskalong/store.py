@@ -139,10 +139,10 @@ class Store:
         self.db.execute("PRAGMA busy_timeout=5000")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        if version not in (0, 1, 2) or (version == 0 and tables):
+        if version not in (0, 1, 2, 3) or (version == 0 and tables):
             self.db.close()
             raise TaskAlongError("unsupported_store_version", "Store format is unknown; preserve it and use a compatible runtime.", exit_code=70)
-        if version in (1, 2):
+        if version in (1, 2, 3):
             try:
                 current_metadata = dict(self.db.execute("SELECT key,value FROM metadata"))
                 if current_metadata.get("format_version") != str(version):
@@ -154,7 +154,7 @@ class Store:
             if current_metadata.get("application") != "taskalong":
                 self.db.close()
                 raise TaskAlongError("unsupported_store_application", "This is not a tagged TaskAlong store; preserve it and use its owning application.", exit_code=70)
-            if version == 2:
+            if version in (2, 3):
                 self.store_uuid = str(uuid.UUID(current_metadata["store_uuid"]))
                 from .maintenance import validate_history_schema
                 validate_history_schema(self)
@@ -277,6 +277,10 @@ class Store:
             if row and row[0] != document["digest"]:
                 raise TaskAlongError("profile_immutable", "A changed runtime profile needs a new profile identity.", exit_code=4)
             db.execute("INSERT OR IGNORE INTO profiles VALUES (?,?,?)", (document["profile_id"], document["digest"], encode(document)))
+            if self.format_version >= 2:
+                admitted = validate("runtime-profile", document)
+                db.execute("INSERT OR IGNORE INTO document_history VALUES(?,?,?,?,?,?)", (
+                    "runtime_profile", admitted["profile_id"], admitted["digest"], "1.0", encode(admitted), now()))
         return document
 
     def run(self, run_id: str) -> dict:
@@ -290,7 +294,10 @@ class Store:
         document = loads(row[0])
         if digest(document) != document["digest"] or document["digest"] != run["spec_digest"]:
             raise TaskAlongError("store_integrity", "The immutable specification digest does not match.", exit_code=70)
-        return document
+        from .execution import read_task_spec
+        if document.get("schema_version") == "2.2" and self.format_version < 3:
+            raise TaskAlongError("store_upgrade_required", "V2 execution requires the explicit format-3 maintenance upgrade.", exit_code=3)
+        return read_task_spec(document).to_dict()
 
     def events(self, run_id: str, after_seq: int = 0, limit: int = 1000):
         self.run(run_id)
@@ -317,6 +324,8 @@ class Store:
         return self._prior(self.db, command, run_id, operation_key, digest(request))
 
     def create_run(self, spec: dict, operation_key: str):
+        if spec.get("schema_version") == "2.2" and self.format_version < 3:
+            raise TaskAlongError("store_upgrade_required", "V2 execution requires the explicit format-3 maintenance upgrade.", exit_code=3)
         key_check(operation_key)
         request_digest = digest(spec)
         with self.transaction() as db:
@@ -540,10 +549,10 @@ class Store:
             raise TaskAlongError("blob_integrity", "A referenced artifact has changed; preserve the store.", exit_code=70)
         return data
 
-    def upgrade(self, *, operation_key: str, backup_dir: str | Path, restore_dir: str | Path):
+    def upgrade(self, *, operation_key: str, backup_dir: str | Path, restore_dir: str | Path, target_version: int = 2):
         from .maintenance import upgrade
         try:
-            return upgrade(self, operation_key=operation_key, backup_dir=backup_dir, restore_dir=restore_dir)
+            return upgrade(self, operation_key=operation_key, backup_dir=backup_dir, restore_dir=restore_dir, target_version=target_version)
         except (OSError, sqlite3.Error) as exc:
             raise TaskAlongError("store_upgrade_failed", "Upgrade did not complete; preserve the prior store and retained backup/restore artifacts.", exit_code=70) from exc
 

@@ -24,6 +24,7 @@ def acceptance_reasons(
     workspace_quiescent: bool = True, current_subject: dict[str, Any],
     packet_digest: str | None = None, lease_generation: int | None = None,
     owned_invocation_ids: Iterable[str] | None = None,
+    verification_profile_digest: str | None = None,
 ) -> list[dict[str, str]]:
     """Return typed reasons blocking acceptance; an empty list means eligible.
 
@@ -56,6 +57,10 @@ def acceptance_reasons(
     owned = set(owned_invocation_ids or ())
     expected_attempt = run.get("attempts", [{}])[-1].get("attempt_id") if run.get("attempts") else None
     records = list(evidence)
+    expected_profile = (verification_profile_digest if spec.get("schema_version") == "2.2"
+                        else spec["execution"]["profile_digest"])
+    if expected_profile is None:
+        block("evidence_binding_missing", "V2 acceptance needs the exact independently resolved check profile.")
     seen_ids: set[str] = set()
     commands: dict[str, list[dict]] = {}
     scope_records: list[dict] = []
@@ -80,7 +85,7 @@ def acceptance_reasons(
             or record["attempt_id"] != expected_attempt):
             block("evidence_stale", "Evidence does not match the exact current task, attempt, lease and candidate.")
         if (record["qualification"] != run["qualification"] or spec["qualification"] != run["qualification"]
-            or record["inputs"]["runtime_profile_digest"] != spec["execution"]["profile_digest"]):
+            or record["inputs"]["runtime_profile_digest"] != expected_profile):
             block("evidence_policy_stale", "Evidence qualification or runtime policy differs from the submitted specification.")
         if record["result"] != "passed":
             block("evidence_not_passed", "A required independent evidence record did not pass.")

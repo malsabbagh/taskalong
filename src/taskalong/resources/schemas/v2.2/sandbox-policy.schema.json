@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.2:sandbox-policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "role",
+    "backend_id",
+    "network",
+    "control_access",
+    "credential_access",
+    "permission_policy_digest",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "sandbox_policy"
+    },
+    "schema_version": {
+      "const": "2.2"
+    },
+    "role": {
+      "enum": [
+        "worker",
+        "independent_check"
+      ]
+    },
+    "backend_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_.-]*(?![\\s\\S])"
+    },
+    "network": {
+      "const": "deny"
+    },
+    "control_access": {
+      "const": "deny"
+    },
+    "credential_access": {
+      "const": "deny"
+    },
+    "permission_policy_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  }
+}
