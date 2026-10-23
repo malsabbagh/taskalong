@@ -104,3 +104,14 @@ include docs/provenance.json
 include PROVENANCE.md
 include THIRD_PARTY.md
 include scripts/check_docs.py
+include docs/adr/0001-semantic-execution-documents.md
+include src/taskalong/bindings.py
+include src/taskalong/resources/examples/v2/execution-binding.json
+include src/taskalong/resources/examples/v2/harness-installation.json
+include src/taskalong/resources/examples/v2/provider-profile.json
+include src/taskalong/resources/schemas/v2/execution-binding.schema.json
+include src/taskalong/resources/schemas/v2/harness-installation.schema.json
+include src/taskalong/resources/schemas/v2/provider-profile.schema.json
+include tests/fixtures/v1-canonical.json
+include tests/fixtures/v1-schema-hashes.json
+include tests/test_bindings.py

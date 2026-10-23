@@ -1,0 +1,24 @@
+{
+  "installation_digest": "e2b80840ca92c6b96f92f641bae9054d8dd9e876dc73569e45218ac52c2bee8e",
+  "provider_profile_digest": "0cc62bc2806aca44452099d04ec45d8ae50c7ef76a2079c04bcbbdd4210115a0",
+  "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+  "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+  "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555",
+  "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+  "required_capabilities": [
+    "start",
+    "structured_result"
+  ],
+  "budget": {
+    "wall_seconds": 120,
+    "max_attempts": 1,
+    "max_cost_micro_usd": null,
+    "max_tokens": null,
+    "hard_cost_cap_required": false,
+    "hard_token_cap_required": false
+  },
+  "native_resume": null,
+  "kind": "execution_binding",
+  "schema_version": "2.0",
+  "digest": "0cee9e91cd3dea4c2c095187727ee7952cc300fabb9c4113ae3d58c6586de449"
+}

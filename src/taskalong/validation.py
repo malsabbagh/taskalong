@@ -138,25 +138,30 @@ def load_json(path: str | Path, *, max_bytes: int = MAX_DOCUMENT_BYTES) -> dict[
     return loads(data, max_bytes=max_bytes)
 
 
-def schema_names() -> tuple[str, ...]:
-    return SCHEMA_NAMES
+def schema_names(*, version: str = "1.0") -> tuple[str, ...]:
+    if version == "1.0":
+        return SCHEMA_NAMES
+    if version == "2.0":
+        return ("harness-installation", "provider-profile", "execution-binding")
+    raise _invalid("The schema version is unsupported.", "unknown_schema_version")
 
 
-def schema(name: str) -> dict[str, Any]:
+def schema(name: str, *, version: str = "1.0") -> dict[str, Any]:
     name = name.removesuffix(".schema.json").replace("_", "-")
-    if name not in SCHEMA_NAMES:
+    if name not in schema_names(version=version):
         raise _invalid("The schema name is unsupported.", "unknown_schema")
-    return loads(resources.files("taskalong.resources").joinpath("schemas", "v1", name + ".schema.json").read_bytes())
+    directory = {"1.0": "v1", "2.0": "v2"}[version]
+    return loads(resources.files("taskalong.resources").joinpath("schemas", directory, name + ".schema.json").read_bytes())
 
 
 def _no_remote(uri: str) -> Resource[Any]:
     raise NoSuchResource(ref=uri)
 
 
-def schema_registry() -> Registry[Any]:
+def schema_registry(*, version: str = "1.0") -> Registry[Any]:
     registry: Registry[Any] = Registry(retrieve=_no_remote)
-    for name in SCHEMA_NAMES:
-        resource = Resource.from_contents(schema(name))
+    for name in schema_names(version=version):
+        resource = Resource.from_contents(schema(name, version=version))
         registry = registry.with_resource(resource.id(), resource)
     return registry
 
@@ -318,3 +323,46 @@ def seal(name: str, document: dict[str, Any]) -> dict[str, Any]:
     if "digest" in schema(name)["properties"]:
         result["digest"] = digest(result)
     return validate(name, result)
+
+
+def validate_versioned(name: str, document: dict[str, Any], *, expected_version: str) -> dict[str, Any]:
+    """Read an explicitly selected format without guessing or granting authority.
+
+    V1 retains its original normalization and validation path. V2 records are
+    offline semantic descriptions, not resolved or qualified execution routes.
+    """
+    if expected_version == "1.0":
+        return validate(name, document)
+    selected = schema(name, version=expected_version)
+    canonical_bytes(document)
+    if not isinstance(document, dict):
+        raise _invalid("A schema document must have an object root.")
+    screen_sensitive(document)
+    result = copy.deepcopy(document)
+    validator = Draft202012Validator(selected, registry=schema_registry(version=expected_version), format_checker=_FORMAT_CHECKER)
+    if next(validator.iter_errors(result), None) is not None:
+        raise _invalid("The document does not match the selected schema.", "schema_validation")
+    from .bindings import _normalize, _semantics as binding_semantics
+    _normalize(result)
+    binding_semantics(result)
+    if digest(result) != result["digest"]:
+        raise _invalid("The document digest does not match normalized content.", "digest_mismatch")
+    return result
+
+
+def seal_versioned(name: str, document: dict[str, Any], *, version: str) -> dict[str, Any]:
+    """Seal semantic data for an explicit version; no registration or resolution."""
+    if version == "1.0":
+        return seal(name, document)
+    schema(name, version=version)
+    canonical_bytes(document)
+    if not isinstance(document, dict):
+        raise _invalid("A schema document must have an object root.")
+    screen_sensitive(document)
+    result = copy.deepcopy(document)
+    result.setdefault("kind", name.removesuffix(".schema.json").replace("-", "_"))
+    result.setdefault("schema_version", version)
+    from .bindings import _normalize
+    _normalize(result)
+    result["digest"] = digest(result)
+    return validate_versioned(name, result, expected_version=version)

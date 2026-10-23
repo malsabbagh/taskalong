@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2:provider-profile",
+  "title": "provider-profile",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}(?![\\s\\S])"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "profile_id",
+    "revision",
+    "harness",
+    "provider",
+    "model",
+    "endpoint",
+    "auth",
+    "effort",
+    "service_tier",
+    "auxiliary_routes",
+    "unlisted_auxiliary_routes",
+    "allowed_disclosure",
+    "fallback",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "provider_profile"
+    },
+    "schema_version": {
+      "const": "2.0"
+    },
+    "profile_id": {
+      "$ref": "#/$defs/id"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "harness": {
+      "enum": [
+        "codex",
+        "claude-code",
+        "cursor",
+        "antigravity"
+      ]
+    },
+    "provider": {
+      "enum": [
+        "openai-account",
+        "anthropic-account",
+        "anthropic-api",
+        "ollama-local",
+        "ollama-cloud",
+        "cursor-account",
+        "google-account"
+      ]
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "resolved_digest"
+      ],
+      "properties": {
+        "requested": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}(?![\\s\\S])"
+        },
+        "resolved_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "endpoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "credential_ref"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "account",
+            "credential-ref",
+            "local-no-secret"
+          ]
+        },
+        "credential_ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "effort": {
+      "enum": [
+        null,
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "service_tier": {
+      "enum": [
+        null,
+        "standard",
+        "priority",
+        "flex"
+      ]
+    },
+    "auxiliary_routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "purpose",
+          "provider_profile_digest"
+        ],
+        "properties": {
+          "purpose": {
+            "enum": [
+              "compaction",
+              "title",
+              "classification",
+              "subagent"
+            ]
+          },
+          "provider_profile_digest": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      },
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "unlisted_auxiliary_routes": {
+      "const": "deny"
+    },
+    "allowed_disclosure": {
+      "enum": [
+        "local-only",
+        "provider-only"
+      ]
+    },
+    "fallback": {
+      "const": "forbidden"
+    },
+    "digest": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "provider": {
+          "const": "openai-account"
+        },
+        "harness": {
+          "const": "codex"
+        },
+        "auth": {
+          "properties": {
+            "mode": {
+              "const": "account"
+            },
+            "credential_ref": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        "allowed_disclosure": {
+          "const": "provider-only"
+        }
+      }
+    },
+    {
+      "properties": {
+        "provider": {
+          "const": "anthropic-account"
+        },
+        "harness": {
+          "const": "claude-code"
+        },
+        "auth": {
+          "properties": {
+            "mode": {
+              "const": "account"
+            },
+            "credential_ref": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        "allowed_disclosure": {
+          "const": "provider-only"
+        }
+      }
+    },
+    {
+      "properties": {
+        "provider": {
+          "const": "anthropic-api"
+        },
+        "harness": {
+          "const": "claude-code"
+        },
+        "auth": {
+          "properties": {
+            "mode": {
+              "const": "credential-ref"
+            },
+            "credential_ref": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        "allowed_disclosure": {
+          "const": "provider-only"
+        }
+      }
+    },
+    {
+      "properties": {
+        "provider": {
+          "const": "ollama-local"
+        },
+        "harness": {
+          "const": "claude-code"
+        },
+        "auth": {
+          "properties": {
+            "mode": {
+              "const": "local-no-secret"
+            },
+            "credential_ref": {
+              "type": "null"
+            }
+          }
+        },
+        "allowed_disclosure": {
+          "const": "local-only"
+        }
+      }
+    },
+    {
+      "properties": {
+        "provider": {
+          "const": "ollama-cloud"
+        },
+        "harness": {
+          "const": "claude-code"
+        },
+        "auth": {
+          "properties": {
+            "mode": {
+              "const": "credential-ref"
+            },
+            "credential_ref": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        "allowed_disclosure": {
+          "const": "provider-only"
+        }
+      }
+    },
+    {
+      "properties": {
+        "provider": {
+          "const": "cursor-account"
+        },
+        "harness": {
+          "const": "cursor"
+        },
+        "auth": {
+          "properties": {
+            "mode": {
+              "const": "account"
+            },
+            "credential_ref": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        "allowed_disclosure": {
+          "const": "provider-only"
+        }
+      }
+    },
+    {
+      "properties": {
+        "provider": {
+          "const": "google-account"
+        },
+        "harness": {
+          "const": "antigravity"
+        },
+        "auth": {
+          "properties": {
+            "mode": {
+              "const": "account"
+            },
+            "credential_ref": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        "allowed_disclosure": {
+          "const": "provider-only"
+        }
+      }
+    }
+  ]
+}

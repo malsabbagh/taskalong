@@ -1,0 +1,24 @@
+{
+  "profile_id": "fixture-local",
+  "revision": 1,
+  "harness": "claude-code",
+  "provider": "ollama-local",
+  "model": {
+    "requested": "synthetic-model",
+    "resolved_digest": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "endpoint": "http://127.0.0.1:11434",
+  "auth": {
+    "mode": "local-no-secret",
+    "credential_ref": null
+  },
+  "effort": null,
+  "service_tier": null,
+  "auxiliary_routes": [],
+  "unlisted_auxiliary_routes": "deny",
+  "allowed_disclosure": "local-only",
+  "fallback": "forbidden",
+  "kind": "provider_profile",
+  "schema_version": "2.0",
+  "digest": "0cc62bc2806aca44452099d04ec45d8ae50c7ef76a2079c04bcbbdd4210115a0"
+}

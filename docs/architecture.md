@@ -15,10 +15,18 @@ signal, PID disappearance or empty group is not complete descendant proof.
 
 The offline Claude wire component validates synthetic framing and structured
 results only. It does not launch, observe, cancel or resume a real CLI. Provider
-profiles, versioned semantic bindings and evidence-backed admission are future
-work. Cross-harness continuation must use explicit immutable artifacts and a
+profiles and versioned semantic bindings now have offline v2 data contracts;
+evidence-backed admission and live provider profiles remain future work.
+Cross-harness continuation must use explicit immutable artifacts and a
 new session; opaque sessions are not transferable. No scheduler or task DAG is
 provided.
+
+`taskalong.bindings` describes installation identity separately from provider
+selection and immutable policy references. Explicit version-aware readers do
+not resolve references, look up credentials or register drivers. The proposed
+[semantic contracts ADR](adr/0001-semantic-execution-documents.md) records this
+boundary and alternatives; [contract examples](contracts.md#offline-semantic-documents-v2)
+show the installed resources. V1 lifecycle/store contracts remain unchanged.
 
 The [contracts](contracts.md), [operations](operations.md) and
 [qualification](qualification.md) describe executable behavior and limits. All

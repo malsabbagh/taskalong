@@ -1,0 +1,14 @@
+{
+  "schemas/v1/acceptance.schema.json": "26a28aac9615bb1e13adad2417a427560b0f02351069a7192aec3adba1a0b194",
+  "schemas/v1/authority.schema.json": "166c0e2b2ae16573632c4a14009156ae050da6d297407a1ae42233bfca5c22b0",
+  "schemas/v1/command-result.schema.json": "1399a905a56c2fef72fe2d39f8d0d6bf51eabb146dbb73190928964b85696800",
+  "schemas/v1/effect-intent.schema.json": "7f8c4beb21709b55bee1dd49b6ed0f9873106e8d6aec747962c59eb65df6e6f5",
+  "schemas/v1/evidence.schema.json": "87ed92553164370c9576ab42913734afc103b9af275bcef45bcfd1f5380e0aa9",
+  "schemas/v1/execution-observation.schema.json": "fa0277123eb6835e5c9bf06b23c07d1cdc684f3fc9fee6e0c4c4470344c24f3f",
+  "schemas/v1/run-event.schema.json": "54dcc18865aa7fddb67715095f125836b6a41683416a230c2edde513cadfbf24",
+  "schemas/v1/runtime-profile.schema.json": "971f281e6e0c21707d5ef0e780c622c4f573736d501b88bcff03839962d38e9f",
+  "schemas/v1/task-run.schema.json": "2e3c3dafbd3c595a7391a006fd37107f58527524b7c2accaf7e838448f9de4d9",
+  "schemas/v1/task-spec.schema.json": "9704841ccb921e31d90bedb1fcf2733d36d7200e51a1c12f32b513da2a5f0516",
+  "schemas/v1/worker-packet.schema.json": "5677c699153b65543f22826232b4fd0ce287c440ebebd826f1e46aa94c7fd679",
+  "schemas/v1/worker-result.schema.json": "ed1d09f48b68f9a88bf3f0ade5dd5dce8c5081d0c5ff3d87210756385becfb79"
+}
