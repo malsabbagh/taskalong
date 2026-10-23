@@ -2,6 +2,8 @@ name: Core qualification
 
 on:
   push:
+    # Diagnostic branch only; this branch never merges into main or PR21.
+    branches-ignore: [diagnostic/sqlite-exclusion-91042f1]
   pull_request:
 
 permissions:
