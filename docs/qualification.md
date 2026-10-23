@@ -113,3 +113,18 @@ maintenance must preserve complete prior state and exclude the byte-pinned M5
 client. Source and installed artifact results qualify only their recorded head,
 platform and synthetic mode; they do not enable production or real credentials.
 External-server cessation and real token/cost accounting remain unsupported.
+
+## Cursor fixture qualification scope
+
+M7 adds the explicit 2.5 `cursor-print-fixture/1` projection. Original fixtures
+exercise strict whole-object terminal output, fresh observed sessions, exact
+model/config/provider bindings, private stream association, owned cancellation
+and independent acceptance through the shared lifecycle. Captures are consistency
+evidence; they do not establish vendor execution or current authority.
+
+No real Cursor start/edit/model route, account access, project instruction/tool/
+hook/MCP isolation, native resume or complete vendor lifetime is qualified. The
+fixture permits only balanced scoped Edit events and no nonempty stderr. It
+performs no provider request and proves no remote cancellation or cost. Unknown
+usage stays unknown; production and hard cost/token caps refuse. See the
+[protocol boundary](cursor-protocol.md) and [2.5 contracts](contracts.md#cursor-fixture-contracts-v25).

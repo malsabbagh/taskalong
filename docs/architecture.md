@@ -66,3 +66,9 @@ and a backed-up format-5 fence. A pure route plan plus exact capture linkage and
 two current exact-mode decisions admit only offline local/direct-cloud fixtures.
 The unchanged binding is evaluated in full in both modes. No fifth executor,
 provider daemon, HTTP transport or production dispatch is introduced.
+
+The [Cursor fixture ADR](adr/0007-cursor-fixture-driver.md) adds an independent
+2.5 driver/decoder to the same lifecycle. It observes a fresh native session
+separately from untouched worker JSON and binds exact private captures to the
+fenced finish operation. Format 6 excludes predecessor clients. This synthetic
+protocol does not qualify actual Cursor execution or enable production.

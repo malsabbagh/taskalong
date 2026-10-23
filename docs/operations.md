@@ -320,3 +320,24 @@ evidence. Capability inspection reflects both gates and creates no authority.
 The responder sends no server request. No Ollama install, login, model pull,
 shared-server lifecycle, real credentials or live provider execution is enabled.
 See the [2.4 contract](contracts.md#ollama-fixture-contracts-v24).
+
+## Cursor fixture store and capture boundary
+
+The 2.5 `cursor-print-fixture/1` tuple requires explicit format5-to-6 maintenance
+through the same quiescent full-backup/restore API. Preserve SQL001–005 and
+immutable history. The pinned format5 predecessor must refuse format6 before
+journal mutation. Never advance markers manually or restore over current data.
+
+Configure only the original operator-registered Cursor fixture, exact immutable
+installation/provider/policies and current approved start evidence. Its account
+reference is synthetic and never dereferenced. Fresh sessions are observed after
+start, not chosen from task input; native resume/latest/create-chat refuse.
+Stopped restart allocates a new attempt/session under the persisted budget.
+
+Exact stdout/stderr are private unredacted blobs. Completion requires core
+re-decode and association validation against the frozen packet and actual owned
+process accounting; missing/corrupt bytes refuse result/verification and dependent
+recovery/publication. Private complete backups contain these captures. Public
+result, events and exports omit raw capture/session/model content. A crash before
+durable finish leaves uncertainty and quarantine, even if a valid stream exists.
+Do not retry by looking up a vendor chat. See the [Cursor contract](contracts.md#cursor-fixture-contracts-v25).

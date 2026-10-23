@@ -19,7 +19,7 @@ TERMINAL = {"cancelled", "failed", "draft_published"}
 
 
 def _worker_identity_key(spec):
-    return "driver_config_digest" if spec["schema_version"] in {"2.3", "2.4"} else "profile_digest"
+    return "driver_config_digest" if spec["schema_version"] in {"2.3", "2.4", "2.5"} else "profile_digest"
 
 
 def _internal_key(prefix, value):
@@ -123,7 +123,7 @@ class Workflow:
         screen_sensitive(spec)
         # Select only the newly supported version explicitly. All other input
         # retains the original v1 CLI admission/error boundary.
-        if spec.get("schema_version") not in ("2.2", "2.3", "2.4"):
+        if spec.get("schema_version") not in ("2.2", "2.3", "2.4", "2.5"):
             spec = seal("task-spec", spec)
         else:
             from .execution import read_task_spec
@@ -139,7 +139,7 @@ class Workflow:
             raise TaskAlongError("repository_identity_changed", "Registered Git identity has changed.", exit_code=3)
         profile = self._profile(spec)
         destination = profile.get("inference_destination_id")
-        if spec["schema_version"] in {"2.3", "2.4"}:
+        if spec["schema_version"] in {"2.3", "2.4", "2.5"}:
             from .admission import worker_contract
             _, provider = worker_contract(self.store, spec, profile)
             destination = provider["profile_id"]
@@ -173,7 +173,7 @@ class Workflow:
         return WorkspaceManager(repository["path"], self.store.store_uuid)
 
     def _profile(self, spec):
-        if spec["schema_version"] in {"2.3", "2.4"}:
+        if spec["schema_version"] in {"2.3", "2.4", "2.5"}:
             from .admission import registered_driver_config
             return registered_driver_config(self.store, spec["execution"]["binding_digest"])[0]
         if spec["schema_version"] == "2.2":
@@ -242,7 +242,7 @@ class Workflow:
         spec = self.store.spec(run)
         authority = self.store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], authority_id)
         admission = None
-        if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5"}:
             from .admission import resolve
             admission, _, _ = resolve(self.store, spec, mode=mode, authority_id=authority["authority_id"])
         if not spec["permissions"]["local_edit"] or not spec["permissions"]["local_commit"] or not {"execute", "verify", "commit_candidate"} <= set(spec["permissions"]["allowed_effects"]):
@@ -368,6 +368,8 @@ class Workflow:
 
     def _reconcile(self, run_id, *, operation_key, expected_revision):
         run = self.store.run(run_id)
+        from .executors.cursor_capture import validate_completed_run
+        validate_completed_run(self.store, run)
         prior = self.store.operation("reconcile", run_id, operation_key, {})
         if prior:
             return prior
@@ -446,6 +448,8 @@ class Workflow:
                 raise
 
     def _verify(self, run_id, *, operation_key, expected_revision):
+        from .executors.cursor_capture import validate_completed_run
+        validate_completed_run(self.store, self.store.run(run_id))
         request = {}
         prior = self.store.operation("verify", run_id, operation_key, request)
         if prior:
@@ -456,7 +460,7 @@ class Workflow:
         spec = self.store.spec(run)
         self.store.authority(run, {"verify", "commit_candidate"}, spec["digest"])
         check_profile = None
-        if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5"}:
             from .admission import resolve
             _, _, check_profile = resolve(self.store, spec)
         if run["active_attempt_id"] is not None or run["state"] not in {"verifying", "blocked", "accepted"}:
@@ -619,12 +623,14 @@ class Workflow:
             for artifact in evidence["artifacts"]:
                 self.store.get_blob(artifact["sha256"])
         manager.assert_candidate(workspace, candidate, spec["scope"])
+        validate_completed_run(self.store, current)
         reasons = acceptance_reasons(spec, current, evidence_records, workspace_quiescent=True, current_subject=candidate, packet_digest=attempt["packet"]["digest"], lease_generation=run["lease_generation"], owned_invocation_ids={e["producer"]["invocation_id"] for e in evidence_records}, verification_profile_digest=check_profile["digest"] if check_profile else None)
         decision = "accepted" if not reasons else "blocked"
         acceptance = {"kind": "acceptance", "schema_version": "1.0", "acceptance_id": identifier(), "run_id": run_id, "spec_digest": spec["digest"], "candidate": candidate, "policy_digest": digest(spec["review"]), "evidence_ids": sorted(e["evidence_id"] for e in evidence_records), "evidence_set_digest": digest(sorted(e["evidence_id"] for e in evidence_records)), "verifier": {"version": "0.1.0a1", "identity": "owned-independent-verifier"}, "decision": decision, "reasons": reasons, "at": now(), "qualification": run["qualification"], "extensions": {}}
         acceptance = seal("acceptance", acceptance)
         def accept(updated, db):
             self.store.require_fence(updated, run["lease_generation"], db=db)
+            validate_completed_run(self.store, updated)
             if updated["state"] != "verifying":
                 raise TaskAlongError("verification_state_changed", "Cancellation or recovery changed the run before acceptance.", exit_code=6)
             db.execute("INSERT INTO acceptances VALUES (?,?,?)", (acceptance["acceptance_id"], run_id, encode(acceptance)))
@@ -684,6 +690,8 @@ class Workflow:
     def publish_intent(self, run_id):
         from .integrations.github import build_publish_intent
         run = self.store.run(run_id)
+        from .executors.cursor_capture import validate_completed_run
+        validate_completed_run(self.store, run)
         spec = self.store.spec(run)
         if not run["acceptance_id"]:
             raise TaskAlongError("publication_not_ready", "Publication requires independent acceptance of the exact candidate.", exit_code=3)
@@ -850,7 +858,7 @@ def drive_run(state_dir, run_id, attempt_id):
         if seconds_remaining <= 0:
             _finish_attempt(store, run_id, attempt_id, {"state": "failed", "error": "attempt_deadline_exhausted", "thread_id": None, "process": {"termination_confirmed": True, "duration_ms": 0, "output_bytes": 0}, "usage": {}}, None)
             return
-        if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5"}:
             try:
                 from .admission import resolve
                 authority = store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], attempt["admission"]["authority_id"])
@@ -880,7 +888,7 @@ def drive_run(state_dir, run_id, attempt_id):
                 "max_attempts":spec["budget"]["max_attempts"]-run["budget_consumed"]["attempts"]+1,
                 "max_output_bytes":spec["budget"]["max_output_bytes"]-run["budget_consumed"]["output_bytes"]},
             "qualification":run["qualification"], "extensions":{}}
-        if spec["schema_version"] not in {"2.3", "2.4"}:
+        if spec["schema_version"] not in {"2.3", "2.4", "2.5"}:
             packet_fields["bindings"]["runtime_profile_digest"] = profile["digest"]
             packet_fields["result_schema_id"] = "urn:taskalong:schema:v1:worker-result"
         from .admission import worker_contract
@@ -892,7 +900,7 @@ def drive_run(state_dir, run_id, attempt_id):
         store.put_blob(canonical_bytes(packet))
         def prepared(current, db):
             item = store.detail("attempts", attempt_id)
-            if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
+            if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5"}:
                 if current["state"] == "cancel_pending":
                     raise TaskAlongError("cancel_pending", "Cancellation prevents worker dispatch.", exit_code=6)
                 item.update(canonical_packet=canonical_packet, packet_projection=projection, dispatch_admission=attempt["dispatch_admission"])
@@ -905,7 +913,7 @@ def drive_run(state_dir, run_id, attempt_id):
         try:
             store.mutate(run_id, "executor.prepare", attempt_id, None, {"packet_digest": packet["digest"]}, prepared, events=[("effect.prepared", {"kind": "executor.start"})], fence=run["lease_generation"])
         except TaskAlongError as exc:
-            if (spec["schema_version"] in {"2.2", "2.3", "2.4"} and exc.code == "cancel_pending"
+            if (spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5"} and exc.code == "cancel_pending"
                     and store.detail("attempts", attempt_id)["spawn_phase"] == "not_dispatched"):
                 # This supervisor has not created a worker gate or sent target
                 # code. The rolled-back preparation cannot leave a dispatch.
@@ -917,7 +925,7 @@ def drive_run(state_dir, run_id, attempt_id):
             if hasattr(receipt, "to_dict"):
                 receipt = receipt.to_dict()
             def spawned(current, db):
-                if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
+                if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5"}:
                     # run_bounded invokes this callback while the owned gate is
                     # still closed. An exception prevents target execve.
                     if current["state"] == "cancel_pending":
@@ -946,18 +954,28 @@ def drive_run(state_dir, run_id, attempt_id):
         from .executors.registry import executor_for
         try:
             result = contract.factory(profile, provider).run(packet, workspace=workspace["path"], output_dir=output, cancel_requested=lambda: store.run(run_id)["state"] == "cancel_pending", heartbeat=lambda: store.heartbeat(run_id, attempt_id), on_spawn=on_spawn, git_common_dir=store.repository(run["repository_registration_id"])["common_dir"], control_dir=str(store.root), mode="native_resume" if attempt["mode"] == "native_resume" else "start", thread_id=attempt.get("thread_id"))
+            if spec["schema_version"] == "2.5":
+                from .executors.cursor_capture import retain_handoff
+                retain_handoff(store, run, spec, store.detail("attempts", attempt_id), result)
             worker = result.get("result")
             try:
                 stopped_snapshot = manager.snapshot(workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])
                 result["checkpoint"] = {_worker_identity_key(spec):profile["digest"], "spec_digest":spec["digest"], "content_digest":stopped_snapshot["content_digest"]}
-                if spec["schema_version"] in {"2.3", "2.4"}:
+                if spec["schema_version"] == "2.5":
+                    association = result.get("cursor_capture")
+                    result["checkpoint"].update(session_policy="fresh", requested_session_id=None,
+                        observed_session_id=result.get("session_id"),
+                        capture_digest=association["digest"] if association else None)
+                elif spec["schema_version"] in {"2.3", "2.4"}:
                     result["checkpoint"].update(requested_session_id=packet["session_id"], observed_session_id=result.get("session_id"))
                 else:
                     result["checkpoint"]["thread_id"] = result.get("thread_id")
             except TaskAlongError:
                 result["checkpoint"] = None
             if result["state"] == "completed":
-                if spec["schema_version"] in {"2.3", "2.4"}:
+                if spec["schema_version"] == "2.5":
+                    validate_versioned("worker-result", worker, expected_version="2.5")
+                elif spec["schema_version"] in {"2.3", "2.4"}:
                     validate_versioned("worker-result", worker, expected_version="2.3")
                     expected = {key:packet["bindings"][key] for key in ("driver_config_digest", "provider_profile_digest")}
                     expected["session_id"] = packet["session_id"]
@@ -981,7 +999,12 @@ def drive_run(state_dir, run_id, attempt_id):
             if "result" in locals() and store.run(run_id)["active_attempt_id"] == attempt_id:
                 result.update(state="failed", error=exc.code)
                 _finish_attempt(store, run_id, attempt_id, result, None)
-            _block(store, run_id, exc.code, phase="running", uncertain=exc.effect_outcome == "uncertain")
+            if spec["schema_version"] == "2.5" and "result" in locals():
+                confirmed = (result.get("process") or {}).get("termination_confirmed") is True
+                _block(store, run_id, exc.code, phase="running", uncertain=not confirmed,
+                       effect_outcome="known" if confirmed else "uncertain")
+            else:
+                _block(store, run_id, exc.code, phase="running", uncertain=exc.effect_outcome == "uncertain")
         except Exception:
             _block(store, run_id, "supervisor_internal_failure", phase="running", uncertain=True)
 
@@ -990,14 +1013,33 @@ def _finish_attempt(store, run_id, attempt_id, result, worker):
     run = store.run(run_id)
     process = result.get("process", {})
     artifact = store.put_blob(canonical_bytes(worker)) if worker else None
+    cursor = store.spec(run)["schema_version"] == "2.5"
+    association = result.get("cursor_capture") if cursor and result["state"] == "completed" else None
+    request = {"state": result["state"], "artifact": artifact}
+    if cursor:
+        request["cursor_capture_digest"] = association["digest"] if association else None
     terminal_events = []
     def finish(current, db):
         item = store.detail("attempts", attempt_id)
+        if cursor:
+            if current["active_attempt_id"] != attempt_id or item["lease_generation"] != current["lease_generation"]:
+                raise TaskAlongError("lease_fenced", "Only the exact active Cursor attempt can finish.", exit_code=4)
+            if result["state"] == "completed":
+                if association is None or association["result_artifact"] != artifact:
+                    raise TaskAlongError("cursor_capture_invalid", "A completed Cursor handoff requires its exact private capture.", exit_code=70)
+                session = association["observation"]["observed_session_id"]
+                for prior in current["attempts"][:-1]:
+                    previous = store.detail("attempts", prior["attempt_id"])
+                    if (previous.get("checkpoint") or {}).get("observed_session_id") == session:
+                        raise TaskAlongError("cursor_session_reused", "A fresh attempt cannot reuse a known prior native session.", exit_code=3)
         confirmed = bool(process.get("termination_confirmed"))
         item.update(status=result["state"], termination_confirmed=confirmed, thread_id=result.get("thread_id"), finished_at=now(), result_artifact=artifact, process=process, checkpoint=result.get("checkpoint"), error=result.get("error"))
         if "driver_config_digest" in item:
             item["driver_report"] = {"reported_session_id":result.get("session_id"),
                 "reported_usage":result.get("reported_usage"), "diagnostics":result.get("diagnostics")}
+        if cursor:
+            item["cursor_raw_capture"] = result.get("cursor_raw_capture")
+            item["cursor_capture"] = association
         db.execute("UPDATE attempts SET active=?,document=? WHERE attempt_id=?", (0 if confirmed else 1, encode(item), attempt_id))
         current["attempts"][-1]["status"] = result["state"]
         if confirmed:
@@ -1035,4 +1077,4 @@ def _finish_attempt(store, run_id, attempt_id, result, worker):
         event = "cancel.confirmed" if current["state"] == "cancelled" and confirmed else "executor.completed" if result["state"] == "completed" else "executor.failed"
         terminal_events.append((event, {"attempt_id": attempt_id, "termination_confirmed": confirmed,
                                       **({"local_cessation": True} if event == "cancel.confirmed" else {})}))
-    return store.mutate(run_id, "executor.finish", attempt_id, None, {"state": result["state"], "artifact": artifact}, finish, events=terminal_events, fence=run["lease_generation"])
+    return store.mutate(run_id, "executor.finish", attempt_id, None, request, finish, events=terminal_events, fence=run["lease_generation"])

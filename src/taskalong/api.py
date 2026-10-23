@@ -71,7 +71,7 @@ class RunService:
         run = self._store.run(run_id)
         spec = self._store.spec(run)
         binding, satisfied, decision, reasons = None, None, None, ["v1_runtime_unqualified"]
-        if spec["schema_version"] in {"2.2", "2.3", "2.4"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5"}:
             binding = spec["execution"]["binding_digest"]
             try:
                 if mode not in {"start", "restart"}:
@@ -93,6 +93,8 @@ class RunService:
         """
         run = self._store.run(run_id)
         attempt = self._store.detail("attempts", run["attempts"][-1]["attempt_id"]) if run["attempts"] else None
+        from .executors.cursor_capture import validate_completed_run
+        validate_completed_run(self._store, run)
         acceptance = self._store.detail("acceptances", run["acceptance_id"]) if run["acceptance_id"] else None
         if acceptance is not None:
             acceptance = validate("acceptance", acceptance)
@@ -128,7 +130,7 @@ class RunService:
         packet_digest = None
         if attempt and attempt.get("canonical_packet"):
             version = attempt["canonical_packet"].get("schema_version")
-            if version not in {"2.2", "2.3", "2.4"}:
+            if version not in {"2.2", "2.3", "2.4", "2.5"}:
                 raise TaskAlongError("store_integrity", "The stored packet version is unsupported.", exit_code=70)
             packet = validate_versioned("worker-packet", attempt["canonical_packet"], expected_version=version)
             mapping = validate_versioned("packet-projection", attempt["packet_projection"], expected_version=version)
