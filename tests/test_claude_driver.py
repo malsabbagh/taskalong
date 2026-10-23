@@ -73,6 +73,37 @@ def driver_worker(packet):
         "blockers":[], "deviations":[], "residual_risks":[], "qualification":"synthetic"}
 
 
+def assert_settled_failed_attempt(test, run):
+    """Budget/restart oracles require real post-exit failure, never uncertainty."""
+    latest = run["attempts"][-1]["attempt_id"]
+    attempt = test.service._store.detail("attempts", latest)
+    process = attempt.get("process") or {}
+    diagnostic = canonical_bytes({
+        "state":run["state"], "active_attempt_id":run["active_attempt_id"],
+        "pending_effect_ids":run["pending_effect_ids"], "latest_attempt_id":latest,
+        "attempt_id":attempt["attempt_id"], "attempt_status":attempt["status"],
+        "attempt_error":attempt.get("error"), "termination_confirmed":attempt.get("termination_confirmed"),
+        "process":{key:process.get(key) for key in ("exit_code", "termination_confirmed",
+            "group_termination_confirmed", "timed_out", "cancelled", "output_limited",
+            "protocol_error", "lifetime_backend", "unaccounted_descendants")}}).decode()
+    test.assertEqual(run["state"], "blocked", diagnostic)
+    test.assertIsNone(run["active_attempt_id"], diagnostic)
+    test.assertEqual(run["pending_effect_ids"], [], diagnostic)
+    test.assertIsNone(run["candidate"], diagnostic)
+    test.assertIsNone(run["acceptance_id"], diagnostic)
+    test.assertEqual(attempt["attempt_id"], latest, diagnostic)
+    test.assertEqual(attempt["run_id"], run["run_id"], diagnostic)
+    test.assertEqual(attempt["status"], "failed", diagnostic)
+    test.assertEqual(attempt.get("error"), "claude_exit_failed", diagnostic)
+    test.assertIs(attempt.get("termination_confirmed"), True, diagnostic)
+    test.assertEqual(process.get("exit_code"), 1, diagnostic)
+    test.assertIs(process.get("termination_confirmed"), True, diagnostic)
+    test.assertIs(process.get("group_termination_confirmed"), True, diagnostic)
+    for key in ("timed_out", "cancelled", "output_limited", "unaccounted_descendants"):
+        test.assertIs(process.get(key), False, diagnostic)
+    test.assertIsNone(process.get("protocol_error"), diagnostic)
+
+
 class DriverConfigurationTests(unittest.TestCase):
     def test_driver_config_is_closed_frozen_and_explicitly_versioned(self):
         from taskalong.executors.config import DriverConfig
@@ -478,12 +509,12 @@ class ClaudePublicLifecycleTests(ClaudeBindingFixture, unittest.TestCase):
 
     def test_restart_uses_new_attempt_session_and_cannot_reset_budget(self):
         self.service.configure_execution(**self.configuration)
-        self.set_mode("duplicate-terminal")
+        # A valid stream followed by exit 1 exercises settled failure accounting.
+        self.set_mode("nonzero")
         run, _ = self.submit(self.task)
         self.start(run)
         failed = self.wait(run["run_id"])
-        self.assertIsNone(failed["active_attempt_id"])
-        self.assertIsNone(failed["acceptance_id"])
+        assert_settled_failed_attempt(self, failed)
         self.set_mode("good")
         receipt = self.service.resume(run["run_id"], mode="restart", operation_key="explicit-restart", expected_revision=failed["revision"])
         stopped = self.wait(run["run_id"])
@@ -502,17 +533,19 @@ class ClaudePublicLifecycleTests(ClaudeBindingFixture, unittest.TestCase):
 
     def test_failed_restarts_exhaust_persisted_attempt_budget(self):
         self.service.configure_execution(**self.configuration)
-        self.set_mode("duplicate-terminal")
+        self.set_mode("nonzero")
         run, _ = self.submit(self.task)
         self.start(run)
         failed = self.wait(run["run_id"])
+        assert_settled_failed_attempt(self, failed)
         self.service.resume(run["run_id"], mode="restart", operation_key="second-failure", expected_revision=failed["revision"])
         stopped = self.wait(run["run_id"])
-        self.assertIsNone(stopped["candidate"])
+        assert_settled_failed_attempt(self, stopped)
         self.assertEqual(stopped["budget_consumed"]["attempts"], 2)
         with self.assertRaises(TaskAlongError) as failure:
             self.service.resume(run["run_id"], mode="restart", operation_key="exhausted", expected_revision=stopped["revision"])
         self.assertEqual(failure.exception.code, "budget_exhausted")
+        self.assertEqual(self.service.inspect(run["run_id"]), stopped)
         self.assertEqual(len(self.invocations()), 2)
 
     def test_operator_can_revoke_trust_after_executable_changed(self):
@@ -649,8 +682,18 @@ class ClaudeRecoveryTests(ClaudeBindingFixture, unittest.TestCase):
     test_concurrent_same_key_clients_dispatch_one_attempt = _Cases.test_concurrent_same_key_clients_dispatch_one_attempt
 
     def test_lost_supervisor_before_finish_retains_unknown_effect_and_quarantine(self):
+        self.assert_lost_supervisor_before_finish(exhausted=False)
+
+    def test_exhausted_unreconciled_attempt_refuses_restart_without_new_effect(self):
+        self.assert_lost_supervisor_before_finish(exhausted=True)
+
+    def assert_lost_supervisor_before_finish(self, *, exhausted):
         self.service.configure_execution(**self.configuration)
-        run, _ = self.submit()
+        task = self.task
+        if exhausted:
+            task = seal_versioned("task-spec", task | {"budget":task["budget"] | {
+                "max_attempts":1}}, version=task["schema_version"])
+        run, _ = self.submit(task)
         environment, marker, _ = self.trace_environment("_finish_attempt")
         client = self.cli_start(run, "lost-supervisor", environment=environment)
         self.assertEqual(client.returncode, 0, client.stderr)
@@ -668,6 +711,32 @@ class ClaudeRecoveryTests(ClaudeBindingFixture, unittest.TestCase):
         self.assertIsNone(observed["acceptance_id"])
         self.assertEqual(len(self.invocations()), 1)
         self.assertEqual(self.service.result(run["run_id"])["outcome"], "unknown")
+        if exhausted:
+            self.assertEqual(observed["budget_consumed"]["attempts"], task["budget"]["max_attempts"])
+            self.assertEqual(observed["active_attempt_id"], before["active_attempt_id"])
+            attempt = self.service._store.detail("attempts", observed["active_attempt_id"])
+            self.assertIs(attempt["termination_confirmed"], False)
+            effects = [self.service._store.detail("effects", value) for value in observed["pending_effect_ids"]]
+            self.assertEqual([(effect["kind"], effect["phase"]) for effect in effects], [("executor.start", "prepared")])
+            self.assertEqual(observed["blockers"][0]["effect_outcome"], "uncertain")
+            lease = self.service._store.lease(observed)
+            counts = {table:self.service._store.db.execute("SELECT count(*) FROM " + table).fetchone()[0]
+                      for table in ("attempts", "effects", "operations")}
+            with self.assertRaises(TaskAlongError) as failure:
+                self.service.resume(run["run_id"], mode="restart", operation_key="exhausted-but-unreconciled",
+                                    expected_revision=observed["revision"])
+            self.assertEqual(failure.exception.code, "resume_not_reconciled")
+            self.assertEqual(self.service.inspect(run["run_id"]), observed)
+            self.assertEqual(self.service._store.detail("attempts", attempt["attempt_id"]), attempt)
+            self.assertEqual(self.service._store.lease(observed), lease)
+            self.assertEqual([self.service._store.detail("effects", effect["effect_id"]) for effect in effects], effects)
+            self.assertEqual({table:self.service._store.db.execute("SELECT count(*) FROM " + table).fetchone()[0]
+                              for table in counts}, counts)
+            self.assertEqual(len(self.invocations()), 1)
+            print(canonical_bytes({"kind":"unreconciled_budget_refusal", "attempts_consumed":observed["budget_consumed"]["attempts"],
+                "max_attempts":task["budget"]["max_attempts"], "refusal":failure.exception.code,
+                "product_cessation_confirmed":attempt["termination_confirmed"], "state_unchanged":True,
+                "quarantine_retained":lease["state"] == "quarantined", "pending_effect_retained":True}).decode(), file=sys.stderr)
 
 
 if __name__ == "__main__":
