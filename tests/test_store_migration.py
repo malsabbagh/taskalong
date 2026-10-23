@@ -900,12 +900,17 @@ with module.Store(sys.argv[2]) as store:
             if child.poll() is None:child.kill()
             child.communicate(timeout=5)
         self.assertEqual(child.returncode,-signal.SIGKILL)
+        with Store.maintenance(self.state) as owner:
+            self.assertEqual(owner.db.execute('PRAGMA locking_mode').fetchone()[0],'exclusive')
+            self.assertEqual(owner.db.execute('PRAGMA journal_mode').fetchone()[0],'delete')
+            self.assertEqual(logical_fingerprint(owner),before)
         once()
         with Store(self.state) as store:self.assertEqual(logical_fingerprint(store),before)
         print(json.dumps({'kind':'maintenance_exact_predecessor_compatibility',
             'fixture_sha256':hashlib.sha256(fixture.read_bytes()).hexdigest(),'format':1,
             'store_uuid':self.store_uuid,'identity':identity,'opened_before':True,'opened_after':True,
             'active_client_refusal':'maintenance_exclusivity_unproven','active_during_refusal':True,
+            'successful_maintenance_acquired_and_released':True,'owner_locking':'exclusive','owner_journal':'delete',
             'parent_observed_reaped':True,'logical_state_unchanged':True,
             'legacy_contended_constructor_latency_qualified':False}),file=sys.stderr,flush=True)
 
