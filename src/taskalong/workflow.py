@@ -117,7 +117,9 @@ class Workflow:
         if type(spec) is not dict:
             raise TaskAlongError("invalid_document", "A task specification must be a JSON object.")
         screen_sensitive(spec)
-        if spec.get("schema_version", "1.0") == "1.0":
+        # Select only the newly supported version explicitly. All other input
+        # retains the original v1 CLI admission/error boundary.
+        if spec.get("schema_version") != "2.2":
             spec = seal("task-spec", spec)
         else:
             from .execution import read_task_spec
