@@ -178,3 +178,26 @@ fixture permits only balanced scoped Edit events and no nonempty stderr. It
 performs no provider request and proves no remote cancellation or cost. Unknown
 usage stays unknown; production and hard cost/token caps refuse. See the
 [protocol boundary](cursor-protocol.md) and [2.5 contracts](contracts.md#cursor-fixture-contracts-v25).
+
+## Antigravity fixture qualification scope
+
+M8 adds the explicit 2.6 Antigravity fixture and reuses neutral worker-result 2.5.
+Original fake_agy framing exercises one input envelope, exact observed
+conversation/model/tool/schema, sticky denial, strict step order and terminal
+structured output. Any stderr blocks success, even at exit zero. Raw counters
+are one reported cumulative snapshot; core independently rechecks them without
+summing step counters, inferring missing values or granting budget refunds.
+
+Shared contracts cover owned and closed-gate cancellation, exact-mode authority,
+independent checks/review, fresh restart, preserved budgets and uncertainty after
+supervisor loss. Tampered private input/output, observations and predecessor
+captures must refuse without dispatch or journal mutation. Format7 maintenance
+preserves complete prior state and excludes the actual byte-pinned format6 Store.
+Source and every wheel/rebuilt-sdist/hosted profile need their own current receipts.
+
+Installed agy 1.4.0 help/version evidence establishes only version and flags.
+No actual start, schema enforcement, model/account route, conversation persistence,
+instruction/tool/config isolation or complete vendor lifetime is qualified.
+Native resume, provider lookup, remote cancellation, hard token/cost caps and
+production remain unsupported. No credential lookup, provider request, new host
+or registry release is introduced. See the [protocol](antigravity-protocol.md).

@@ -4,6 +4,36 @@ The original provisional contracts use schema version `1.0`; the package/API ver
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).
 
+## Antigravity fixture contracts v2.6
+
+Four additive resources define task-spec, driver-config, worker-packet and
+packet-projection. `AntigravityTaskSpec` and `AntigravityDriverConfig` are explicit
+immutable readers. The neutral worker-result **2.5 remains byte-identical**;
+there is no worker-result 2.6. All 48 earlier schema/SQL resources retain their
+bytes and meanings. Persisting executable 2.6 state requires explicit format 7.
+
+The closed `antigravity-headless-fixture/1` contract binds a registered original
+fixture, exact synthetic google-account provider, fixed model identity, policies
+and current exact-mode evidence. Its credential reference is nonsecret and never
+resolved. The canonical packet is wrapped losslessly in one fixed
+`agy-user-ndjson/1` user envelope plus newline/EOF; the wrapper hash is not the
+packet digest. A fresh conversation is observed independently from worker JSON.
+
+The independent decoder accepts only exact init/step_update/result framing,
+sticky denial/error handling and one whole neutral structured result. Nonempty
+stderr refuses. Core re-decodes retained private input/output and validates all
+frozen associations, owned cessation and reported usage before completion.
+Reported cumulative snapshots remain separate from conserved budgets. Missing
+usage stays unknown; no sum, refund or hard accounting claim follows.
+
+Read-only result, verification and dependent recovery/publication reject corrupt
+captures. A fresh restart requires stopped ownership and clear effects, retains
+budgets and refuses known conversation reuse. Native resume, provider lookup,
+remote cancellation, hard caps and production are unsupported. The shared
+capture helper preserves the shipped Cursor contract; this is not vendor
+protocol reuse. See the [protocol](antigravity-protocol.md) and
+[ADR](adr/0008-antigravity-fixture-driver.md).
+
 ## Cursor fixture contracts v2.5
 
 Five additive resources describe `driver-config`, `task-spec`, `worker-packet`,

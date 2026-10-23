@@ -16,7 +16,7 @@ ReviewSensei results govern acceptance; worker output cannot grant authority.
   verification and fixture publication journeys.
 - Installed read-only guides: `taskalong guide`, `taskalong guide operations`,
   `taskalong guide contracts` and `taskalong guide qualification`.
-- Explicit Codex, Claude and Cursor synthetic driver projections sharing one supervisor,
+- Explicit Codex, Claude, Cursor and Antigravity synthetic driver projections sharing one supervisor,
   with offline wire decoders and contract tests. Separate local/direct-cloud
   Ollama profiles run through the same Claude fixture driver. Real CLI execution
   and provider routing are unqualified.
@@ -55,7 +55,8 @@ is described in [qualification](docs/qualification.md).
 ## Boundaries and status
 
 See [architecture](docs/architecture.md), [contracts](docs/contracts.md),
-[operations](docs/operations.md), [offline Claude protocol](docs/claude-protocol.md)
+[operations](docs/operations.md), [offline Claude protocol](docs/claude-protocol.md),
+[Antigravity fixture protocol](docs/antigravity-protocol.md)
 and [security guidance](SECURITY.md). These documents distinguish implemented
 fixture behavior from actual runtime capabilities. No stable API, arbitrary
 runtime compatibility, exactly-once remote effect or hard provider cost cap is

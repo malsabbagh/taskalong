@@ -4,7 +4,7 @@ from .contracts import RuntimeProfile
 from .errors import TaskAlongError
 from .qualification import QualificationDecision
 from .execution import InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding
-from .executors.config import CursorDriverConfig, DriverConfig, OllamaDriverConfig, read_driver_config
+from .executors.config import AntigravityDriverConfig, CursorDriverConfig, DriverConfig, OllamaDriverConfig, read_driver_config
 from .store import encode, key_check, now
 from .validation import digest, loads
 
@@ -16,7 +16,7 @@ _TYPES["driver_config"] = DriverConfig
 
 
 def _require(store):
-    if store.format_version not in (2, 3, 4, 5, 6):
+    if store.format_version not in (2, 3, 4, 5, 6, 7):
         raise TaskAlongError("store_upgrade_required", "Versioned history requires the explicit backed-up store upgrade.", exit_code=3)
 
 
@@ -34,7 +34,7 @@ def _identity(document):
 def record_document(store, document, *, operation_key):
     _require(store)
     key_check(operation_key)
-    if type(document) not in (*_TYPES.values(), OllamaDriverConfig, CursorDriverConfig):
+    if type(document) not in (*_TYPES.values(), OllamaDriverConfig, CursorDriverConfig, AntigravityDriverConfig):
         raise TaskAlongError("history_document_invalid", "Only validated immutable profile/binding/decision documents can be stored.")
     document = type(document)(document.to_bytes())
     value = document.to_dict()
@@ -46,6 +46,8 @@ def record_document(store, document, *, operation_key):
         raise TaskAlongError("store_upgrade_required", "Ollama fixture history requires explicit format-5 maintenance.", exit_code=3)
     if value["schema_version"] == "2.5" and store.format_version < 6:
         raise TaskAlongError("store_upgrade_required", "Cursor fixture history requires explicit format-6 maintenance.", exit_code=3)
+    if value["schema_version"] == "2.6" and store.format_version < 7:
+        raise TaskAlongError("store_upgrade_required", "Antigravity fixture history requires explicit format-7 maintenance.", exit_code=3)
     request = {"kind":value["kind"], "identity":_identity(value), "digest":document.digest, "schema_version":value["schema_version"]}
     request_digest = digest(request, exclude_digest=False)
     response = request | {"historical_only":True}

@@ -92,6 +92,19 @@ class CursorTaskSpec(CursorDocument):
     schema_name: ClassVar[str] = "task-spec"
 
 
+@dataclass(frozen=True, slots=True)
+class AntigravityDocument(JsonDocument):
+    """Explicit 2.6 original fixture documents; no vendor execution authority."""
+    def __post_init__(self):
+        admitted = validate_versioned(self.schema_name, loads(self._canonical), expected_version="2.6")
+        object.__setattr__(self, "_canonical", canonical_bytes(admitted))
+
+
+@dataclass(frozen=True, slots=True)
+class AntigravityTaskSpec(AntigravityDocument):
+    schema_name: ClassVar[str] = "task-spec"
+
+
 def project_packet(packet, admission):
     """Freeze canonical packet, then exact wire bytes, then their mapping.
 
@@ -138,7 +151,7 @@ class PolicyResolver:
         raise TaskAlongError("policy_unresolved", "The exact policy content and type are unavailable.", exit_code=3)
 
 
-def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec | OllamaTaskSpec | CursorTaskSpec:
+def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec | OllamaTaskSpec | CursorTaskSpec | AntigravityTaskSpec:
     """Select only an explicit version; never upgrade or rewrite legacy bytes."""
     if document.get("schema_version") == "1.0":
         return TaskSpec.from_dict(document)
@@ -150,4 +163,6 @@ def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec | O
         return OllamaTaskSpec.from_dict(document)
     if document.get("schema_version") == "2.5":
         return CursorTaskSpec.from_dict(document)
+    if document.get("schema_version") == "2.6":
+        return AntigravityTaskSpec.from_dict(document)
     raise TaskAlongError("unknown_schema_version", "The task specification version is unsupported.")

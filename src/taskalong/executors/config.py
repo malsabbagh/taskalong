@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from typing import ClassVar
 
-from ..execution import CursorDocument, DriverDocument, OllamaDocument
+from ..execution import AntigravityDocument, CursorDocument, DriverDocument, OllamaDocument
 from ..errors import TaskAlongError
 
 
@@ -21,7 +21,12 @@ class CursorDriverConfig(CursorDocument):
     schema_name: ClassVar[str] = "driver-config"
 
 
-def read_driver_config(document: dict) -> DriverConfig | OllamaDriverConfig | CursorDriverConfig:
+@dataclass(frozen=True, slots=True)
+class AntigravityDriverConfig(AntigravityDocument):
+    schema_name: ClassVar[str] = "driver-config"
+
+
+def read_driver_config(document: dict) -> DriverConfig | OllamaDriverConfig | CursorDriverConfig | AntigravityDriverConfig:
     """Select an explicit immutable family, without registering or qualifying it."""
     if type(document) is not dict:
         raise TaskAlongError("schema_validation", "A driver configuration must be a JSON object.")
@@ -31,4 +36,6 @@ def read_driver_config(document: dict) -> DriverConfig | OllamaDriverConfig | Cu
         return OllamaDriverConfig.from_dict(document)
     if document.get("schema_version") == "2.5":
         return CursorDriverConfig.from_dict(document)
+    if document.get("schema_version") == "2.6":
+        return AntigravityDriverConfig.from_dict(document)
     raise TaskAlongError("unknown_schema_version", "The driver configuration version is unsupported.")

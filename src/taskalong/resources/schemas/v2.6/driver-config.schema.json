@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.6:driver-config",
+  "title": "driver-config",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "driver_id",
+    "driver_version",
+    "projection",
+    "wire_version",
+    "installation_digest",
+    "provider_profile_digest",
+    "qualification",
+    "registration",
+    "executable",
+    "credential_ref",
+    "policy_digests",
+    "launch",
+    "digest",
+    "expected_reported_model"
+  ],
+  "properties": {
+    "kind": {
+      "const": "driver_config"
+    },
+    "schema_version": {
+      "const": "2.6"
+    },
+    "driver_id": {
+      "const": "antigravity-cli"
+    },
+    "driver_version": {
+      "const": "agy-headless-fixture-1"
+    },
+    "projection": {
+      "const": "antigravity-headless-fixture/1"
+    },
+    "wire_version": {
+      "const": "2.6"
+    },
+    "installation_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "provider_profile_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "qualification": {
+      "const": "synthetic"
+    },
+    "registration": {
+      "const": "operator_registered_fixture"
+    },
+    "executable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "credential_ref": {
+      "const": "fixture-google-account"
+    },
+    "policy_digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instructions",
+        "tools",
+        "worker_sandbox",
+        "check_binding"
+      ],
+      "properties": {
+        "instructions": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tools": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worker_sandbox": {
+          "$ref": "#/$defs/sha256"
+        },
+        "check_binding": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "launch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "input_format",
+        "output_format",
+        "session_policy",
+        "input_framing",
+        "print_timeout_seconds"
+      ],
+      "properties": {
+        "mode": {
+          "const": "headless"
+        },
+        "input_format": {
+          "const": "stream-json"
+        },
+        "output_format": {
+          "const": "stream-json"
+        },
+        "session_policy": {
+          "const": "fresh"
+        },
+        "input_framing": {
+          "const": "agy-user-ndjson/1"
+        },
+        "print_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        }
+      }
+    },
+    "digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "expected_reported_model": {
+      "const": "fixture-agy-model"
+    }
+  }
+}
