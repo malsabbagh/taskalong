@@ -16,7 +16,7 @@ from .cursor_cli import _represent_provider as cursor_provider
 from .cursor_protocol import CursorStreamDecoder
 from .antigravity_cli import (AntigravityCLI, compile_packet as compile_agy_packet,
     represent as represent_agy, _represent_provider as agy_provider, encode_input as agy_input,
-    reported_usage as agy_usage)
+    reported_usage as agy_usage, _resolve_workspace as agy_workspace)
 from .antigravity_protocol import AntigravityStreamDecoder
 from .config import AntigravityDriverConfig, CursorDriverConfig
 from .claude_code import ClaudeCode, OLLAMA_FIXTURE, compile_packet as compile_claude_packet, represent as represent_claude
@@ -82,9 +82,8 @@ def _cursor_decoder(packet, config, attempt, limit):
 
 
 def _agy_decoder(packet, config, attempt, limit):
-    from pathlib import Path
     return AntigravityStreamDecoder(packet, expected_model=config["expected_reported_model"],
-        expected_cwd=str(Path(attempt["workspace"]["path"]).resolve()), max_output_bytes=limit)
+        expected_cwd=agy_workspace(attempt["workspace"]["path"]), max_output_bytes=limit)
 
 
 _CODEX = DriverContract(lambda configuration, provider: CodexCLI(configuration), _codex_packet, represent_codex)

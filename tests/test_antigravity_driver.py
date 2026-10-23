@@ -13,6 +13,16 @@ from taskalong.validation import canonical_bytes, loads, seal_versioned
 from test_antigravity_protocol import agy_packet, example_agy_config
 
 
+def workspace_resolution_fault(workspace, error_type):
+    """Inject only the selected workspace's nondeterministic filesystem fault."""
+    resolve = Path.resolve
+    def fail_selected(path, *args, **kwargs):
+        if path == Path(workspace):
+            raise error_type("synthetic-resolution-canary")
+        return resolve(path, *args, **kwargs)
+    return patch.object(Path, "resolve", fail_selected)
+
+
 def agy_context(executable=None):
     provider = seal_versioned("provider-profile", {
         "profile_id": "fixture-agy-route", "revision": 1, "harness": "antigravity", "provider": "google-account",
@@ -141,6 +151,51 @@ class AntigravityOwnedProcessTests(unittest.TestCase):
                         self.assertEqual(result["error"], "agy_tool_failed" if mode["mode"] == "tool_denial"
                                          else "agy_diagnostics_unqualified")
                         self.assertIsNone(result["result"])
+
+    def test_workspace_resolution_fault_after_owned_completion_never_returns_success(self):
+        from taskalong.executors import antigravity_cli as agy
+        for error_type in (OSError, RuntimeError):
+            with self.subTest(fault=error_type.__name__), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                executable = root / "fake-agy"
+                executable.write_text((Path(__file__).parent / "fixtures/fake_agy.py").read_text().replace(
+                    "#!/usr/bin/env python3", "#!" + sys.executable, 1))
+                executable.chmod(0o700)
+                workspace = root / "workspace"
+                workspace.mkdir()
+                (workspace / "arithmetic.py").write_text("def add(a, b):\n    return a - b\n")
+                config, provider = agy_context(executable)
+                packet, _, _ = agy.compile_packet(*agy_compiler_inputs(config))
+                run_bounded = agy.run_bounded
+                observed, faults = {}, []
+                def fail_after_real_completion(*args, **kwargs):
+                    process = run_bounded(*args, **kwargs)
+                    observed["process"] = process.to_dict()
+                    fault = workspace_resolution_fault(workspace, error_type)
+                    fault.start()
+                    faults.append(fault)
+                    return process
+                try:
+                    with patch.object(agy, "run_bounded", fail_after_real_completion):
+                        result = agy.AntigravityCLI(config, provider=provider).run(
+                            packet, workspace=workspace, output_dir=root / "output")
+                finally:
+                    for fault in faults:
+                        fault.stop()
+                process = observed["process"]
+                process.pop("stdout")
+                process.pop("stderr")
+                self.assertEqual(result["process"], process)
+                self.assertIs(result["process"]["termination_confirmed"], True)
+                self.assertIs(result["process"]["group_termination_confirmed"], True)
+                self.assertEqual(result["state"], "failed")
+                self.assertEqual(result["error"], "agy_capture_invalid")
+                for key in ("result", "session_id", "reported_usage", "antigravity_observation"):
+                    self.assertIsNone(result[key])
+                self.assertEqual(result["_private_capture"]["stdin"], agy.encode_input(packet))
+                frames = [loads(line) for line in result["_private_capture"]["stdout"].splitlines()]
+                self.assertEqual(frames[-1]["structured_output"]["status"], "completed")
+                self.assertEqual(len(executable.with_suffix(".invocations.jsonl").read_bytes().splitlines()), 1)
 
 
 from test_execution_bindings import BindingFixture
@@ -440,6 +495,33 @@ class AntigravityCaptureFaultTests(AntigravityBindingFixture, unittest.TestCase)
         self.assertEqual(attempt["error"], "agy_capture_invalid")
         self.assertIsNone(attempt["result_artifact"])
 
+    def test_workspace_resolution_fault_preserves_original_capture_and_real_cessation(self):
+        observed = {}
+        faults = []
+        def fail_after_worker(result):
+            observed.update(process=deepcopy(result["process"]), capture=deepcopy(result["_private_capture"]))
+            workspace = loads(result["_private_capture"]["stdout"].splitlines()[0])["cwd"]
+            fault = workspace_resolution_fault(workspace, RuntimeError)
+            fault.start()
+            faults.append(fault)
+        try:
+            stopped, attempt = self.stopped_fault(fail_after_worker)
+        finally:
+            for fault in faults:
+                fault.stop()
+        self.assertEqual(attempt.get("error"), "agy_capture_invalid")
+        self.assertEqual(attempt["status"], "failed")
+        self.assertEqual(attempt["process"], observed["process"])
+        self.assertIs(attempt["termination_confirmed"], True)
+        self.assertIsNone(attempt["result_artifact"])
+        self.assertIsNone(attempt["antigravity_capture"])
+        self.assertEqual(stopped["pending_effect_ids"], [])
+        self.assertIsNone(stopped["active_attempt_id"])
+        self.assertEqual(len(self.invocations()), 1)
+        for stream, raw in observed["capture"].items():
+            ref = attempt["antigravity_raw_capture"][stream]
+            self.assertEqual(self.service._store.get_blob(ref["sha256"]), raw)
+
     def test_framed_input_cannot_be_substituted_even_when_output_is_valid(self):
         _, attempt = self.stopped_fault(lambda result: result["_private_capture"].update(stdin=b'{"type":"user"}\n'))
         self.assertEqual(attempt["error"], "agy_capture_invalid")
@@ -488,6 +570,36 @@ class AntigravityPredecessorTests(AntigravityBindingFixture, unittest.TestCase):
         attempt["checkpoint"]["capture_digest"] = attempt["antigravity_capture"]["digest"]
         with self.service._store.transaction() as db:
             db.execute("UPDATE attempts SET document=? WHERE attempt_id=?", (encode(attempt), attempt["attempt_id"]))
+
+    def test_workspace_resolution_fault_refuses_completed_reads_and_restart_without_mutation(self):
+        stopped, previous = self.completed_before_freeze()
+        workspace = Path(previous["workspace"]["path"])
+        before = self.service._store.db.total_changes
+        operations = self.service._store.db.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
+        lease = self.service._store.lease(stopped)
+        actions = {
+            "result": lambda: self.service.result(stopped["run_id"]),
+            "verify": lambda: self.service.verify(stopped["run_id"], operation_key="fault-verify", expected_revision=stopped["revision"]),
+            "reconcile": lambda: self.service.reconcile(stopped["run_id"], operation_key="fault-reconcile", expected_revision=stopped["revision"]),
+            "publish_intent": lambda: self.service.publish_intent(stopped["run_id"]),
+            "restart": lambda: self.service.resume(stopped["run_id"], mode="restart", operation_key="fault-restart", expected_revision=stopped["revision"]),
+        }
+        for error_type in (OSError, RuntimeError):
+            for label, action in actions.items():
+                with self.subTest(fault=error_type.__name__, action=label):
+                    with workspace_resolution_fault(workspace, error_type), self.assertRaises(TaskAlongError) as failure:
+                        action()
+                    self.assertEqual(failure.exception.code, "agy_capture_invalid")
+                    self.assertEqual(failure.exception.exit_code, 70)
+                    self.assertNotIn("synthetic-resolution-canary", failure.exception.message)
+                    self.assertNotIn(str(workspace), failure.exception.message)
+                self.assertEqual(self.service._store.db.total_changes, before)
+                self.assertEqual(self.service._store.db.execute("SELECT COUNT(*) FROM operations").fetchone()[0], operations)
+                self.assertEqual(self.service.inspect(stopped["run_id"]), stopped)
+                self.assertEqual(self.service._store.detail("attempts", previous["attempt_id"]), previous)
+                self.assertEqual(self.service._store.lease(stopped), lease)
+                self.assertEqual(len(self.invocations()), 1)
+        self.assertEqual(self.service.result(stopped["run_id"])["outcome"], "worker_completed")
 
     def test_restart_refuses_corrupt_completed_predecessor_without_reservation(self):
         stopped, previous = self.completed_before_freeze()

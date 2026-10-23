@@ -28,6 +28,14 @@ def _refuse(code, message):
     raise TaskAlongError(code, message, exit_code=3)
 
 
+def _resolve_workspace(workspace):
+    """Keep filesystem resolution failures inside the closed capture contract."""
+    try:
+        return str(Path(workspace).resolve())
+    except (OSError, RuntimeError):
+        raise TaskAlongError("agy_capture_invalid", "The Antigravity workspace path cannot be validated.", exit_code=70) from None
+
+
 def _represent_provider(config, provider):
     if provider["digest"] != config["provider_profile_digest"] or provider["harness"] != "antigravity":
         _refuse("execution_identity_mismatch", "The configuration must name this exact Antigravity provider.")
@@ -184,10 +192,10 @@ class AntigravityCLI:
             # Unknown diagnostics or a zero-exit denial cannot become success.
             error = "agy_diagnostics_unqualified"
         else:
-            decoder = AntigravityStreamDecoder(packet, expected_model=self._config.to_dict()["expected_reported_model"],
-                expected_cwd=str(Path(workspace).resolve()),
-                max_output_bytes=min(budget["max_output_bytes"], 8 * 1024 * 1024))
             try:
+                decoder = AntigravityStreamDecoder(packet, expected_model=self._config.to_dict()["expected_reported_model"],
+                    expected_cwd=_resolve_workspace(workspace),
+                    max_output_bytes=min(budget["max_output_bytes"], 8 * 1024 * 1024))
                 # Decode exact retained bytes after EOF; a line callback must
                 # not manufacture a newline for a truncated terminal frame.
                 decoder.feed(capture["stdout"])
