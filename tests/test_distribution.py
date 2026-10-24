@@ -269,6 +269,48 @@ class DistributionTests(unittest.TestCase):
             self.assertEqual([row['event'] for row in rows], ['test-start', 'cleanup-observed', 'test-outcome', 'test-stop'])
             self.assertEqual([row['sequence'] for row in rows], list(range(1, 5)))
 
+    def test_linux_accounting_accepts_only_exact_owned_signal_skip_cases(self):
+        required = {
+            'test_linux_lifetime.UnsupportedLifetimeTests.test_non_linux_helper_never_releases_target': 'non-Linux refusal',
+            'test_supervisor.ProcessTests.test_unavailable_kernel_lifetime_boundary_never_releases_target': 'Darwin kernel boundary fault injection',
+            'test_supervisor.ProcessTests.test_denied_owned_signals_return_unknown_before_finite_child_exits': 'Darwin owned signal denial',
+            'test_supervisor.ProcessTests.test_signal_denial_after_real_exit_still_requires_kernel_cessation': 'Darwin owned signal exit race',
+            'test_supervisor.ProcessTests.test_later_signal_denials_preserve_failure_and_real_lifetime_facts': 'Darwin owned signal fault campaign',
+            'test_supervisor.ProcessTests.test_ownership_query_denial_cannot_authorize_a_signal': 'Darwin owned identity query denial',
+            'test_supervisor.ProcessTests.test_final_signal_denial_does_not_replace_primary_observation_failure': 'Darwin final cleanup fault campaign',
+            'test_claude_driver.ClaudeDriverBoundaryTests.test_malformed_provider_with_denied_signal_is_typed_failure_even_after_cessation': 'Darwin actual driver signal denial',
+        }
+        ordinary = 'test_ordinary.Case.test_required_behavior'
+        schedule = qualifier.make_schedule([*required, ordinary])
+        results = [{'test_ids': batch,
+                    'outcomes': {i: 'skipped' if i in required else 'passed' for i in batch},
+                    'skipped_platform_cases': [{'test': i, 'reason': required[i], 'required_platform': 'Darwin'}
+                                               for i in batch if i in required]}
+                   for batch in schedule['batches']]
+        count, skipped = qualifier.validate_test_accounting(schedule, results, 'linux')
+        self.assertEqual(count, 1)
+        self.assertEqual({row['test']: row['reason'] for row in skipped}, required)
+        for fault in ('unknown_skip', 'missing_skip', 'wrong_reason', 'wrong_platform', 'duplicate'):
+            bad = json.loads(json.dumps(results))
+            selected = next(row for row in bad if row['skipped_platform_cases'])
+            skip = selected['skipped_platform_cases'][0]
+            if fault == 'unknown_skip':
+                selected = next(row for row in bad if ordinary in row['test_ids'])
+                selected['outcomes'][ordinary] = 'skipped'
+                selected['skipped_platform_cases'].append({'test': ordinary, 'reason': 'Darwin owned signal denial', 'required_platform': 'Darwin'})
+            elif fault == 'missing_skip':
+                selected['outcomes'][skip['test']] = 'passed'
+                selected['skipped_platform_cases'].remove(skip)
+            elif fault == 'wrong_reason':
+                skip['reason'] = 'optional'
+            elif fault == 'wrong_platform':
+                skip['required_platform'] = 'Linux'
+            else:
+                selected['skipped_platform_cases'].append(dict(skip))
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                qualifier.validate_test_accounting(schedule, bad, 'linux')
+
+
     def test_batch_accounting_rejects_omitted_duplicate_unknown_and_skip(self):
         schedule = qualifier.make_schedule(['test_a.C.test_x', 'test_b.C.test_y'])
         good = [{'test_ids': batch, 'outcomes': {i: 'passed' for i in batch},
