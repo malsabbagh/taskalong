@@ -95,7 +95,8 @@ def observe_review(profile, *, subject, originals, evidence, schemas):
     Required finding classifications omitted by the upstream serialization are
     never fabricated here. Every finding instance is retained for assessment.
     """
-    if type(profile) is not TrialReviewerProfile or type(evidence) is not TrialReviewEvidence or type(schemas) is not dict:
+    if (type(profile) is not TrialReviewerProfile or type(evidence) is not TrialReviewEvidence
+            or type(schemas) is not dict or type(subject) is not dict):
         raise _invalid()
     profile = TrialReviewerProfile(profile.to_bytes()).to_dict()
     if set(schemas) != set(profile["schema_digests"]):

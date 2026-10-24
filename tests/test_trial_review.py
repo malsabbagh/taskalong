@@ -47,6 +47,43 @@ def observe_generated(profile, subject, result, outcome, process, *, schemas=Non
 
 
 class TrialReviewObservationTests(unittest.TestCase):
+    def test_review_subject_root_is_typed_and_preserves_closed_validation(self):
+        values = generated_review()
+        good = copy.deepcopy(values[1])
+        with patch('socket.socket', side_effect=AssertionError('No network')), patch('subprocess.Popen', side_effect=AssertionError('No process')):
+            for invalid in (None, [], 'subject', 7):
+                with self.subTest(root=type(invalid).__name__):
+                    with self.assertRaises(TaskAlongError) as caught:
+                        observe_generated(values[0], invalid, *values[2:])
+                    self.assertEqual(caught.exception.code, 'trial_review_invalid')
+            for invalid in ({}, good | {'foreign': True}, good | {'base_commit': None}):
+                with self.subTest(closed_subject=invalid):
+                    with self.assertRaises(TaskAlongError):
+                        observe_generated(values[0], invalid, *values[2:])
+            first, evidence = observe_generated(*values)
+            second, _ = observe_generated(*values)
+        self.assertEqual(values[1], good)
+        self.assertEqual(first.to_bytes(), second.to_bytes())
+        self.assertTrue(first.to_dict()['observation_complete'])
+        self.assertFalse(first.to_dict()['native_app_approval'])
+        for ref in first.to_dict()['originals'].values():
+            self.assertEqual(len(evidence.get(ref['sha256'])), ref['size_bytes'])
+
+    def test_review_process_capture_root_is_typed_before_container_use(self):
+        class CapturedProcess:
+            def __init__(self, value): self.value = value
+            def to_dict(self): return self.value
+        values = generated_review()
+        with patch('socket.socket', side_effect=AssertionError('No network')), patch('subprocess.Popen', side_effect=AssertionError('No process')):
+            for invalid in (None, [], 'process', 7, list(values[-1].to_dict()), [[]]):
+                with self.subTest(root=type(invalid).__name__, value=invalid):
+                    with self.assertRaises(TaskAlongError) as caught:
+                        observe_generated(*values[:-1], CapturedProcess(invalid))
+                    self.assertEqual(caught.exception.code, 'invalid_document')
+            receipt, _ = observe_generated(*values)
+        self.assertTrue(receipt.to_dict()['observation_complete'])
+        self.assertFalse(receipt.to_dict()['native_app_approval'])
+
     def test_each_original_stream_matches_the_fixed_process_representation(self):
         from taskalong.process import redact
         for stdout, stderr, process_stdout, process_stderr in (
