@@ -392,3 +392,10 @@ changes revocations or enables production. No automatic replay/recovery or
 cleanup using saved process IDs is performed. Evidence-write or close failure
 returns a safe non-durable result; the first cleanup uncertainty remains recorded
 when a secondary write also fails.
+
+Keep controller UID observations in the private inventory only. Do not copy UID
+values, usernames or raw host metadata into public summaries. The experiment
+inherits its caller identity and performs no elevation or identity switch.
+Neither zero nor nonzero classification establishes a privileged execution or
+confinement capability. A changed controller identity stops subsequent owned
+launches/completion; it does not rewrite earlier process or cleanup evidence.

@@ -275,3 +275,15 @@ remote cessation/accounting, native resume or hard token/cost caps. The
 `controlled-responder`, `actual-provider` and `native-resume` selections return
 typed unsupported before package discovery, credentials, sockets or dispatch.
 See the [experiment ADR](adr/0009-runtime-experiment-evidence.md).
+
+Each private host inventory records the controller's actual effective UID and
+its zero/nonzero class, bound by `host_digest`. The profile inherits the invoking
+process identity and never requests a UID or privilege change. A zero UID is an
+observation, not authorization or a qualified elevated profile; a nonzero UID
+does not prove absence of capabilities, entitlements, group access or other
+ambient authority. Child identity and privilege confinement remain unqualified.
+Missing initial observation blocks before helpers. Identity drift before an
+owned launch or during final input/replay rechecking stops completion while
+preserving earlier observations and actual cleanup facts. Public summaries omit
+UID details. Replay keeps the original observation and the current verifier's
+observation separate; differing identities do not promote or relabel the proof.

@@ -385,15 +385,15 @@ class RuntimeManifestContractTests(unittest.TestCase):
                 validate_proof(RuntimeProofManifest.from_dict(sealed(document)),
                                expected_plan=ExperimentPlan.from_dict(document["plan"]), evidence=evidence)
 
-    def test_offline_replay_keeps_failed_source_proof_and_untrusted_verifier_separate(self):
-        from taskalong.runtime_qualification import (
-            ProofEvidence, RuntimeReplayReport, evidence_set_digest, validate_replay,
-        )
+    def synthetic_verifier_inventory(self, original, measured, *, privilege=None):
+        from taskalong.runtime_qualification import ProofEvidence
 
         # This constructed verifier is deliberately untrusted test data; a
         # consistency-valid inventory does not authenticate installed execution.
-        verifier, measured = self.completed_measurements()
+        verifier = copy.deepcopy(original)
         facts = json.loads(measured[verifier["inventory_ref"]["sha256"]])
+        if privilege is not None:
+            facts["measurements"]["host"]["privilege"] = copy.deepcopy(privilege)
         package = facts["measurements"]["package"]
         package.update(origin="installed", artifact_digest="a" * 64,
                        source_artifact_digest="b" * 64, source_artifact_kind="sdist")
@@ -401,14 +401,25 @@ class RuntimeManifestContractTests(unittest.TestCase):
         verifier["plan"]["stage"] = "inventory"
         verifier["plan"]["case_ids"] = []
         verifier["plan"]["subject"]["package_digest"] = hashlib.sha256(canonical_bytes(package)).hexdigest()
+        verifier["plan"]["subject"]["host_digest"] = hashlib.sha256(canonical_bytes(facts["measurements"]["host"])).hexdigest()
         verifier["plan"] = sealed(verifier["plan"])
         facts["subject"] = verifier["plan"]["subject"]
         inventory = canonical_bytes(facts)
         verifier["inventory_ref"] = private_ref(inventory)
         verifier["cases"] = []
-        verifier_bytes = canonical_bytes(sealed(verifier))
+        verifier = sealed(verifier)
+        verifier_bytes = canonical_bytes(verifier)
         verifier_evidence = ProofEvidence.from_blobs({hashlib.sha256(inventory).hexdigest(): inventory,
             verifier["context_ref"]["sha256"]: measured[verifier["context_ref"]["sha256"]]})
+        return verifier, verifier_bytes, verifier_evidence
+
+    def test_offline_replay_keeps_failed_source_proof_and_untrusted_verifier_separate(self):
+        from taskalong.runtime_qualification import (
+            ProofEvidence, RuntimeReplayReport, evidence_set_digest, validate_replay,
+        )
+
+        measured_original, measured = self.completed_measurements()
+        verifier, verifier_bytes, verifier_evidence = self.synthetic_verifier_inventory(measured_original, measured)
         original, original_blobs = original_incomplete_proof()
         original_bytes = canonical_bytes(original)
         original_evidence = ProofEvidence.from_blobs(original_blobs)
@@ -432,6 +443,62 @@ class RuntimeManifestContractTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(TaskAlongError):
                 validate_replay(RuntimeReplayReport.from_dict(changed), original_bytes=original_bytes,
                     original_evidence=original_evidence, verifier_bytes=verifier_bytes, verifier_evidence=verifier_evidence)
+
+    def test_controller_privilege_shapes_are_strict_even_after_rebinding_digests(self):
+        from taskalong.runtime_qualification import ExperimentPlan, ProofEvidence, RuntimeProofManifest, validate_proof
+
+        original, original_blobs = self.completed_measurements()
+        valid = {"scope": "controller", "effective_uid": 123, "class": "effective_uid_nonzero"}
+        variants = [None, {}, valid | {"effective_uid": True}, valid | {"effective_uid": -1},
+                    valid | {"effective_uid": "123"}, valid | {"effective_uid": 2**32},
+                    valid | {"scope": "child"}, valid | {"class": "effective_uid_zero"}, valid | {"extra": False}]
+        for index, privilege in enumerate(variants):
+            document, blobs = copy.deepcopy(original), dict(original_blobs)
+            old = document["inventory_ref"]["sha256"]
+            inventory = json.loads(blobs.pop(old))
+            host = inventory["measurements"]["host"]
+            if privilege is None:
+                host.pop("privilege")
+            else:
+                host["privilege"] = privilege
+            document["plan"]["subject"]["host_digest"] = hashlib.sha256(canonical_bytes(host)).hexdigest()
+            document["plan"] = sealed(document["plan"])
+            inventory["subject"] = document["plan"]["subject"]
+            raw = canonical_bytes(inventory)
+            document["inventory_ref"] = private_ref(raw)
+            blobs[hashlib.sha256(raw).hexdigest()] = raw
+            with self.subTest(variant=index), self.assertRaises(TaskAlongError):
+                validate_proof(RuntimeProofManifest.from_dict(sealed(document)),
+                    expected_plan=ExperimentPlan.from_dict(document["plan"]), evidence=ProofEvidence.from_blobs(blobs))
+
+    def test_replay_keeps_original_privilege_separate_from_constructed_verifier_class(self):
+        from taskalong.runtime_qualification import ProofEvidence, RuntimeReplayReport, evidence_set_digest, validate_replay
+
+        original, blobs = self.completed_measurements()
+        inventory = json.loads(blobs[original["inventory_ref"]["sha256"]])
+        observed = inventory["measurements"]["host"]["privilege"]
+        # Synthetic consistency fixture only; no UID change or privileged trial.
+        different = {"scope": "controller", "effective_uid": 0 if observed["effective_uid"] else 123,
+                     "class": "effective_uid_zero" if observed["effective_uid"] else "effective_uid_nonzero"}
+        original_bytes = canonical_bytes(original)
+        verifier, verifier_bytes, verifier_evidence = self.synthetic_verifier_inventory(original, blobs, privilege=different)
+        self.assertEqual(original_bytes, canonical_bytes(original))
+        evidence = ProofEvidence.from_blobs(blobs)
+        report = sealed({"kind": "runtime_qualification_replay", "format_version": "1.0", "operation": "installed-replay",
+            "original_manifest_ref": private_ref(original_bytes), "original_proof_digest": original["digest"],
+            "original_subject": original["plan"]["subject"], "original_evidence_set_digest": evidence_set_digest(evidence),
+            "verifier_manifest_ref": private_ref(verifier_bytes), "verifier_proof_digest": verifier["digest"],
+            "original_complete": True, "original_passed": True, "integrity_valid": True})
+        with patch("os.geteuid", side_effect=AssertionError("pure replay cannot measure identity")), \
+                patch("subprocess.Popen", side_effect=AssertionError("pure replay cannot launch")), \
+                patch("socket.socket", side_effect=AssertionError("pure replay cannot connect")):
+            result = validate_replay(RuntimeReplayReport.from_dict(report), original_bytes=original_bytes,
+                original_evidence=evidence, verifier_bytes=verifier_bytes, verifier_evidence=verifier_evidence)
+        self.assertTrue(result.passed)
+        self.assertFalse(result.producer_authenticated)
+        self.assertFalse(result.production_dispatch_allowed)
+        self.assertEqual(original_bytes, canonical_bytes(original))
+        self.assertEqual(blobs[original["inventory_ref"]["sha256"]], canonical_bytes(inventory))
 
 
 
@@ -763,6 +830,12 @@ runpy.run_path(sys.argv[0],run_name="__main__")
             self.assertEqual(document["plan"]["stage"], "inventory")
             self.assertEqual(document["cases"], [])
             blobs = {path.stem: path.read_bytes() for path in (destination / "blobs").iterdir()}
+            facts = json.loads(blobs[document["inventory_ref"]["sha256"]])["measurements"]
+            uid = os.geteuid()
+            self.assertTrue(facts["host"]["privilege"] == {"scope": "controller", "effective_uid": uid,
+                "class": "effective_uid_zero" if uid == 0 else "effective_uid_nonzero"}, "controller identity binding differs")
+            self.assertEqual(document["plan"]["subject"]["host_digest"], hashlib.sha256(canonical_bytes(facts["host"])).hexdigest())
+            self.assertNotIn("effective_uid", stdout.getvalue())
             self.assertTrue(all(path.stat().st_mode & 0o777 == 0o600
                                 for path in (destination / "blobs").iterdir()))
             assessment = validate_proof(proof, expected_plan=ExperimentPlan.from_dict(document["plan"]),
@@ -1094,6 +1167,68 @@ runpy.run_path(sys.argv[0],run_name="__main__")
             result = json.loads(stdout.getvalue())
             self.assertEqual(result["code"], "runtime_dependency_unavailable")
             self.assertFalse(result["durable_evidence"])
+
+    def test_unavailable_controller_uid_refuses_before_owned_dispatch(self):
+        tool = self.entrypoint()
+        with tempfile.TemporaryDirectory() as temporary:
+            for index, value in enumerate([None, True, -1, "123", OSError("PRIVATE-UID-ERROR")]):
+                stdout = io.StringIO()
+                options = {"side_effect": value} if isinstance(value, OSError) else {"return_value": value}
+                with self.subTest(value_type=type(value)), patch("os.geteuid", **options), \
+                        patch("taskalong.process.run_bounded", side_effect=AssertionError("no dispatch")) as owner, \
+                        redirect_stdout(stdout):
+                    code = tool.main(qualifier_context()[1] + ["--evidence-dir", str(Path(temporary) / str(index))])
+                self.assertEqual(code, 3)
+                self.assertEqual(owner.call_count, 0)
+                self.assertEqual(json.loads(stdout.getvalue())["code"], "runtime_privilege_unavailable")
+                self.assertNotIn("PRIVATE-UID-ERROR", stdout.getvalue())
+
+    def test_zero_and_nonzero_controller_classes_are_mocked_inventory_only(self):
+        tool = self.entrypoint()
+        with tempfile.TemporaryDirectory() as temporary:
+            for uid, label in [(0, "effective_uid_zero"), (123, "effective_uid_nonzero")]:
+                destination = Path(temporary) / label
+                stdout = io.StringIO()
+                with patch("os.geteuid", return_value=uid), \
+                        patch("taskalong.process.run_bounded", side_effect=AssertionError("no privileged execution")) as owner, \
+                        redirect_stdout(stdout):
+                    code = tool.main(qualifier_context()[1] + ["--stage", "inventory", "--evidence-dir", str(destination)])
+                self.assertEqual(code, 0)
+                self.assertEqual(owner.call_count, 0)
+                document = json.loads((destination / "manifest.json").read_bytes())
+                facts = json.loads((destination / "blobs" / (document["inventory_ref"]["sha256"] + ".bin")).read_bytes())["measurements"]
+                self.assertEqual(facts["host"]["privilege"], {"scope": "controller", "effective_uid": uid, "class": label})
+                self.assertNotIn("effective_uid", stdout.getvalue())
+
+    def test_controller_identity_drift_stops_before_next_owned_dispatch(self):
+        from taskalong.process import run_bounded
+        tool = self.entrypoint()
+        original = tool._controller_privilege
+        finished = {"first": False}
+        def changed_identity():
+            value = original()
+            if finished["first"]:
+                value = {"scope": "controller", "effective_uid": value["effective_uid"] + 1,
+                         "class": "effective_uid_nonzero"}
+            return value
+        def first_owned(*args, **kwargs):
+            value = run_bounded(*args, **kwargs)
+            finished["first"] = True
+            return value
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "identity-drift"
+            stdout = io.StringIO()
+            with patch.object(tool, "_controller_privilege", changed_identity), \
+                    patch("taskalong.process.run_bounded", side_effect=first_owned) as owner, redirect_stdout(stdout):
+                code = tool.main(qualifier_context()[1] + ["--evidence-dir", str(destination)])
+            self.assertEqual(code, 1)
+            self.assertEqual(owner.call_count, 1)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["code"], "runtime_inputs_changed")
+            document = json.loads((destination / "manifest.json").read_bytes())
+            self.assertEqual([case["verdict"] for case in document["cases"]], ["passed"] + ["not_run"] * 6)
+            self.assertEqual(document["first_error"], {"case_id": None, "code": "runtime_inputs_changed"})
+            self.assertFalse(document["quarantined"])
 
 
 from test_execution_bindings import BindingFixture

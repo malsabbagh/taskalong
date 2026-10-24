@@ -284,8 +284,14 @@ def _check_inventory(inventory, plan):
         return None
     _shape(facts, {"host", "interpreter", "package", "backend", "runner_digest", "helper_digest",
                    "test_inventory_digest", "controller_pid"})
-    _shape(facts["host"], {"system", "release", "version", "machine"})
-    if any(type(value) is not str or not 1 <= len(value) <= 512 for value in facts["host"].values()):
+    _shape(facts["host"], {"system", "release", "version", "machine", "privilege"})
+    if any(type(facts["host"][key]) is not str or not 1 <= len(facts["host"][key]) <= 512
+           for key in ("system", "release", "version", "machine")):
+        raise _invalid()
+    privilege = facts["host"]["privilege"]
+    _shape(privilege, {"scope", "effective_uid", "class"})
+    if (privilege["scope"] != "controller" or not _integer(privilege["effective_uid"], 0, 2**32 - 1)
+            or privilege["class"] != ("effective_uid_zero" if privilege["effective_uid"] == 0 else "effective_uid_nonzero")):
         raise _invalid()
     interpreter = facts["interpreter"]
     _shape(interpreter, {"invocation_path", "executable_sha256", "version", "implementation", "prefix", "base_prefix"})

@@ -35,6 +35,7 @@ class _PrivateEvidence:
         self.blobs = {}
         self.first_error = None
         self.verifier_watch = None
+        self.verifier_privilege = None
         self.cleanup_uncertain = False
         try:
             selected = Path(destination)
@@ -260,6 +261,30 @@ def _metadata_path(distribution):
     return distribution.locate_file(matches[0])
 
 
+def _controller_privilege():
+    """Observe only the current effective UID; never request identity changes."""
+    import os
+
+    getter = getattr(os, "geteuid", None)
+    try:
+        uid = getter() if callable(getter) else None
+    except (OSError, NotImplementedError):
+        raise _Blocked("runtime_privilege_unavailable") from None
+    if type(uid) is not int or not 0 <= uid <= 2**32 - 1:
+        raise _Blocked("runtime_privilege_unavailable")
+    return {"scope": "controller", "effective_uid": uid,
+            "class": "effective_uid_zero" if uid == 0 else "effective_uid_nonzero"}
+
+
+def _recheck_privilege(expected):
+    try:
+        current = _controller_privilege()
+    except _Blocked as error:
+        raise _Failed(error.code) from None
+    if current != expected:
+        raise _Failed("runtime_inputs_changed")
+
+
 def _distribution(name):
     from importlib.metadata import distribution, PackageNotFoundError
 
@@ -390,7 +415,7 @@ def _inventory_measurements(deadline, origin, artifact_inventory=None):
                    "version": sys.version, "implementation": sys.implementation.name,
                    "prefix": sys.prefix, "base_prefix": sys.base_prefix}
     host = {"system": platform.system(), "release": platform.release(),
-            "version": platform.version(), "machine": platform.machine()}
+            "version": platform.version(), "machine": platform.machine(), "privilege": _controller_privilege()}
     backend = ("linux-child-subreaper" if sys.platform == "linux" else
                "darwin-kqueue-no-fork" if sys.platform == "darwin" and hasattr(select, "kqueue") else "unsupported")
     components = {name: payloads[name] for name in ("taskalong/process.py", "taskalong/_linux_lifetime.py")
@@ -487,6 +512,13 @@ def _run_canaries(rq, writer, plan, context, facts, campaign_deadline):
             timeout = min(plan["bounds"]["case_ms"] / 1000, remaining)
             observed["timeout_ms"] = max(1, int(timeout * 1000))
             try:
+                _recheck_privilege(facts["host"]["privilege"])
+            except _Blocked as error:
+                first_error = {"case_id": None, "code": error.code}
+                case.update(verdict="not_run", capability="unknown", reason="not_run_after_failure")
+                cases.append(case)
+                continue
+            try:
                 result = process.run_bounded([sys.executable, "-I", "-S", str(helper), name],
                     cwd=directory["path"], stdin=stdin, env=env, timeout_seconds=timeout,
                     max_output_bytes=plan["bounds"]["capture_bytes"], max_line_bytes=plan["bounds"]["capture_bytes"],
@@ -555,11 +587,15 @@ def _run_canaries(rq, writer, plan, context, facts, campaign_deadline):
             None if quarantined else helper_invocations, None if quarantined else owned_invocations)
 
 
-def _recheck_inputs(watch, deadline):
+def _recheck_inputs(watch, deadline, *, privilege=None):
     try:
+        if privilege is not None:
+            _recheck_privilege(privilege)
         for path, expected, selected, maximum in watch:
             if _measure(path, deadline, maximum=maximum, selected_interpreter=selected) != expected:
                 raise _Failed("runtime_inputs_changed")
+        if privilege is not None:
+            _recheck_privilege(privilege)
     except _Blocked as error:
         raise _Failed(error.code) from None
 
@@ -573,6 +609,7 @@ def _inventory(args, writer, deadline, started, campaign_deadline):
 
     rq, facts, watch = _inventory_measurements(deadline, args.package_origin, args.artifact_inventory)
     writer.verifier_watch = tuple(watch)
+    writer.verifier_privilege = facts["host"]["privilege"]
     campaign = str(uuid.uuid4())
     context = rq.canonical_bytes({"campaign_id": campaign, "nonce": secrets.token_hex(32),
                                    "payload": "taskalong-generated-canary-" + secrets.token_hex(16) + "\n"})
@@ -606,7 +643,7 @@ def _inventory(args, writer, deadline, started, campaign_deadline):
     if first_error is None:
         try:
             recheck_deadline = min(time.monotonic() + 10, campaign_deadline)
-            _recheck_inputs(watch, recheck_deadline)
+            _recheck_inputs(watch, recheck_deadline, privilege=facts["host"]["privilege"])
             rechecked = True
         except _Blocked as error:
             first_error = {"case_id": None, "code": error.code}
@@ -740,7 +777,7 @@ def _replay(args, writer, deadline, started, campaign_deadline):
     reread, repeated, _ = _read_proof_directory(args.replay_dir, rq, min(time.monotonic() + 10, campaign_deadline))
     if reread != original_bytes or rq.evidence_set_digest(repeated) != rq.evidence_set_digest(original_evidence):
         raise _Failed("runtime_replay_inputs_changed")
-    _recheck_inputs(writer.verifier_watch, min(time.monotonic() + 10, campaign_deadline))
+    _recheck_inputs(writer.verifier_watch, min(time.monotonic() + 10, campaign_deadline), privilege=writer.verifier_privilege)
     writer.replay_report(parsed.to_bytes() + b"\n")
     writer.verify_paths()
     return {"code": "runtime_replay_complete", "requested_stage": "installed-replay", "actual_stage": "installed-replay",

@@ -51,3 +51,12 @@ changing M2 evidence limits; interpreting signal/PID disappearance as cessation;
 and using model-free completion to register a live adapter. The M2 evaluator and
 current trusted approval/revocation gates remain authoritative. This milestone
 emits no M2 receipt and grants no execution authority.
+
+Record controller privilege as an in-process effective-UID observation, including
+a consistent zero/nonzero class, in the private host digest. Recheck it before
+owned launches and during final input/replay checks. Missing observation blocks;
+drift refuses completion and preserves earlier effect/cleanup facts. Inherit the
+invoking identity without requesting elevation or a switch. No UID value enters
+public summaries; neither class proves child identity, capabilities, entitlements,
+group access or OS privilege confinement. Replay retains original/verifier
+observations separately, including when those declared observations differ.

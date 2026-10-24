@@ -531,3 +531,11 @@ keep `producer_authenticated` and `production_dispatch_allowed` false. No M2
 receipt, trust policy, current producer approval or runtime registration is
 created. See [qualification](qualification.md#model-free-host-experiments-and-offline-replay)
 for operation boundaries and exits.
+
+Private inventory `host.privilege` is a closed controller-only observation:
+`scope` is `controller`, `effective_uid` is a nonnegative 32-bit integer, and
+`class` is `effective_uid_zero` or `effective_uid_nonzero` consistently with that
+integer. Booleans, missing/extra fields and inconsistent classes refuse even
+when a document is resealed. The four existing OS facts remain strings. This
+observation participates in the host digest; it is never a task-selected UID,
+child-identity proof, privilege grant or public report field.
