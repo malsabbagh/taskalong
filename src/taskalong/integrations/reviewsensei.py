@@ -51,7 +51,9 @@ def diff_inventory(diff: bytes) -> tuple[list[str], list[tuple[int, str]]]:
     current: str | None = None
     hunk_index = 0
     old_remaining = new_remaining = 0
-    for line in text.splitlines():
+    # Git delimits diff records with LF; other source-text separators stay in
+    # their physical hunk line and must not change its declared line counts.
+    for line in text.split("\n"):
         if old_remaining or new_remaining:
             if line.startswith("\\ No newline at end of file"):
                 continue

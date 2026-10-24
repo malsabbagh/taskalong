@@ -5,6 +5,7 @@ import importlib.metadata
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,22 @@ DIFF = (b"diff --git a/answer.py b/answer.py\nindex 1111111..2222222 100644\n---
 
 
 class DiffInventoryTests(unittest.TestCase):
+    def test_git_diff_keeps_source_separators_inside_physical_hunk_lines(self):
+        for separator in ("\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                for directory, value in (("old", "before"), ("new", "after")):
+                    (root / directory).mkdir()
+                    (root / directory / "answer.py").write_bytes(
+                        f'answer = "{value}{separator}text"\n'.encode("utf-8"))
+                result = subprocess.run(
+                    ["git", "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--",
+                     "old/answer.py", "new/answer.py"], cwd=root, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(separator.encode("utf-8"), result.stdout)
+                self.assertEqual(diff_inventory(result.stdout),
+                                 (["new/answer.py"], [(1, "new/answer.py")]))
+
     def test_inventory_uses_global_hunk_indices(self):
         second = DIFF.replace(b"answer.py", b"other.py")
         self.assertEqual(diff_inventory(DIFF + second), (["answer.py", "other.py"], [(1, "answer.py"), (2, "other.py")]))

@@ -47,6 +47,20 @@ def observe_generated(profile, subject, result, outcome, process, *, schemas=Non
 
 
 class TrialReviewObservationTests(unittest.TestCase):
+    def test_source_separators_preserve_complete_review_capture_inventory(self):
+        for separator in (b"\r", b"\v", b"\f", "\x85".encode(), "\u2028".encode(), "\u2029".encode()):
+            changed = DIFF.replace(b"-old\n+new\n", b"-old" + separator + b"text\n+new" + separator + b"text\n")
+            with self.subTest(separator=separator), patch(__name__ + ".DIFF", changed), \
+                    patch("socket.socket", side_effect=AssertionError("No network")), \
+                    patch("subprocess.Popen", side_effect=AssertionError("No process")):
+                receipt, evidence = observe_generated(*generated_review())
+                data = receipt.to_dict()
+                self.assertTrue(data["observation_complete"])
+                self.assertEqual(data["coverage"], {"files": 1, "hunks": 1})
+                self.assertEqual(evidence.get(data["originals"]["diff"]["sha256"]), changed)
+                self.assertFalse(data["installation_authenticated"])
+                self.assertFalse(data["native_app_approval"])
+
     def test_review_subject_root_is_typed_and_preserves_closed_validation(self):
         values = generated_review()
         good = copy.deepcopy(values[1])
