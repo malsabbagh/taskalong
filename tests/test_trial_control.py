@@ -131,5 +131,84 @@ class TrialControlContractTests(unittest.TestCase):
                     validate_publish_target(intent, task, observed_target=observed | {key: replacement})
 
 
+class TrialTargetIdentityTests(unittest.TestCase):
+    def linked_targets(self, visibility="public"):
+        import hashlib
+        from taskalong.validation import digest
+        intent = example_publish_intent()
+        intent["target"].update(expected_visibility=visibility, base_branch="release/1.2",
+                                trial_branch="feature/task-1")
+        task = example_trial_spec() | {"publication": copy.deepcopy(intent["target"])}
+        task["repository"]["base_commit"] = intent["target"]["base_commit"]
+        task = seal_versioned("task-spec", task, version="2.8")
+        intent["spec_digest"] = task["digest"]
+        intent["body_sha256"] = hashlib.sha256(intent["body"].encode()).hexdigest()
+        intent = seal_versioned("publish-intent", intent, version="2.8")
+        self.assertEqual(task["digest"], digest(task))
+        return task, intent
+
+    def observed_target(self, target):
+        result = {key: target[key] for key in
+                  ("host", "repository_id", "repository_full_name", "base_branch", "base_commit", "trial_branch")}
+        result.update(visibility=target["expected_visibility"], archived=False, disabled=False,
+                      can_push=True, branch_conflict=False, pr_conflict=False)
+        return result
+
+    def valid_target_controls(self):
+        from taskalong.trial import TrialTaskSpec, TrialPublishIntent, validate_publish_target
+        for visibility in ("public", "private"):
+            task, intent = self.linked_targets(visibility)
+            immutable_task = TrialTaskSpec.from_dict(task)
+            immutable_intent = TrialPublishIntent.from_dict(intent)
+            self.assertEqual(validate_publish_target(immutable_intent, immutable_task,
+                             observed_target=self.observed_target(intent["target"])), immutable_intent)
+        no_publication = seal_versioned("task-spec", example_trial_spec() | {"publication": None}, version="2.8")
+        self.assertIsNone(TrialTaskSpec.from_dict(no_publication).to_dict()["publication"])
+
+    def assert_invalid_target(self, task, intent, *, case):
+        from taskalong.trial import TrialTaskSpec, TrialPublishIntent, validate_publish_target
+        from taskalong.validation import digest
+        task["digest"] = digest(task)
+        intent["spec_digest"] = task["digest"]
+        intent["digest"] = digest(intent)
+        for name, reader, document in (("task-spec", TrialTaskSpec, task),
+                                       ("publish-intent", TrialPublishIntent, intent)):
+            with self.subTest(case=case, reader=name):
+                before = copy.deepcopy(document)
+                with self.assertRaises(TaskAlongError) as refused:
+                    reader.from_dict(document)
+                self.assertEqual(refused.exception.code, "trial_target_invalid")
+                self.assertEqual(document, before)
+                with self.assertRaises(TaskAlongError) as sealing:
+                    seal_versioned(name, document, version="2.8")
+                self.assertEqual(sealing.exception.code, "trial_target_invalid")
+        with self.subTest(case=case, boundary="linked-target"):
+            with self.assertRaises(TaskAlongError) as refused:
+                validate_publish_target(TrialPublishIntent.from_dict(intent), TrialTaskSpec.from_dict(task),
+                                        observed_target=self.observed_target(intent["target"]))
+            self.assertEqual(refused.exception.code, "trial_target_invalid")
+
+    def test_trial_targets_require_distinct_base_and_trial_branches(self):
+        with patch("subprocess.Popen", side_effect=AssertionError("Target reading cannot launch")) as spawn, \
+                patch("socket.socket", side_effect=AssertionError("Target reading cannot connect")) as sockets:
+            self.valid_target_controls()
+            task, intent = self.linked_targets()
+            for target in (task["publication"], intent["target"]):
+                target["trial_branch"] = target["base_branch"]
+            self.assert_invalid_target(task, intent, case="same-branch")
+            self.assertEqual((spawn.call_count, sockets.call_count), (0, 0))
+
+    def test_trial_targets_refuse_ascii_controls_without_normalization(self):
+        with patch("subprocess.Popen", side_effect=AssertionError("Target reading cannot launch")) as spawn, \
+                patch("socket.socket", side_effect=AssertionError("Target reading cannot connect")) as sockets:
+            self.valid_target_controls()
+            for control in ("\n", "\t", "\x00", "\x7f"):
+                task, intent = self.linked_targets()
+                for target in (task["publication"], intent["target"]):
+                    target["base_branch"] += control
+                self.assert_invalid_target(task, intent, case="control-" + str(ord(control)))
+            self.assertEqual((spawn.call_count, sockets.call_count), (0, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

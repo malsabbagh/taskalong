@@ -72,8 +72,11 @@ def _semantics(document, name):
     if name in {"task-spec", "publish-intent"}:
         target = document["publication"] if name == "task-spec" else document["target"]
         if target is not None:
+            if target["base_branch"] == target["trial_branch"]:
+                raise TaskAlongError("trial_target_invalid", "The exact trial base and new branch must differ.")
             for branch in (target["base_branch"], target["trial_branch"]):
-                if (branch.startswith(("-", "/")) or branch.endswith(("/", "."))
+                if (any(ord(char) < 32 or ord(char) == 127 for char in branch)
+                        or branch.startswith(("-", "/")) or branch.endswith(("/", "."))
                         or any(value in branch for value in ("..", "@{", "\\", " ", "//", "~", "^", ":", "?", "*", "["))
                         or any(part.startswith(".") or part.endswith(".lock") for part in branch.split("/"))):
                     raise TaskAlongError("trial_target_invalid", "The exact trial branch identity is invalid.")
