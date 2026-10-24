@@ -208,3 +208,70 @@ instruction/tool/config isolation or complete vendor lifetime is qualified.
 Native resume, provider lookup, remote cancellation, hard token/cost caps and
 production remain unsupported. No credential lookup, provider request, new host
 or registry release is introduced. See the [protocol](antigravity-protocol.md).
+
+## Model-free host experiments and offline replay
+
+M9 adds `tools/qualify_runtime.py` in the reviewed source/sdist tool set. It does
+not install dependencies, discover vendor CLIs or make an inference request.
+With an already prepared locked developer environment, run from the checkout:
+
+```sh
+python tools/qualify_runtime.py --help
+python tools/qualify_runtime.py --stage model-free --package-origin source \
+  --profile owned-host-canaries-v1 --inference never \
+  --evidence-dir ../host-experiment-NEW
+```
+
+Choose a new private destination outside the checkout. `inventory` measures the
+explicit file catalog without starting a helper. `model-free` runs seven closed
+cases through the existing process owner: permitted read/write, bounded private
+capture, pre-dispatch tool refusal, owned completion, closed-gate cancellation and
+running cancellation. A successful campaign observes six owned boundary receipts
+and five helper target markers. The refused operation remains unsupported even
+when its negative test passes. Original input/stdout/stderr, effects and controls
+are privately hash-bound; redacted process output is never substituted for them.
+
+Inventory is cooperative and bounded at ten seconds. Each helper has at most
+five seconds and 64 KiB combined output; the campaign has a 60-second execution
+budget. Refresh the remaining budget before each launch. Existing owned cleanup
+bounds remain unchanged. Finalization time is separately measured through input
+rechecking; its reported measurement precedes the manifest write itself. Arbitrary
+filesystem operations are not preemptible and no new product latency SLA follows.
+A timeout, truncation, input drift, incomplete cleanup or evidence persistence
+failure refuses a complete result. Stop after the first failed/uncertain case;
+remaining cases are explicitly not run. Never signal a process from saved IDs.
+
+The installed artifact qualifier freezes the actual audited wheel payloads,
+METADATA, lock and copied tool/helper identities. Its copied tests run the same
+host experiment with `--package-origin installed --artifact-inventory FILE`,
+checkout/build reads denied and installed bytes checked before/after. An sdist
+lane records both its source archive and rebuilt installed-wheel identity.
+Arbitrary self-written inventory files are consistency inputs, not trusted
+producer approval or proof of an exhaustive native/runtime closure.
+
+`--stage installed-replay --package-origin installed --artifact-inventory FILE
+--replay-dir PRIVATE_PROOF --evidence-dir NEW_PRIVATE_OUTPUT` performs only
+bounded offline reads and in-process validation. It starts no child, listener or
+provider request. Preserve the original manifest, subject, origin, timestamps and
+raw bytes. A separate `replay-report.json` binds the original proof/evidence set
+and an independently measured verifier inventory in `manifest.json`; the latter
+is explicitly an inventory, with no executed cases. A valid unsuccessful original
+retains `original_passed=false`; replay cannot replace a fresh host campaign.
+Input/output overlap, unsafe permissions, symlinks, changed/missing bytes,
+oversized or unreferenced evidence and reused destinations refuse.
+
+Exit 0 means the selected required oracles and durable evidence checks passed.
+Exit 1 means failed, incomplete or uncertain evidence, including integrity-valid
+replay of an unsuccessful original. Exit 3 is an unsupported stage or unmet
+prerequisite before helper effects; exit 2 is invalid usage. Stdout is an
+allowlisted JSON summary with no raw paths, nonces, captures, environment values
+or exception text. A write failure cannot claim a durable proof. Evidence
+hashes and producer IDs do not authenticate a producer or grant M2 approvals.
+
+Darwin experiments use only the existing non-forking kqueue boundary. Linux
+synthetic descendant tests remain separate actual Linux evidence. Neither
+qualifies vendor instruction/tool discovery, filesystem/network containment,
+remote cessation/accounting, native resume or hard token/cost caps. The
+`controlled-responder`, `actual-provider` and `native-resume` selections return
+typed unsupported before package discovery, credentials, sockets or dispatch.
+See the [experiment ADR](adr/0009-runtime-experiment-evidence.md).

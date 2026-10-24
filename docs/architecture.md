@@ -79,3 +79,9 @@ A frozen descriptor in the same closed registry selects shared private capture
 validation without changing 2.5 meanings or adding another lifecycle. Format 7
 fences executable conversation state. Exact input/output and reported usage are
 rechecked by core. This original fixture does not qualify actual agy execution.
+
+The [runtime experiment ADR](adr/0009-runtime-experiment-evidence.md) adds a
+closed no-inference host-canary tool and pure bounded proof/replay readers.
+It reuses the existing process owner, preserves original private captures and
+separates original proof subjects from installed replay-verifier identity.
+There is no new launcher, Store format, M2 trust authority or production path.
