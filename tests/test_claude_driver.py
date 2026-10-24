@@ -307,6 +307,41 @@ class ClaudeDriverBoundaryTests(unittest.TestCase):
                 self.assertTrue(result["process"]["termination_confirmed"])
                 self.assertIsNone(result["result"])
 
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin actual driver signal denial")
+    def test_malformed_provider_with_denied_signal_is_typed_failure_even_after_cessation(self):
+        from unittest.mock import patch
+        from taskalong import process as boundary
+        from taskalong.executors.claude_code import ClaudeCode, compile_packet
+        with self.fixture("wrong-provider") as (_, _, workspace, root):
+            executable = root/"fake-claude"
+            # Register these exact original finite fixture bytes afresh before
+            # invocation, keeping the malformed frame observable before exit.
+            executable.write_text(executable.read_text()+"\ntime.sleep(.3)\n")
+            config, provider = fixture_driver_context(executable)
+            fields, admission = driver_packet_inputs()
+            admission["driver_config"] = config
+            admission["projection"]["driver_config_digest"] = config["digest"]
+            packet, _, _ = compile_packet(fields, admission)
+            driver = ClaudeCode(config, provider=provider)
+            real_signal, denied = boundary.os.killpg, []
+            def deny(pgid, sig):
+                if sig:
+                    denied.append(sig)
+                    raise PermissionError(1, "PRIVATE_SIGNAL_DETAIL")
+                return real_signal(pgid, sig)
+            with patch.object(boundary.os, "killpg", deny):
+                with self.assertRaises(TaskAlongError) as failure:
+                    driver.run(packet, workspace=workspace, output_dir=root/"output")
+            self.assertTrue(denied)
+            self.assertEqual(failure.exception.code, "process_signal_failed")
+            self.assertEqual(failure.exception.effect_outcome, "uncertain")
+            self.assertEqual(failure.exception.exit_code, 5)
+            self.assertNotIn("PRIVATE_SIGNAL_DETAIL", str(failure.exception))
+            result = failure.exception.__cause__.process_result
+            self.assertTrue(result.termination_confirmed)
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(len(executable.with_suffix(".invocations.jsonl").read_text().splitlines()), 1)
+
     def test_output_and_timeout_limits_stop_owned_process(self):
         for mode, budget, error in (("stderr-flood", {"max_output_bytes":8192}, "runtime_output_limit"),
                                     ("hang", {"attempt_seconds":1}, "runtime_timeout")):

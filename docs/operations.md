@@ -84,6 +84,13 @@ the observed thread, compatible task/profile/content, fresh attempt/fence and
 remaining persisted budget; restart is separately explicit. Provider cost and
 remote billing cessation can remain unknown after local process death.
 
+Denied owned-process signals remain typed `process_signal_failed` errors, even
+when later independent observations prove cessation. Cleanup failures retain
+the primary failure and bounded stage/errno diagnostics without raw OS messages.
+A live process that cannot be signalled returns within the existing escalation,
+drain and final-wait allowances with unconfirmed cessation. Later operator or
+test cleanup cannot change that returned receipt or release its unresolved effect.
+
 The standard foreground `verify` CLI defers Ctrl-C while it collects the owned
 process cleanup receipt and persists the capture outcome, then returns exit 130
 with `verification_interrupted`. Confirmed cleanup leaves a blocked run that can
