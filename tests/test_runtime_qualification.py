@@ -53,14 +53,169 @@ def private_ref(data, media="application/json"):
             "media_type": media, "classification": "private"}
 
 
+_ORDINARY_CONTEXT = None
+
+
+def _context_require(condition):
+    if not condition:
+        raise RuntimeError("runtime_test_context_invalid: an audited local installed wheel is required")
+
+
+def _context_digest(path):
+    import stat
+    before = path.lstat()
+    _context_require(stat.S_ISREG(before.st_mode) and before.st_size <= 32 * 1024 * 1024)
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(65536), b""):
+            digest.update(block)
+    after = path.lstat()
+    _context_require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) ==
+                     (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns))
+    return digest.hexdigest()
+
+
+def _local_installed_wheel(distribution):
+    """PEP 610 locates an archive; the source auditor remains its authority."""
+    from urllib.parse import unquote, urlsplit
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            _context_require(key not in result)
+            result[key] = value
+        return result
+
+    try:
+        raw = distribution.read_text("direct_url.json")
+        _context_require(type(raw) is str and len(raw) <= 1048576)
+        value = json.loads(raw, object_pairs_hook=unique)
+        _context_require(type(value) is dict and set(value) == {"url", "archive_info"})
+        _context_require(type(value["url"]) is str and type(value["archive_info"]) is dict)
+        archive = value["archive_info"]
+        _context_require(set(archive) <= {"hash", "hashes"} and type(archive.get("hashes")) is dict)
+        expected = archive["hashes"].get("sha256")
+        _context_require(type(expected) is str and len(expected) == 64 and
+                         all(c in "0123456789abcdef" for c in expected))
+        _context_require("hash" not in archive or archive["hash"] == "sha256=" + expected)
+        url = urlsplit(value["url"])
+        _context_require(url.scheme == "file" and not url.netloc and not url.query and not url.fragment)
+        wheel = Path(unquote(url.path))
+        _context_require(wheel.is_absolute() and wheel.suffix == ".whl")
+        _context_require(_context_digest(wheel) == expected)
+        return wheel, expected
+    except (OSError, TypeError, ValueError, KeyError):
+        raise RuntimeError("runtime_test_context_invalid: invalid local wheel metadata") from None
+
+
+def _check_installed_context_bytes(package, metadata, files):
+    """Reject extra non-bytecode files as well as missing or changed payloads."""
+    expected = {name: raw for name, raw in files.items() if name.startswith("taskalong/")}
+    _context_require(bool(expected) and not package.is_symlink())
+    actual = {}
+    count = 0
+    for path in package.rglob("*"):
+        count += 1
+        _context_require(count <= 8192 and not path.is_symlink())
+        if not path.is_file():
+            continue
+        if "__pycache__" in path.parts and path.suffix == ".pyc":
+            continue
+        _context_require(path.stat().st_size <= 8388608)
+        actual[str(path.relative_to(package.parent))] = path.read_bytes()
+        _context_require(sum(map(len, actual.values())) <= 16 * 1024 * 1024)
+    _context_require(actual == expected)
+    _context_require(not metadata.is_symlink() and metadata.is_file() and metadata.stat().st_size <= 1048576)
+    _context_require(metadata.read_bytes() == files["taskalong-0.1.0a1.dist-info/METADATA"])
+
+
+def _unique_installed_distribution():
+    import importlib.metadata
+    import re
+
+    matches = {}
+    for index, distribution in enumerate(importlib.metadata.distributions(name="taskalong")):
+        _context_require(index < 64)
+        name = distribution.metadata.get("Name")
+        _context_require(type(name) is str and re.sub(r"[-_.]+", "-", name).lower() == "taskalong")
+        names = [p for p in distribution.files or ()
+                 if len(p.parts) == 2 and p.parts[0].endswith(".dist-info") and p.name == "METADATA"]
+        _context_require(len(names) == 1)
+        metadata = Path(distribution.locate_file(names[0])).absolute()
+        _context_require(metadata.is_file() and not metadata.is_symlink())
+        matches.setdefault(metadata.resolve(), (distribution, metadata))
+        _context_require(len(matches) == 1)
+    _context_require(len(matches) == 1)
+    return next(iter(matches.values()))
+
+
+def _ordinary_installed_context(repository, package):
+    from test_distribution import auditor, qualifier
+
+    global _ORDINARY_CONTEXT
+    distribution, metadata = _unique_installed_distribution()
+    _context_require(package / "__init__.py" == Path(distribution.locate_file("taskalong/__init__.py")).absolute())
+    _context_require(package.resolve().is_relative_to(Path(sys.prefix).resolve()) and
+                     not package.resolve().is_relative_to(repository.resolve()))
+    wheel, wheel_digest = _local_installed_wheel(distribution)
+    if _ORDINARY_CONTEXT is None:
+        # The archive is audited against the reviewed checkout before its
+        # expectations are frozen; observed installed bytes never define them.
+        auditor.audit(wheel, root=repository)
+        files = auditor.read_wheel(wheel)
+        _check_installed_context_bytes(package, metadata, files)
+        owner = tempfile.TemporaryDirectory(prefix="taskalong-ordinary-runtime-")
+        work = Path(owner.name).resolve()
+        try:
+            for source, target in (("tools/qualify_runtime.py", "tools/qualify_runtime.py"),
+                                   ("tests/fixtures/runtime_canary.py", "installed-tests/fixtures/runtime_canary.py"),
+                                   ("requirements-dev.lock", "requirements-dev.lock")):
+                path = work / target
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes((repository / source).read_bytes())
+            with patch.dict(sys.modules, {"check_dist": auditor}):
+                qualifier.freeze_runtime_inventory(wheel, work, source_digest=wheel_digest, source_kind="wheel")
+            frozen = {p: _context_digest(p) for p in work.rglob("*") if p.is_file()}
+            _ORDINARY_CONTEXT = {"owner": owner, "work": work, "wheel": wheel,
+                                 "digest": wheel_digest, "files": files, "metadata": metadata,
+                                 "package": package, "frozen": frozen}
+        except BaseException:
+            owner.cleanup()
+            raise
+    context = _ORDINARY_CONTEXT
+    _context_require(context["wheel"] == wheel and context["digest"] == wheel_digest and
+                     context["package"] == package and context["metadata"] == metadata)
+    _check_installed_context_bytes(package, context["metadata"], context["files"])
+    _context_require(all(_context_digest(path) == digest for path, digest in context["frozen"].items()))
+    work = context["work"]
+    return work / "tools/qualify_runtime.py", ["--package-origin", "installed", "--artifact-inventory",
+                                              str(work / "runtime-artifact-inventory.json")]
+
+
+def tearDownModule():
+    global _ORDINARY_CONTEXT
+    if _ORDINARY_CONTEXT is not None:
+        _ORDINARY_CONTEXT["owner"].cleanup()
+        _ORDINARY_CONTEXT = None
+
+
 def qualifier_context():
-    """The frozen installed harness explicitly supplies its actual artifact."""
+    """Use the actual package origin, preserving separately supplied inventories."""
+    import taskalong
+
     tests = Path(__file__).absolute().parent
     if tests.name == "installed-tests":
+        _context_require(all((tests.parent / p).is_file() for p in
+                             ("tools/qualify_runtime.py", "runtime-artifact-inventory.json",
+                              "installed-tests/fixtures/runtime_canary.py", "requirements-dev.lock")))
         return tests.parent / "tools" / "qualify_runtime.py", [
             "--package-origin", "installed", "--artifact-inventory",
             str(tests.parent / "runtime-artifact-inventory.json")]
-    return tests.parent / "tools" / "qualify_runtime.py", ["--package-origin", "source"]
+    repository = tests.parent
+    package = Path(taskalong.__file__).absolute().parent
+    if package == repository / "src/taskalong":
+        return repository / "tools/qualify_runtime.py", ["--package-origin", "source"]
+    return _ordinary_installed_context(repository, package)
 
 
 def original_incomplete_proof():
@@ -86,6 +241,134 @@ def original_incomplete_proof():
                        "first_error": {"case_id": None, "code": "inventory_failed"},
                        "quarantined": False, "inputs_rechecked": False})
     return manifest, {inventory_ref["sha256"]: inventory, context_ref["sha256"]: context}
+
+
+class RuntimeTestContextTests(unittest.TestCase):
+    def test_context_matches_actual_import_and_retains_frozen_installed_expectations(self):
+        import taskalong
+
+        with patch("subprocess.Popen", side_effect=AssertionError("context setup cannot spawn")), \
+                patch("socket.socket", side_effect=AssertionError("context setup cannot connect")):
+            tool, args = qualifier_context()
+        expected = "source" if Path(taskalong.__file__).absolute().parent == Path(__file__).absolute().parent.parent / "src/taskalong" else "installed"
+        self.assertEqual(args[:2], ["--package-origin", expected])
+        self.assertTrue(tool.is_file())
+        if expected == "installed":
+            self.assertEqual(args[2], "--artifact-inventory")
+            inventory = json.loads(Path(args[3]).read_bytes())
+            self.assertEqual(inventory["runner_sha256"], hashlib.sha256(tool.read_bytes()).hexdigest())
+            package = Path(taskalong.__file__).parent
+            self.assertEqual(inventory["payloads"], {name: {"sha256": hashlib.sha256((package.parent / name).read_bytes()).hexdigest(),
+                             "size_bytes": (package.parent / name).stat().st_size} for name in inventory["payloads"]})
+
+    def test_local_locator_refuses_missing_malformed_remote_and_editable_metadata(self):
+        from types import SimpleNamespace
+
+        archive = {"hashes": {"sha256": "a" * 64}}
+        variants = [None, "not JSON", "[]", json.dumps({"url": "https://example.invalid/package.whl", "archive_info": archive}),
+                    json.dumps({"url": "file://remote/package.whl", "archive_info": archive}),
+                    json.dumps({"url": "file:///package.whl", "archive_info": {"hashes": {}}}),
+                    json.dumps({"url": "file:///package.whl", "archive_info": {"hashes": {"sha256": True}}}),
+                    json.dumps({"url": "file:///package.whl", "dir_info": {"editable": True}}),
+                    '{"url":"file:///one.whl","url":"file:///two.whl","archive_info":{}}']
+        with patch("subprocess.Popen", side_effect=AssertionError("invalid metadata cannot spawn")), \
+                patch("socket.socket", side_effect=AssertionError("invalid metadata cannot connect")):
+            for raw in variants:
+                with self.subTest(metadata=raw), self.assertRaises(RuntimeError):
+                    _local_installed_wheel(SimpleNamespace(read_text=lambda _name, selected=raw: selected))
+
+    def test_local_locator_refuses_digest_mismatch_without_repairing_archive(self):
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = Path(directory) / "candidate.whl"
+            original = b"original independently selected artifact"
+            wheel.write_bytes(original)
+            raw = json.dumps({"url": wheel.as_uri(), "archive_info": {"hashes": {"sha256": "0" * 64}}})
+            with self.assertRaises(RuntimeError):
+                _local_installed_wheel(SimpleNamespace(read_text=lambda _name: raw))
+            self.assertEqual(wheel.read_bytes(), original)
+
+    def test_ambiguous_distributions_refuse_setup_and_same_record_alias_is_not_a_second_install(self):
+        from pathlib import PurePosixPath
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as directory:
+            roots = [Path(directory) / str(index) for index in range(2)]
+            name = PurePosixPath("taskalong-0.1.0a1.dist-info/METADATA")
+            distributions = []
+            for root in roots:
+                metadata = root / name
+                metadata.parent.mkdir(parents=True)
+                metadata.write_bytes(b"Name: TaskAlong\nVersion: 0.1.0a1\n")
+                distributions.append(SimpleNamespace(metadata={"Name": "TaskAlong"}, files=[name],
+                    locate_file=lambda path, selected=root: selected / path))
+            with patch("subprocess.Popen", side_effect=AssertionError("ambiguous context cannot spawn")), \
+                    patch("socket.socket", side_effect=AssertionError("ambiguous context cannot connect")), \
+                    patch("importlib.metadata.distributions", return_value=distributions) as discover:
+                with self.assertRaises(RuntimeError):
+                    _unique_installed_distribution()
+                discover.assert_called_once_with(name="taskalong")
+            with patch("importlib.metadata.distributions", return_value=[distributions[0], distributions[0]]):
+                selected, metadata = _unique_installed_distribution()
+                self.assertIs(selected, distributions[0])
+                self.assertEqual(metadata, roots[0] / name)
+
+    def test_installed_context_refuses_missing_extra_changed_and_metadata_payloads(self):
+        files = {"taskalong/__init__.py": b"original package", "taskalong/runtime_qualification.py": b"original reader",
+                 "taskalong-0.1.0a1.dist-info/METADATA": b"Name: taskalong\nVersion: 0.1.0a1\n"}
+        for variant in ("missing", "extra", "changed", "metadata", "symlink"):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for name, raw in files.items():
+                    target = root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(raw)
+                package, metadata = root / "taskalong", root / "taskalong-0.1.0a1.dist-info/METADATA"
+                _check_installed_context_bytes(package, metadata, files)
+                target = package / "runtime_qualification.py"
+                if variant == "missing":
+                    target.unlink()
+                elif variant == "extra":
+                    (package / "unexpected.py").write_bytes(b"unlisted source")
+                elif variant == "changed":
+                    target.write_bytes(b"changed reader")
+                elif variant == "metadata":
+                    metadata.write_bytes(b"different metadata")
+                else:
+                    target.unlink()
+                    target.symlink_to(package / "__init__.py")
+                with self.assertRaises(RuntimeError):
+                    _check_installed_context_bytes(package, metadata, files)
+
+    def test_source_request_cannot_relabel_foreign_preimport_or_dispatch_helpers(self):
+        from types import SimpleNamespace
+        import taskalong
+
+        path, _ = qualifier_context()
+        spec = importlib.util.spec_from_file_location("explicit_origin_refusal_qualifier", path)
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        original_import = importlib.import_module
+        imported = taskalong
+        foreign = SimpleNamespace(__file__=str(Path(sys.prefix) / "unrelated/taskalong/__init__.py"))
+        def select(name):
+            return foreign if name == "taskalong" else original_import(name)
+        before_path = list(sys.path)
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                stdout = io.StringIO()
+                with patch("importlib.import_module", side_effect=select), \
+                        patch("taskalong.process.run_bounded", side_effect=AssertionError("origin refusal cannot launch")) as owned, \
+                        patch("socket.socket", side_effect=AssertionError("origin refusal cannot connect")), redirect_stdout(stdout):
+                    code = tool.main(["--stage", "inventory", "--package-origin", "source",
+                                      "--evidence-dir", str(Path(directory) / "refused")])
+                self.assertEqual(code, 3)
+                self.assertEqual(json.loads(stdout.getvalue())["code"], "runtime_package_origin_mismatch")
+                self.assertEqual(owned.call_count, 0)
+                self.assertIs(sys.modules["taskalong"], imported)
+        finally:
+            sys.path[:] = before_path
 
 
 class RuntimePlanContractTests(unittest.TestCase):
