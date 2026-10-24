@@ -937,6 +937,144 @@ runpy.run_path(sys.argv[0],run_name="__main__")
             self.assertNotIn("PRIVATE-", stdout.getvalue())
 
 
+    def test_interrupted_owned_call_preserves_uncertainty_and_stops_later_cases(self):
+        tool = self.entrypoint()
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "interrupted"
+            stdout = io.StringIO()
+            with patch("taskalong.process.run_bounded", side_effect=KeyboardInterrupt()) as owner, redirect_stdout(stdout):
+                code = tool.main(qualifier_context()[1] + ["--evidence-dir", str(destination)])
+            self.assertEqual(code, 1)
+            self.assertEqual(owner.call_count, 1)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["code"], "runtime_cleanup_unknown")
+            self.assertTrue(result["cleanup_uncertain"])
+            self.assertIsNone(result["helper_invocations"])
+            self.assertIsNone(result["owned_invocations"])
+            document = json.loads((destination / "manifest.json").read_bytes())
+            self.assertTrue(document["quarantined"])
+            self.assertEqual(document["first_error"], {"case_id": HOST_CASES[0], "code": "runtime_cleanup_unknown"})
+            self.assertEqual([c["verdict"] for c in document["cases"]], ["failed"] + ["not_run"] * 6)
+
+    def test_unavailable_backend_is_blocked_without_launch_or_success_claim(self):
+        tool = self.entrypoint()
+        original = tool._inventory_measurements
+        def unavailable(*args):
+            rq, facts, watch = original(*args)
+            facts["backend"] = {"id": "unsupported", "implementation_digest": None,
+                                "components": {"taskalong/process.py": facts["package"]["payloads"]["taskalong/process.py"]}}
+            return rq, facts, watch
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "unsupported"
+            stdout = io.StringIO()
+            with patch.object(tool, "_inventory_measurements", unavailable), \
+                    patch("taskalong.process.run_bounded", side_effect=AssertionError("no fallback")) as owner, \
+                    redirect_stdout(stdout):
+                code = tool.main(qualifier_context()[1] + ["--evidence-dir", str(destination)])
+            self.assertEqual(code, 3)
+            self.assertEqual(owner.call_count, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["outcome"], "unsupported")
+            self.assertEqual(result["code"], "runtime_lifecycle_unsupported")
+            self.assertFalse(result["complete"])
+            self.assertEqual((result["helper_invocations"], result["owned_invocations"]), (0, 0))
+            document = json.loads((destination / "manifest.json").read_bytes())
+            self.assertTrue(all(c["verdict"] == "not_run" for c in document["cases"]))
+
+    def test_replay_rechecks_verifier_inputs_after_original_proof_read(self):
+        import time
+        tool = self.entrypoint()
+        _, origin = qualifier_context()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            if origin[1] == "source":
+                # Portable filesystem oracle for the same final watch used by
+                # replay. The installed lane exercises the public replay below.
+                watched = root / "verifier-input"
+                watched.write_bytes(b"original verifier bytes")
+                expected = tool._measure(watched, time.monotonic() + 10)
+                watched.write_bytes(b"changed verifier bytes")
+                with self.assertRaises(tool._Failed):
+                    tool._recheck_inputs([(watched, expected, False, 65536)], time.monotonic() + 10)
+                return
+            original, blobs = original_incomplete_proof()
+            supplied = root / "original"
+            supplied.mkdir(mode=0o700)
+            (supplied / "blobs").mkdir(mode=0o700)
+            for name, data in {"manifest.json": canonical_bytes(original),
+                               **{"blobs/" + key + ".bin": raw for key, raw in blobs.items()}}.items():
+                target = supplied / name
+                target.write_bytes(data)
+                target.chmod(0o600)
+            helper = tool._helper_path("installed")
+            saved = helper.read_bytes()
+            read_original = tool._read_proof_directory
+            changed = {"once": False}
+            def drift(*args):
+                value = read_original(*args)
+                if not changed["once"]:
+                    helper.write_bytes(saved + b"\n# original injected cooperative drift\n")
+                    changed["once"] = True
+                return value
+            destination = root / "replay"
+            stdout = io.StringIO()
+            try:
+                with patch.object(tool, "_read_proof_directory", drift), \
+                        patch("subprocess.Popen", side_effect=AssertionError("no replay launch")), \
+                        patch("socket.socket", side_effect=AssertionError("no replay network")), redirect_stdout(stdout):
+                    code = tool.main(origin + ["--stage", "installed-replay", "--replay-dir", str(supplied),
+                                               "--evidence-dir", str(destination)])
+            finally:
+                helper.write_bytes(saved)
+            self.assertTrue(changed["once"])
+            self.assertEqual(code, 1)
+            self.assertEqual(json.loads(stdout.getvalue())["code"], "runtime_inputs_changed")
+            self.assertFalse(json.loads(stdout.getvalue())["durable_evidence"])
+            self.assertFalse((destination / "replay-report.json").exists())
+
+    def test_missing_package_dependencies_are_blocked_before_helper_effects(self):
+        from taskalong.process import minimal_environment, run_bounded
+        tool, _ = qualifier_context()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = run_bounded([sys.executable, "-I", "-S", str(tool), "--stage", "inventory",
+                "--package-origin", "source", "--evidence-dir", str(root / "no-site-packages")],
+                cwd=root, env=minimal_environment(), timeout_seconds=5, max_output_bytes=8192)
+            self.assertEqual(result.exit_code, 3)
+            report = json.loads(result.stdout)
+            self.assertIn(report["code"], {"runtime_package_unavailable", "runtime_dependency_unavailable"})
+            self.assertEqual(report["helper_invocations"], 0)
+            self.assertFalse(report["durable_evidence"])
+            self.assertEqual(result.stderr, b"")
+
+    def test_inventory_recheck_failure_cannot_report_inventory_complete(self):
+        tool = self.entrypoint()
+        original = tool._measure
+        watched = tool._helper_path(qualifier_context()[1][1])
+        count = {"reads": 0}
+        def drift(path, *args, **kwargs):
+            measured = original(path, *args, **kwargs)
+            if Path(path) == watched:
+                count["reads"] += 1
+                if count["reads"] > 1:
+                    return measured | {"sha256": "0" * 64}
+            return measured
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "changed-inventory"
+            stdout = io.StringIO()
+            with patch.object(tool, "_measure", drift), \
+                    patch("taskalong.process.run_bounded", side_effect=AssertionError("inventory cannot launch")), \
+                    redirect_stdout(stdout):
+                code = tool.main(qualifier_context()[1] + ["--stage", "inventory", "--evidence-dir", str(destination)])
+            self.assertEqual(code, 1)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["code"], "runtime_inputs_changed")
+            self.assertFalse(result["complete"])
+            document = json.loads((destination / "manifest.json").read_bytes())
+            self.assertEqual(document["first_error"], {"case_id": None, "code": "runtime_inputs_changed"})
+            self.assertFalse(document["inputs_rechecked"])
+
+
 from test_execution_bindings import BindingFixture
 
 

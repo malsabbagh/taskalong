@@ -34,6 +34,7 @@ class _PrivateEvidence:
         self.checked_paths = []
         self.blobs = {}
         self.first_error = None
+        self.verifier_watch = None
         self.cleanup_uncertain = False
         try:
             selected = Path(destination)
@@ -274,8 +275,14 @@ def _inventory_measurements(deadline, origin, artifact_inventory=None):
     source_root = root / "src"
     if origin == "source" and str(source_root) not in sys.path:
         sys.path.insert(0, str(source_root))
-    package = importlib.import_module("taskalong")
-    rq = importlib.import_module("taskalong.runtime_qualification")
+    try:
+        package = importlib.import_module("taskalong")
+    except ImportError:
+        raise _Blocked("runtime_package_unavailable") from None
+    try:
+        rq = importlib.import_module("taskalong.runtime_qualification")
+    except ImportError:
+        raise _Blocked("runtime_dependency_unavailable") from None
     package_root = Path(package.__file__).absolute().parent
     watch = []
     frozen = None
@@ -483,7 +490,7 @@ def _run_canaries(rq, writer, plan, context, facts, campaign_deadline):
                 result = error.process_result
                 case["dispatch"] = error.effect_outcome
                 observed["boundary_error"] = {"code": error.code, "effect_outcome": error.effect_outcome}
-            except Exception:
+            except (Exception, KeyboardInterrupt):
                 case["dispatch"] = "uncertain"
                 observed["boundary_error"] = {"code": "runtime_invocation_failed", "effect_outcome": "uncertain"}
             if result is not None:
@@ -539,6 +546,15 @@ def _run_canaries(rq, writer, plan, context, facts, campaign_deadline):
             None if quarantined else helper_invocations, None if quarantined else owned_invocations)
 
 
+def _recheck_inputs(watch, deadline):
+    try:
+        for path, expected, selected, maximum in watch:
+            if _measure(path, deadline, maximum=maximum, selected_interpreter=selected) != expected:
+                raise _Failed("runtime_inputs_changed")
+    except _Blocked as error:
+        raise _Failed(error.code) from None
+
+
 def _inventory(args, writer, deadline, started, campaign_deadline):
     import hashlib
     import secrets
@@ -547,6 +563,7 @@ def _inventory(args, writer, deadline, started, campaign_deadline):
     from datetime import datetime, timezone
 
     rq, facts, watch = _inventory_measurements(deadline, args.package_origin, args.artifact_inventory)
+    writer.verifier_watch = tuple(watch)
     campaign = str(uuid.uuid4())
     context = rq.canonical_bytes({"campaign_id": campaign, "nonce": secrets.token_hex(32),
                                    "payload": "taskalong-generated-canary-" + secrets.token_hex(16) + "\n"})
@@ -580,12 +597,12 @@ def _inventory(args, writer, deadline, started, campaign_deadline):
     if first_error is None:
         try:
             recheck_deadline = min(time.monotonic() + 10, campaign_deadline)
-            for path, expected, selected, maximum in watch:
-                if _measure(path, recheck_deadline, maximum=maximum, selected_interpreter=selected) != expected:
-                    raise _Failed("runtime_inputs_changed")
+            _recheck_inputs(watch, recheck_deadline)
             rechecked = True
         except _Blocked as error:
             first_error = {"case_id": None, "code": error.code}
+    if writer.first_error is None and first_error is not None:
+        writer.first_error = first_error
     document = {"kind": "runtime_qualification_manifest", "format_version": "1.0", "plan": plan,
                 "producer_id": "taskalong-owned-host-experiment", "inventory_ref": inventory_ref,
                 "context_ref": context_ref, "started_at": started,
@@ -601,13 +618,16 @@ def _inventory(args, writer, deadline, started, campaign_deadline):
         raise _Failed("runtime_proof_invalid")
     writer.manifest(proof.to_bytes() + b"\n")
     writer.verify_paths()
-    return {"code": "runtime_inventory_complete" if args.stage == "inventory" else
-                     "runtime_model_free_complete" if document["complete"] else first_error["code"],
+    unsupported = (first_error is not None and first_error["code"] == "runtime_lifecycle_unsupported"
+                   and helpers == 0 and owned == 0 and not quarantined)
+    return {"code": ("runtime_inventory_complete" if args.stage == "inventory" else
+                     "runtime_model_free_complete") if document["complete"] else first_error["code"],
             "requested_stage": args.stage, "actual_stage": args.stage,
-            "outcome": ("inventory_complete" if args.stage == "inventory" else "model_free_complete") if document["complete"] else "failed",
+            "outcome": ("inventory_complete" if args.stage == "inventory" else "model_free_complete") if document["complete"] else "unsupported" if unsupported else "failed",
             "complete": document["complete"], "durable_evidence": True, "proof_digest": proof.digest,
             "production_dispatch_allowed": False, "producer_authenticated": False,
             "closure_complete": False, "helper_invocations": helpers, "owned_invocations": owned,
+            "cleanup_uncertain": quarantined,
             "invocation_count_complete": helpers is not None and owned is not None,
             "vendor_capabilities": {"start": "unknown", "instruction_tool_isolation": "unknown",
                                     "native_resume": "unsupported", "remote_cancel": "unsupported",
@@ -711,6 +731,7 @@ def _replay(args, writer, deadline, started, campaign_deadline):
     reread, repeated, _ = _read_proof_directory(args.replay_dir, rq, min(time.monotonic() + 10, campaign_deadline))
     if reread != original_bytes or rq.evidence_set_digest(repeated) != rq.evidence_set_digest(original_evidence):
         raise _Failed("runtime_replay_inputs_changed")
+    _recheck_inputs(writer.verifier_watch, min(time.monotonic() + 10, campaign_deadline))
     writer.replay_report(parsed.to_bytes() + b"\n")
     writer.verify_paths()
     return {"code": "runtime_replay_complete", "requested_stage": "installed-replay", "actual_stage": "installed-replay",
@@ -783,7 +804,7 @@ def main(argv=None):
         if not writer.close():
             raise _Failed("runtime_evidence_close_failed")
         print(json.dumps(result, sort_keys=True))
-        return 0 if result["complete"] else 1
+        return 0 if result["complete"] else 3 if result["outcome"] == "unsupported" else 1
     except _Blocked as error:
         primary = writer.first_error if writer is not None else None
         code = primary["code"] if primary is not None else error.code
