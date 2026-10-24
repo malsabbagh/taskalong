@@ -23,11 +23,13 @@ import uuid
 class ProcessBoundaryError(RuntimeError):
     """An invocation was invalid or a boundary callback failed."""
     def __init__(self, message: str, *, code: str = "process_boundary_failed",
-                 effect_outcome: str = "uncertain", process_result: ProcessResult | None = None):
+                 effect_outcome: str = "uncertain", process_result: ProcessResult | None = None,
+                 boundary_failures: tuple[tuple[str, int | None], ...] = ()):
         super().__init__(message)
         self.code = code
         self.effect_outcome = effect_outcome
         self.process_result = process_result
+        self.boundary_failures = boundary_failures
 
 
 class _DescendantTracker:
@@ -436,6 +438,15 @@ def run_bounded(
     signal_stage = 0
     last_heartbeat = started
     child_exit_at: float | None = None
+    boundary_failures: list[tuple[str, int | None]] = []
+    def remember_failure(stage: str, error: BaseException) -> None:
+        # Closed stage names and bounded numeric errno only; never OS messages,
+        # paths or worker text. Keep the first failure and secondary cleanup.
+        number = getattr(error, "errno", None)
+        if type(number) is not int or not 0 <= number <= 65535:
+            number = None
+        if len(boundary_failures) < 16:
+            boundary_failures.append((stage, number))
     try:
         try:
             if isinstance(tracker, _LinuxTracker) and not tracker.wait_ready(process):
@@ -488,13 +499,22 @@ def run_bounded(
                     # protocol exit. Keep the existing absolute TERM/KILL and
                     # hard-stop windows; ambiguous wrappers still fail closed.
                     if gate_release_attempted or not isinstance(tracker, _LinuxTracker):
-                        _signal_owned(process, signal.SIGINT)
+                        try:
+                            _signal_owned(process, signal.SIGINT)
+                        except OSError as exc:
+                            remember_failure("signal_int", exc)
                     signal_stage = 1
                 elif signal_stage == 1 and now - termination_started >= signal_grace_seconds:
-                    _signal_owned(process, signal.SIGTERM)
+                    try:
+                        _signal_owned(process, signal.SIGTERM)
+                    except OSError as exc:
+                        remember_failure("signal_term", exc)
                     signal_stage = 2
                 elif signal_stage == 2 and now - termination_started >= signal_grace_seconds * 2:
-                    _signal_owned(process, signal.SIGKILL)
+                    try:
+                        _signal_owned(process, signal.SIGKILL)
+                    except OSError as exc:
+                        remember_failure("signal_kill", exc)
                     signal_stage = 3
                 elif (signal_stage == 3 and isinstance(tracker, _LinuxTracker)
                       and now - termination_started >= signal_grace_seconds * 3
@@ -509,12 +529,22 @@ def run_bounded(
                         process.kill()
                     except ProcessLookupError:
                         pass
+                    except OSError as exc:
+                        remember_failure("wrapper_kill", exc)
                     signal_stage = 4
             # Bound draining independently of reaping: an uninterruptible
             # wrapper or descendants retaining its pipes must not extend the
             # caller's cancellation indefinitely.
             if (forced_wrapper_stop_at is not None
                     and now - forced_wrapper_stop_at >= max(1.0, signal_grace_seconds * 3)):
+                break
+            if (termination_started is not None and not isinstance(tracker, _LinuxTracker)
+                    and now - termination_started >= signal_grace_seconds * 3 + max(1.0, signal_grace_seconds * 3)):
+                # Signal delivery may be denied even for our owned child. Stop
+                # draining within the existing escalation/drain allowances;
+                # the bounded final waits cannot manufacture cessation.
+                tracker.failed = True
+                remember_failure("termination_unconfirmed", TimeoutError())
                 break
             # Descendants retaining pipes after the owning parent exits cannot
             # hold this client forever. Their existence yields unconfirmed.
@@ -571,17 +601,69 @@ def run_bounded(
                     process.kill()
                 except ProcessLookupError:
                     pass
+                except OSError as exc:
+                    remember_failure("completion_wrapper_kill", exc)
             else:
-                _signal_owned(process, signal.SIGKILL)
+                try:
+                    _signal_owned(process, signal.SIGKILL)
+                except OSError as exc:
+                    remember_failure("completion_signal_kill", exc)
         try:
             process.wait(timeout=1)
         except subprocess.TimeoutExpired:
             pass
-        if pending_line and not protocol_error:
-            protocol_error = "runtime_jsonl_truncated"
-        tracker.poll()
-        if isinstance(tracker, _LinuxTracker) and process.returncode != 0:
+        except OSError as exc:
+            remember_failure("completion_wait", exc)
             tracker.failed = True
+    except OSError as exc:
+        remember_failure("observation", exc)
+        tracker.failed = True
+    finally:
+        # Finalize before freezing the result. One cleanup failure must not skip
+        # other resources or leave an already-created successful receipt behind.
+        if process.poll() is None:
+            if isinstance(tracker, _LinuxTracker):
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                except OSError as exc:
+                    remember_failure("final_wrapper_kill", exc)
+            else:
+                try:
+                    _signal_owned(process, signal.SIGKILL)
+                except OSError as exc:
+                    remember_failure("final_signal_kill", exc)
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            except OSError as exc:
+                remember_failure("final_wait", exc)
+                tracker.failed = True
+        try:
+            tracker.poll()
+        except (OSError, ValueError) as exc:
+            remember_failure("tracker_poll", exc)
+            tracker.failed = True
+        for stage, close in (("selector_close", selector.close), ("tracker_close", tracker.close)):
+            try:
+                close()
+            except (OSError, ValueError) as exc:
+                remember_failure(stage, exc)
+                tracker.failed = True
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            if pipe and not pipe.closed:
+                try:
+                    pipe.close()
+                except (OSError, ValueError) as exc:
+                    remember_failure("pipe_close", exc)
+                    tracker.failed = True
+    if pending_line and not protocol_error:
+        protocol_error = "runtime_jsonl_truncated"
+    if isinstance(tracker, _LinuxTracker) and process.returncode != 0:
+        tracker.failed = True
+    try:
         group_confirmed = process.poll() is not None and not _group_exists(process.pid)
         if isinstance(tracker, _LinuxTracker):
             if tracker.dispatch_state == "not_released":
@@ -594,50 +676,42 @@ def run_bounded(
                 if not tracker.eof or tracker.buffer or tracker.dispatch_state != "started":
                     tracker.failed = True
                 group_confirmed = group_confirmed and tracker.root_pgid is not None and not _group_exists(tracker.root_pgid)
-        unaccounted = tracker.failed or bool(tracker.active)
-        confirmed = group_confirmed and not unaccounted
-        exit_code = (tracker.root_exit_code if isinstance(tracker, _LinuxTracker)
-                     else process.returncode if gate_release_attempted else None)
-        # Only trusted in-process drivers can retain these bounded originals.
-        # Default ProcessResult/to_dict callers still receive redacted output.
-        raw_stdout, raw_stderr = bytes(buffers["stdout"]), bytes(buffers["stderr"])
-        capture_error = None
-        if _capture_private_output is not None:
-            try:
-                _capture_private_output(raw_stdout, raw_stderr)
-            except Exception as exc:
-                capture_error = exc
-        result = ProcessResult(exit_code, redact(raw_stdout, secrets),
-                               redact(raw_stderr, secrets), timed_out, cancelled,
-                               confirmed, group_confirmed, output_limited, receipt, int((time.monotonic()-started)*1000), total,
-                               tracker.backend, unaccounted, protocol_error)
-        if capture_error is not None:
-            # Do not disguise a missing capture as the earlier closed-gate
-            # cancellation path. Preserve real lifetime facts in safe output.
-            raise ProcessBoundaryError("private output capture callback failed", code="process_capture_failed",
-                effect_outcome="uncertain" if gate_release_attempted else "not_sent",
-                process_result=result) from None
-        if callback_error:
-            raise ProcessBoundaryError("process boundary callback failed",
-                code=getattr(callback_error, "code", "process_callback_failed"),
-                effect_outcome="uncertain" if gate_release_attempted else
-                    getattr(callback_error, "effect_outcome", "uncertain"), process_result=result) from callback_error
-        return result
-    finally:
-        selector.close()
-        tracker.close()
-        if process.poll() is None:
-            if isinstance(tracker, _LinuxTracker):
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-            else:
-                _signal_owned(process, signal.SIGKILL)
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass
-        for pipe in (process.stdin, process.stdout, process.stderr):
-            if pipe and not pipe.closed:
-                pipe.close()
+    except OSError as exc:
+        remember_failure("group_observation", exc)
+        group_confirmed = False
+        tracker.failed = True
+    unaccounted = tracker.failed or bool(tracker.active)
+    confirmed = group_confirmed and not unaccounted
+    exit_code = (tracker.root_exit_code if isinstance(tracker, _LinuxTracker)
+                 else process.returncode if gate_release_attempted else None)
+    # Only trusted in-process drivers can retain these bounded originals.
+    # Default ProcessResult/to_dict callers still receive redacted output.
+    raw_stdout, raw_stderr = bytes(buffers["stdout"]), bytes(buffers["stderr"])
+    capture_error = None
+    if _capture_private_output is not None:
+        try:
+            _capture_private_output(raw_stdout, raw_stderr)
+        except Exception as exc:
+            capture_error = exc
+    result = ProcessResult(exit_code, redact(raw_stdout, secrets),
+                           redact(raw_stderr, secrets), timed_out, cancelled,
+                           confirmed, group_confirmed, output_limited, receipt, int((time.monotonic()-started)*1000), total,
+                           tracker.backend, unaccounted, protocol_error)
+    failures = tuple(boundary_failures)
+    if capture_error is not None:
+        # Preserve the established private-capture failure precedence.
+        raise ProcessBoundaryError("private output capture callback failed", code="process_capture_failed",
+            effect_outcome="uncertain" if gate_release_attempted else "not_sent",
+            process_result=result, boundary_failures=failures) from None
+    if callback_error:
+        raise ProcessBoundaryError("process boundary callback failed",
+            code=getattr(callback_error, "code", "process_callback_failed"),
+            effect_outcome="uncertain" if gate_release_attempted else
+                getattr(callback_error, "effect_outcome", "uncertain"), process_result=result,
+            boundary_failures=failures) from callback_error
+    if failures:
+        code = "process_signal_failed" if "signal" in failures[0][0] or "kill" in failures[0][0] else "process_cleanup_failed"
+        raise ProcessBoundaryError("owned process boundary could not complete safely", code=code,
+            effect_outcome="uncertain" if gate_release_attempted else "not_sent",
+            process_result=result, boundary_failures=failures) from None
+    return result

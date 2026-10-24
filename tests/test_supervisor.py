@@ -38,6 +38,269 @@ class ProcessTests(unittest.TestCase):
         self.assertTrue(result.cancelled)
         self.assertTrue(result.termination_confirmed)
 
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin owned signal denial")
+    def test_denied_owned_signals_return_unknown_before_finite_child_exits(self):
+        from taskalong import process as boundary
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw).resolve()
+            release, finished = root/"release", root/"finished"
+            code = ("import pathlib,time;release=pathlib.Path("+repr(str(release))+");"
+                    "finished=pathlib.Path("+repr(str(finished))+");deadline=time.monotonic()+10;"
+                    "print('ready',flush=True)\n"
+                    "while not release.exists() and time.monotonic()<deadline:time.sleep(.01)\n"
+                    "finished.touch()")
+            ready, children, denied = [], [], []
+            real_spawn, real_signal = boundary.subprocess.Popen, os.killpg
+            def spawn(*args, **kwargs):
+                child = real_spawn(*args, **kwargs)
+                children.append(child)
+                return child
+            def deny(pgid, sig):
+                if sig == 0:
+                    return real_signal(pgid, sig)
+                denied.append(sig)
+                raise PermissionError(1, "PRIVATE_SYNTHETIC_SIGNAL_DETAIL")
+            try:
+                with patch.object(boundary.subprocess, "Popen", spawn), patch.object(boundary.os, "killpg", deny):
+                    with self.assertRaises(ProcessBoundaryError) as failure:
+                        self.run_python(code, timeout_seconds=3,
+                            on_stdout_line=ready.append, cancel_requested=lambda: bool(ready),
+                            signal_grace_seconds=.05)
+                    self.assertNotIn("PRIVATE_SYNTHETIC_SIGNAL_DETAIL", str(failure.exception))
+                    self.assertEqual(failure.exception.code, "process_signal_failed")
+                    result = failure.exception.process_result
+                self.assertIsNotNone(result)
+                self.assertTrue(denied)
+                self.assertFalse(finished.exists(), "Return must not wait for the fixture's natural expiry")
+                self.assertIsNone(children[0].poll())
+                self.assertTrue(result.cancelled)
+                self.assertFalse(result.termination_confirmed)
+                self.assertTrue(result.unaccounted_descendants)
+                self.assertIsNone(result.exit_code)
+            finally:
+                release.touch()
+                for child in children:
+                    child.wait(timeout=4)
+                self.assertTrue(finished.exists())
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin owned signal exit race")
+    def test_signal_denial_after_real_exit_still_requires_kernel_cessation(self):
+        with tempfile.TemporaryDirectory() as raw:
+            self._signal_denial_after_real_exit(Path(raw).resolve()/"release")
+
+    def _signal_denial_after_real_exit(self, release):
+        from taskalong import process as boundary
+        real_signal = os.killpg
+        children, denied, ready = [], [], []
+        real_spawn = boundary.subprocess.Popen
+        def spawn(*args, **kwargs):
+            child = real_spawn(*args, **kwargs)
+            children.append(child)
+            return child
+        def deny_after_exit(pgid, sig):
+            if sig == 0:
+                return real_signal(pgid, sig)
+            release.touch()
+            children[0].wait(timeout=3)
+            denied.append(sig)
+            raise PermissionError(1, "PRIVATE_SYNTHETIC_SIGNAL_DETAIL")
+        code = ("import time,pathlib;release=pathlib.Path("+repr(str(release))+");"
+                "deadline=time.monotonic()+10;print('ready',flush=True)\n"
+                "while not release.exists() and time.monotonic()<deadline:time.sleep(.01)")
+        try:
+            with patch.object(boundary.subprocess, "Popen", spawn), patch.object(boundary.os, "killpg", deny_after_exit):
+                with self.assertRaises(ProcessBoundaryError) as failure:
+                    self.run_python(code, timeout_seconds=3, on_stdout_line=ready.append,
+                        cancel_requested=lambda: bool(ready), signal_grace_seconds=.05)
+        finally:
+            release.touch()
+            for child in children:
+                child.wait(timeout=4)
+        self.assertEqual(failure.exception.code, "process_signal_failed")
+        result = failure.exception.process_result
+        self.assertTrue(denied)
+        self.assertEqual(result.exit_code, 0)
+        self.assertTrue(result.termination_confirmed)
+        self.assertFalse(result.unaccounted_descendants)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin owned signal fault campaign")
+    def test_later_signal_denials_preserve_failure_and_real_lifetime_facts(self):
+        from taskalong import process as boundary
+        for selected in (signal.SIGTERM, signal.SIGKILL):
+            with self.subTest(signal=selected), tempfile.TemporaryDirectory() as raw:
+                release = Path(raw).resolve()/"release"
+                code = ("import signal,time,pathlib;signal.signal(signal.SIGINT,signal.SIG_IGN);"
+                        "signal.signal(signal.SIGTERM,signal.SIG_IGN);release=pathlib.Path("+repr(str(release))+");"
+                        "deadline=time.monotonic()+10;print('ready',flush=True)\n"
+                        "while not release.exists() and time.monotonic()<deadline:time.sleep(.01)")
+                ready, children = [], []
+                real_spawn, real_signal = boundary.subprocess.Popen, os.killpg
+                def spawn(*args, **kwargs):
+                    child = real_spawn(*args, **kwargs)
+                    children.append(child)
+                    return child
+                def deny(pgid, sig):
+                    if sig == selected:
+                        raise PermissionError(1, "PRIVATE_SYNTHETIC_SIGNAL_DETAIL")
+                    return real_signal(pgid, sig)
+                try:
+                    with patch.object(boundary.subprocess, "Popen", spawn), patch.object(boundary.os, "killpg", deny):
+                        with self.assertRaises(ProcessBoundaryError) as failure:
+                            self.run_python(code, timeout_seconds=3, on_stdout_line=ready.append,
+                                cancel_requested=lambda: bool(ready), signal_grace_seconds=.05)
+                    error = failure.exception
+                    self.assertEqual(error.code, "process_signal_failed")
+                    stage = "signal_term" if selected == signal.SIGTERM else "signal_kill"
+                    self.assertEqual(error.boundary_failures[0], (stage, 1))
+                    self.assertEqual(error.effect_outcome, "uncertain")
+                    self.assertEqual(error.process_result.termination_confirmed, selected == signal.SIGTERM)
+                    self.assertEqual(error.process_result.unaccounted_descendants, selected == signal.SIGKILL)
+                finally:
+                    release.touch()
+                    for child in children:
+                        child.wait(timeout=4)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin owned identity query denial")
+    def test_ownership_query_denial_cannot_authorize_a_signal(self):
+        from taskalong import process as boundary
+        ready = []
+        real_signal = os.killpg
+        sent = []
+        def observe(pgid, sig):
+            if sig != 0:
+                sent.append(sig)
+            return real_signal(pgid, sig)
+        with patch.object(boundary.os, "getpgid", side_effect=PermissionError(1, "PRIVATE_QUERY")), \
+                patch.object(boundary.os, "killpg", observe):
+            with self.assertRaises(ProcessBoundaryError) as failure:
+                self.run_python("import time;print('ready',flush=True);time.sleep(.2)",
+                    timeout_seconds=3, on_stdout_line=ready.append,
+                    cancel_requested=lambda: bool(ready), signal_grace_seconds=.05)
+        self.assertEqual(failure.exception.code, "process_signal_failed")
+        self.assertEqual(sent, [])
+        self.assertTrue(failure.exception.process_result.termination_confirmed)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin final cleanup fault campaign")
+    def test_final_signal_denial_does_not_replace_primary_observation_failure(self):
+        from taskalong import process as boundary
+        with tempfile.TemporaryDirectory() as raw:
+            release = Path(raw).resolve()/"release"
+            code = ("import time,pathlib;release=pathlib.Path("+repr(str(release))+");"
+                    "deadline=time.monotonic()+10;print('ready',flush=True)\n"
+                    "while not release.exists() and time.monotonic()<deadline:time.sleep(.01)")
+            ready, children = [], []
+            real_selector, real_spawn, real_signal = boundary.selectors.DefaultSelector, boundary.subprocess.Popen, os.killpg
+            def selector():
+                selected = real_selector()
+                real_select = selected.select
+                def select(timeout):
+                    if ready:
+                        raise OSError(5, "PRIVATE_OBSERVATION")
+                    return real_select(timeout)
+                selected.select = select
+                return selected
+            def spawn(*args, **kwargs):
+                child = real_spawn(*args, **kwargs)
+                children.append(child)
+                return child
+            def deny(pgid, sig):
+                if sig:
+                    raise PermissionError(1, "PRIVATE_FINAL_SIGNAL")
+                return real_signal(pgid, sig)
+            try:
+                with patch.object(boundary.selectors, "DefaultSelector", selector), \
+                        patch.object(boundary.subprocess, "Popen", spawn), patch.object(boundary.os, "killpg", deny):
+                    with self.assertRaises(ProcessBoundaryError) as failure:
+                        self.run_python(code, timeout_seconds=3, on_stdout_line=ready.append)
+                error = failure.exception
+                self.assertEqual(error.code, "process_cleanup_failed")
+                self.assertEqual(error.boundary_failures, (("observation", 5), ("final_signal_kill", 1)))
+                self.assertFalse(error.process_result.termination_confirmed)
+                self.assertIsNone(children[0].poll())
+            finally:
+                release.touch()
+                for child in children:
+                    child.wait(timeout=4)
+
+    def test_cleanup_failures_preserve_gate_refusal_and_attempt_remaining_closes(self):
+        from taskalong import process as boundary
+        real_wait, real_selector = boundary.subprocess.Popen.wait, boundary.selectors.DefaultSelector
+        real_close = boundary._LinuxTracker.close if sys.platform == "linux" else boundary._DescendantTracker.close
+        tracker_type = boundary._LinuxTracker if sys.platform == "linux" else boundary._DescendantTracker
+        real_spawn = boundary.subprocess.Popen
+        closed, children = [], []
+        def selector():
+            selected = real_selector()
+            close = selected.close
+            def fail():
+                close()
+                closed.append("selector")
+                raise OSError(5, "PRIVATE_SELECTOR_CLOSE")
+            selected.close = fail
+            return selected
+        def close_tracker(tracker):
+            real_close(tracker)
+            closed.append("tracker")
+            raise OSError(5, "PRIVATE_TRACKER_CLOSE")
+        def spawn(*args, **kwargs):
+            child = real_spawn(*args, **kwargs)
+            children.append(child)
+            return child
+        def veto(_):
+            raise TaskAlongError("cancel_pending", "Synthetic gate refusal", effect_outcome="not_sent")
+        try:
+            with patch.object(boundary.selectors, "DefaultSelector", selector), \
+                    patch.object(tracker_type, "close", close_tracker), patch.object(boundary.subprocess, "Popen", spawn), \
+                    patch.object(real_spawn, "wait", side_effect=OSError(5, "PRIVATE_WAIT")):
+                with self.assertRaises(ProcessBoundaryError) as failure:
+                    self.run_python("raise SystemExit(93)", timeout_seconds=3, on_spawn=veto, signal_grace_seconds=.05)
+            error = failure.exception
+            self.assertEqual(error.code, "cancel_pending")
+            self.assertEqual(error.effect_outcome, "not_sent")
+            self.assertIn(("completion_wait", 5), error.boundary_failures)
+            self.assertIn(("selector_close", 5), error.boundary_failures)
+            self.assertIn(("tracker_close", 5), error.boundary_failures)
+            self.assertEqual(closed, ["selector", "tracker"])
+            self.assertFalse(error.process_result.termination_confirmed)
+            self.assertTrue(error.process_result.unaccounted_descendants)
+            self.assertTrue(all(pipe.closed for child in children for pipe in (child.stdin, child.stdout, child.stderr)))
+        finally:
+            for child in children:
+                real_wait(child, timeout=4)
+
+    def test_failed_pipe_close_does_not_skip_other_owned_pipes(self):
+        from taskalong import process as boundary
+        real_spawn, children, closes = boundary.subprocess.Popen, [], []
+        class FailingClose:
+            def __init__(self, pipe, name):
+                self.pipe, self.name = pipe, name
+            def __getattr__(self, name):
+                return getattr(self.pipe, name)
+            def close(self):
+                self.pipe.close()
+                closes.append(self.name)
+                raise OSError(5, "PRIVATE_PIPE_CLOSE")
+        def spawn(*args, **kwargs):
+            child = real_spawn(*args, **kwargs)
+            child.stdout = FailingClose(child.stdout, "stdout")
+            child.stderr = FailingClose(child.stderr, "stderr")
+            children.append(child)
+            return child
+        try:
+            with patch.object(boundary.subprocess, "Popen", spawn):
+                with self.assertRaises(ProcessBoundaryError) as failure:
+                    self.run_python("print('finite')", timeout_seconds=3)
+            error = failure.exception
+            self.assertEqual(error.code, "process_cleanup_failed")
+            self.assertIn(("observation", 5), error.boundary_failures)
+            self.assertIn(("pipe_close", 5), error.boundary_failures)
+            self.assertCountEqual(closes, ["stdout", "stderr"])
+            self.assertFalse(error.process_result.termination_confirmed)
+            self.assertTrue(all(pipe.closed for child in children for pipe in (child.stdin, child.stdout, child.stderr)))
+        finally:
+            for child in children:
+                child.wait(timeout=4)
+
     def test_aggregate_output_limit_is_not_pipe_specific(self):
         result = self.run_python("import sys;sys.stdout.buffer.write(b'x'*5000);sys.stderr.buffer.write(b'y'*5000)", max_output_bytes=6000)
         self.assertTrue(result.output_limited)

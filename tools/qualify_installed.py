@@ -322,7 +322,13 @@ def validate_test_accounting(schedule: dict, results: list[dict], system: str) -
     reasons = {i: 'Linux prctl/subreaper kernel qualification' for i in required}
     if system == 'linux':
         reasons = {'test_linux_lifetime.UnsupportedLifetimeTests.test_non_linux_helper_never_releases_target': 'non-Linux refusal',
-                   'test_supervisor.ProcessTests.test_unavailable_kernel_lifetime_boundary_never_releases_target': 'Darwin kernel boundary fault injection'}
+                   'test_supervisor.ProcessTests.test_unavailable_kernel_lifetime_boundary_never_releases_target': 'Darwin kernel boundary fault injection',
+                   'test_supervisor.ProcessTests.test_denied_owned_signals_return_unknown_before_finite_child_exits': 'Darwin owned signal denial',
+                   'test_supervisor.ProcessTests.test_signal_denial_after_real_exit_still_requires_kernel_cessation': 'Darwin owned signal exit race',
+                   'test_supervisor.ProcessTests.test_later_signal_denials_preserve_failure_and_real_lifetime_facts': 'Darwin owned signal fault campaign',
+                   'test_supervisor.ProcessTests.test_ownership_query_denial_cannot_authorize_a_signal': 'Darwin owned identity query denial',
+                   'test_supervisor.ProcessTests.test_final_signal_denial_does_not_replace_primary_observation_failure': 'Darwin final cleanup fault campaign',
+                   'test_claude_driver.ClaudeDriverBoundaryTests.test_malformed_provider_with_denied_signal_is_typed_failure_even_after_cessation': 'Darwin actual driver signal denial'}
         required = set(reasons) & set(expected)
         alias = 'test_store_migration.StoreMigrationTests.test_system_alias_and_directory_identity_cannot_hide_overlapping_targets'
         if any(r['test'] == alias for r in skipped):

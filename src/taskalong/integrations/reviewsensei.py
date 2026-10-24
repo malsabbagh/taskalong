@@ -233,6 +233,10 @@ class ReviewSenseiAdapter:
                                   heartbeat=callback(heartbeat))
         except ProcessBoundaryError as exc:
             outcome = exc.effect_outcome if exc.effect_outcome in {"not_sent", "known", "uncertain"} else "uncertain"
+            # Target non-dispatch cannot settle an owned wrapper without its
+            # actual cessation receipt, including schema and version probes.
+            if exc.process_result is None or exc.process_result.termination_confirmed is not True:
+                outcome = "uncertain"
             error = _blocked("review_invocation_failed", "The independent review process boundary could not complete safely.", effect_outcome=outcome)
             if exc.code == "verification_interrupted" and outcome == "not_sent":
                 error.output_bytes = self._observed_process_output_bytes
