@@ -1,0 +1,606 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:qualification:v1:proof-manifest",
+  "title": "Runtime qualification experiment contracts",
+  "$ref": "#/$defs/manifest",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inventory_ms",
+        "case_ms",
+        "capture_bytes",
+        "execution_ms"
+      ],
+      "properties": {
+        "inventory_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "case_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5000
+        },
+        "capture_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        },
+        "execution_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
+        }
+      }
+    },
+    "host-subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "interpreter_digest",
+        "backend_id",
+        "backend_digest",
+        "context_digest",
+        "package_digest",
+        "host_digest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "host-experiment"
+        },
+        "interpreter_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "backend_id": {
+          "enum": [
+            "darwin-kqueue-no-fork",
+            "linux-child-subreaper",
+            "unsupported"
+          ]
+        },
+        "backend_digest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "package_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "host_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "bound-subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "qualification_subject",
+        "mode",
+        "driver_config_digest",
+        "projection_id",
+        "packet_digest",
+        "input_digest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "bound-harness"
+        },
+        "qualification_subject": {
+          "$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/subject"
+        },
+        "mode": {
+          "enum": [
+            "start",
+            "observe",
+            "cancel",
+            "result",
+            "native_resume",
+            "provider_lookup",
+            "remote_cancel"
+          ]
+        },
+        "driver_config_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "projection_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9./_-]{0,127}$"
+        },
+        "packet_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "input_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "private-ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "size_bytes",
+        "media_type",
+        "classification"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65536
+        },
+        "media_type": {
+          "enum": [
+            "application/json",
+            "application/octet-stream"
+          ]
+        },
+        "classification": {
+          "const": "private"
+        }
+      }
+    },
+    "nullable-ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/private-ref"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "campaign_id",
+        "verdict",
+        "capability",
+        "reason",
+        "dispatch",
+        "process_ref",
+        "capture_refs",
+        "observation_ref"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "permitted-read",
+            "permitted-write",
+            "bounded-capture",
+            "predispatch-tool-denial",
+            "owned-completion",
+            "closed-gate-cancel",
+            "running-cancel"
+          ]
+        },
+        "campaign_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "verdict": {
+          "enum": [
+            "passed",
+            "failed",
+            "not_run"
+          ]
+        },
+        "capability": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "unknown"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "oracle_passed",
+            "oracle_failed",
+            "not_run_after_failure",
+            "cleanup_unknown",
+            "capture_failed",
+            "deadline_exceeded",
+            "output_limited"
+          ]
+        },
+        "dispatch": {
+          "enum": [
+            "sent",
+            "not_sent",
+            "uncertain"
+          ]
+        },
+        "process_ref": {
+          "$ref": "#/$defs/nullable-ref"
+        },
+        "observation_ref": {
+          "$ref": "#/$defs/nullable-ref"
+        },
+        "capture_refs": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stdin",
+                "stdout",
+                "stderr"
+              ],
+              "properties": {
+                "stdin": {
+                  "$ref": "#/$defs/private-ref"
+                },
+                "stdout": {
+                  "$ref": "#/$defs/private-ref"
+                },
+                "stderr": {
+                  "$ref": "#/$defs/private-ref"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "format_version",
+        "plan",
+        "producer_id",
+        "inventory_ref",
+        "context_ref",
+        "started_at",
+        "finished_at",
+        "execution_ms",
+        "finalization_ms",
+        "observed_route",
+        "cases",
+        "complete",
+        "first_error",
+        "quarantined",
+        "inputs_rechecked",
+        "digest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "runtime_qualification_manifest"
+        },
+        "format_version": {
+          "const": "1.0"
+        },
+        "plan": {
+          "$ref": "#/$defs/plan"
+        },
+        "producer_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+        },
+        "inventory_ref": {
+          "$ref": "#/$defs/private-ref"
+        },
+        "context_ref": {
+          "$ref": "#/$defs/private-ref"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "execution_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "finalization_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observed_route": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model",
+            "account",
+            "route",
+            "reason"
+          ],
+          "properties": {
+            "model": {
+              "type": "null"
+            },
+            "account": {
+              "type": "null"
+            },
+            "route": {
+              "type": "null"
+            },
+            "reason": {
+              "enum": [
+                "not_requested_model_free",
+                "not_executed_unsupported_stage"
+              ]
+            }
+          }
+        },
+        "cases": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/case"
+          }
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "quarantined": {
+          "type": "boolean"
+        },
+        "inputs_rechecked": {
+          "type": "boolean"
+        },
+        "first_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "case_id",
+                "code"
+              ],
+              "properties": {
+                "case_id": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "permitted-read",
+                        "permitted-write",
+                        "bounded-capture",
+                        "predispatch-tool-denial",
+                        "owned-completion",
+                        "closed-gate-cancel",
+                        "running-cancel"
+                      ]
+                    }
+                  ]
+                },
+                "code": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                }
+              }
+            }
+          ]
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "format_version",
+        "campaign_id",
+        "stage",
+        "profile",
+        "package_origin",
+        "inference",
+        "runner_digest",
+        "helper_digest",
+        "test_inventory_digest",
+        "subject",
+        "bounds",
+        "case_ids",
+        "digest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "runtime_experiment_plan"
+        },
+        "format_version": {
+          "const": "1.0"
+        },
+        "campaign_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "stage": {
+          "enum": [
+            "inventory",
+            "model-free",
+            "installed-replay",
+            "controlled-responder",
+            "actual-provider",
+            "native-resume"
+          ]
+        },
+        "profile": {
+          "const": "owned-host-canaries-v1"
+        },
+        "package_origin": {
+          "enum": [
+            "source",
+            "installed"
+          ]
+        },
+        "inference": {
+          "const": "never"
+        },
+        "runner_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "helper_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "test_inventory_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "subject": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/host-subject"
+            },
+            {
+              "$ref": "#/$defs/bound-subject"
+            }
+          ]
+        },
+        "bounds": {
+          "$ref": "#/$defs/bounds"
+        },
+        "case_ids": {
+          "type": "array",
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "permitted-read",
+              "permitted-write",
+              "bounded-capture",
+              "predispatch-tool-denial",
+              "owned-completion",
+              "closed-gate-cancel",
+              "running-cancel"
+            ]
+          }
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "document-ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "size_bytes",
+        "media_type",
+        "classification"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        },
+        "media_type": {
+          "const": "application/json"
+        },
+        "classification": {
+          "const": "private"
+        }
+      }
+    },
+    "replay-report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "format_version",
+        "operation",
+        "original_manifest_ref",
+        "original_proof_digest",
+        "original_subject",
+        "original_evidence_set_digest",
+        "verifier_manifest_ref",
+        "verifier_proof_digest",
+        "original_complete",
+        "original_passed",
+        "integrity_valid",
+        "digest"
+      ],
+      "properties": {
+        "kind": {
+          "const": "runtime_qualification_replay"
+        },
+        "format_version": {
+          "const": "1.0"
+        },
+        "operation": {
+          "const": "installed-replay"
+        },
+        "original_manifest_ref": {
+          "$ref": "#/$defs/document-ref"
+        },
+        "original_proof_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "original_subject": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/host-subject"
+            },
+            {
+              "$ref": "#/$defs/bound-subject"
+            }
+          ]
+        },
+        "original_evidence_set_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "verifier_manifest_ref": {
+          "$ref": "#/$defs/document-ref"
+        },
+        "verifier_proof_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "original_complete": {
+          "type": "boolean"
+        },
+        "original_passed": {
+          "type": "boolean"
+        },
+        "integrity_valid": {
+          "const": true
+        },
+        "digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

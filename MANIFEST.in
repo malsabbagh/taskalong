@@ -211,3 +211,10 @@ include tests/fixtures/m7-contract-hashes.json
 include tests/test_antigravity_driver.py
 include tests/test_antigravity_protocol.py
 include tests/test_antigravity_store.py
+include src/taskalong/runtime_qualification.py
+include src/taskalong/resources/qualification/v1/proof-manifest.schema.json
+include tests/test_runtime_qualification.py
+include tests/fixtures/runtime_canary.py
+include tools/qualify_runtime.py
+include tests/fixtures/runtime-prior-contracts.json
+include docs/adr/0009-runtime-experiment-evidence.md

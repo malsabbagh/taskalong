@@ -28,6 +28,29 @@ _QUALIFIER_SPEC.loader.exec_module(qualifier)
 
 
 class DistributionTests(unittest.TestCase):
+    def test_runtime_inventory_binds_installed_wheel_and_original_artifact_separately(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            work = root / "work"
+            (work / "tools").mkdir(parents=True)
+            (work / "installed-tests" / "fixtures").mkdir(parents=True)
+            (work / "tools" / "qualify_runtime.py").write_bytes(b"reviewed runner")
+            (work / "installed-tests" / "fixtures" / "runtime_canary.py").write_bytes(b"original finite helper")
+            (work / "requirements-dev.lock").write_bytes(b"original lock")
+            wheel = root / "taskalong.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr("taskalong/runtime_qualification.py", b"original reader")
+                archive.writestr("taskalong-0.1.0a1.dist-info/METADATA", b"Name: taskalong\nVersion: 0.1.0a1\n")
+            with mock.patch.dict(sys.modules, {"check_dist": auditor}):
+                expected = qualifier.freeze_runtime_inventory(wheel, work, source_digest="a" * 64, source_kind="sdist")
+            value = json.loads((work / "runtime-artifact-inventory.json").read_bytes())
+            self.assertEqual(value["artifact_digest"], hashlib.sha256(wheel.read_bytes()).hexdigest())
+            self.assertEqual(value["source_artifact_digest"], "a" * 64)
+            self.assertEqual(value["source_artifact_kind"], "sdist")
+            self.assertEqual(value["payloads"], {"taskalong/runtime_qualification.py": {
+                "sha256": hashlib.sha256(b"original reader").hexdigest(), "size_bytes": len(b"original reader")}})
+            self.assertEqual(expected, hashlib.sha256((work / "runtime-artifact-inventory.json").read_bytes()).hexdigest())
+
     def test_installed_schedule_balances_complete_modules_with_explicit_version(self):
         groups = {name: [f'test_{name}.Cases.test_{index:02d}' for index in range(count)]
                   for name, count in [('a', 8), ('b', 7), ('c', 6), ('d', 5)]}
@@ -123,6 +146,7 @@ class DistributionTests(unittest.TestCase):
             work = Path(directory) / 'work'
             root.mkdir(); work.mkdir()
             files = {'tools/qualify_installed.py': b'original qualifier', 'requirements-dev.lock': b'original lock',
+                     'tools/qualify_runtime.py': b'original runtime qualifier',
                      'tests/fixtures/fake_codex.py': b'original worker', 'tests/fixtures/fake_gh.py': b'original boundary',
                      'tests/test_a.py': b'original test'}
             for name, data in files.items():
@@ -131,6 +155,7 @@ class DistributionTests(unittest.TestCase):
             expected = qualifier.snapshot_harness(root, work)
             qualifier.verify_harness(work, expected)
             for relative in ('qualify_installed.py', 'requirements-dev.lock', 'installed-tests/test_a.py',
+                             'tools/qualify_runtime.py',
                              'installed-tests/fixtures/fake_codex.py', 'fixtures/fake_codex.py'):
                 path = work / relative; original = path.read_bytes(); path.write_bytes(b'changed')
                 with self.subTest(path=relative), self.assertRaises(ValueError):
@@ -620,6 +645,7 @@ class DistributionTests(unittest.TestCase):
             root = Path(directory) / "source"
             root.mkdir()
             files = {"tools/qualify_installed.py": b"synthetic harness", "requirements-dev.lock": b"first lock",
+                     "tools/qualify_runtime.py": b"first runtime qualifier",
                      "tests/test_example.py": b"first test", "tests/fixtures/fake_codex.py": b"first codex",
                      "tests/fixtures/fake_gh.py": b"first gh"}
             for relative, data in files.items():

@@ -446,11 +446,13 @@ def snapshot_artifact(source: Path, directory: Path) -> tuple[Path, str]:
 def snapshot_harness(source: Path, work: Path) -> str:
     """Freeze reviewed test/fixture/lock inputs before slow installation begins."""
     inventory = json.loads((source / "distribution-inventory.json").read_text(encoding="utf-8"))
-    inputs = {"tools/qualify_installed.py", "requirements-dev.lock"} | {
+    inputs = {"tools/qualify_installed.py", "tools/qualify_runtime.py", "requirements-dev.lock"} | {
         path for path in inventory["sdist_sources"] if path.startswith("tests/") and path != "tests/test_distribution.py"}
     values = {relative: (source / relative).read_bytes() for relative in sorted(inputs)}
     (work / "qualify_installed.py").write_bytes(values["tools/qualify_installed.py"])
     (work / "requirements-dev.lock").write_bytes(values["requirements-dev.lock"])
+    (work / "tools").mkdir()
+    (work / "tools" / "qualify_runtime.py").write_bytes(values["tools/qualify_runtime.py"])
     (work / "fixtures").mkdir()
     for relative in FIXTURES:
         (work / "fixtures" / Path(relative).name).write_bytes(values[relative])
@@ -462,6 +464,35 @@ def snapshot_harness(source: Path, work: Path) -> str:
     manifest = [{"path": relative, "sha256": hashlib.sha256(data).hexdigest()} for relative, data in sorted(values.items())]
     write_json(work / 'harness-manifest.json', manifest)
     return json_digest(manifest)
+
+
+def freeze_runtime_inventory(wheel: Path, work: Path, *, source_digest: str, source_kind: str) -> str:
+    """Freeze audited archive expectations separately from installed observations.
+
+    The caller audits the wheel and installs it before this step. The runtime
+    tool verifies actual site-package bytes; these hashes do not confer trust.
+    """
+    from check_dist import read_wheel, DIST_INFO
+
+    files = read_wheel(wheel)
+    value = {'kind': 'runtime_artifact_inventory', 'format_version': '1.0',
+        'artifact_digest': hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        'source_artifact_digest': source_digest, 'source_artifact_kind': source_kind,
+        'package_version': '0.1.0a1',
+        'payloads': {name: {'sha256': hashlib.sha256(raw).hexdigest(), 'size_bytes': len(raw)}
+                     for name, raw in sorted(files.items()) if name.startswith('taskalong/')},
+        'metadata_sha256': hashlib.sha256(files[f'{DIST_INFO}/METADATA']).hexdigest(),
+        'lock_sha256': hashlib.sha256((work / 'requirements-dev.lock').read_bytes()).hexdigest(),
+        'runner_sha256': hashlib.sha256((work / 'tools/qualify_runtime.py').read_bytes()).hexdigest(),
+        'helper_sha256': hashlib.sha256((work / 'installed-tests/fixtures/runtime_canary.py').read_bytes()).hexdigest()}
+    value['digest'] = json_digest(value)
+    path = work / 'runtime-artifact-inventory.json'
+    with path.open('xb') as output:
+        os.fchmod(output.fileno(), 0o600)
+        output.write(json.dumps(value, sort_keys=True).encode() + b'\n')
+        output.flush()
+        os.fsync(output.fileno())
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def verify_harness(work: Path, expected_sha256: str):
@@ -477,6 +508,8 @@ def verify_harness(work: Path, expected_sha256: str):
             raise ValueError('invalid frozen harness path')
         if relative in {'tools/qualify_installed.py', 'requirements-dev.lock'}:
             paths = [work / Path(relative).name]
+        elif relative == 'tools/qualify_runtime.py':
+            paths = [work / relative]
         elif relative.startswith('tests/') and relative != 'tests/test_distribution.py':
             suffix = relative.removeprefix('tests/')
             installed_paths.add(suffix)
@@ -902,6 +935,8 @@ def qualify(args: argparse.Namespace) -> dict:
             install_artifact = wheels[0]
             audit(install_artifact, root=extracted)
         command(install + ["--no-deps", str(install_artifact)], cwd=work, env=env, timeout=budget())
+        runtime_inventory_sha = freeze_runtime_inventory(install_artifact, work,
+            source_digest=artifact_sha256, source_kind=args.artifact)
         if not args.core_only:
             review = acquire_review(args.review_wheel, base / "review_sensei-0.8.8-py3-none-any.whl", timeout=budget(30))
             command(install + ["--no-deps", str(review)], cwd=work, env=env, timeout=budget())
@@ -923,9 +958,13 @@ def qualify(args: argparse.Namespace) -> dict:
                 phase_input = work / 'phase-input.json'
                 write_json(phase_input, {'identity': identity, 'schedule': schedule})
                 verify_harness(work, harness_inputs_sha256)
+                if hashlib.sha256((work / 'runtime-artifact-inventory.json').read_bytes()).hexdigest() != runtime_inventory_sha:
+                    raise ValueError('runtime artifact inventory changed')
                 payload, receipt = run_phase(child_args + ['--phase-input', str(phase_input)], cwd=work,
                     env=env, identity=identity, timeout=budget(60 if phase == 'inventory' else PHASE_SECONDS))
                 verify_harness(work, harness_inputs_sha256)
+                if hashlib.sha256((work / 'runtime-artifact-inventory.json').read_bytes()).hexdigest() != runtime_inventory_sha:
+                    raise ValueError('runtime artifact inventory changed')
                 phases[phase] = payload
                 phase_receipts.append(receipt)
                 current = payload['package_snapshot_sha256']

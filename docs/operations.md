@@ -372,3 +372,30 @@ redecoded before dependent reads or recovery; a closed gate does not prove stdin
 was delivered. Restart uses a new conversation and the same persisted budget.
 Native continuation, provider lookup, remote cessation, live execution and hard
 caps refuse. See the [Antigravity contract](contracts.md#antigravity-fixture-contracts-v26).
+
+## Private host experiment evidence
+
+Run the [model-free qualifier](qualification.md#model-free-host-experiments-and-offline-replay)
+only with the explicit closed profile and a new owner-only directory outside the
+checkout. It does not open a Store or modify registered profiles. Preserve raw
+blobs, `manifest.json`, failed receipts and any quarantined state. Files use 0600
+and directories 0700; do not publish original captures, environment/host paths or
+canary content. A separately reviewed public report should contain allowlisted
+commands, hashes, counts, scope and unsupported capabilities only.
+
+Offline installed replay reserves a separate new output directory and leaves
+its original input unchanged. `replay-report.json` refers to that immutable
+original and to a distinct verifier inventory; retain both. Integrity-valid
+replay of failed/unknown execution remains unsuccessful. Neither replay nor a
+complete host-canary campaign supplies trusted approvals, clears quarantine,
+changes revocations or enables production. No automatic replay/recovery or
+cleanup using saved process IDs is performed. Evidence-write or close failure
+returns a safe non-durable result; the first cleanup uncertainty remains recorded
+when a secondary write also fails.
+
+Keep controller UID observations in the private inventory only. Do not copy UID
+values, usernames or raw host metadata into public summaries. The experiment
+inherits its caller identity and performs no elevation or identity switch.
+Neither zero nor nonzero classification establishes a privileged execution or
+confinement capability. A changed controller identity stops subsequent owned
+launches/completion; it does not rewrite earlier process or cleanup evidence.

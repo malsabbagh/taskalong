@@ -504,3 +504,38 @@ not a redefinition of M1. The supplied time is a fixture constant, not a current
 approval. Real callers must use trusted current time and evidence. M3 persistence,
 M4 admission, live adapters, effective-policy proof and runtime enablement are
 separate milestones.
+
+## Runtime experiment documents
+
+`taskalong.runtime_qualification` provides immutable `ExperimentPlan`,
+`RuntimeProofManifest`, `ProofEvidence` and `RuntimeReplayReport` readers plus
+pure `validate_proof`/`validate_replay`. The standalone resource is
+`qualification/v1/proof-manifest.schema.json`, URI
+`urn:taskalong:qualification:v1:proof-manifest`; its format is `1.0`. It adds no
+TaskSpec/DriverConfig version and changes no existing schema-name enumeration,
+SQL or M2 evidence-reference meaning.
+
+The subject is explicitly either host-experiment identity or bound-harness
+metadata with an exact existing M2 subject/mode and packet/config identities.
+Host experiments cannot satisfy bound-harness requirements. Bound live stages
+are inert and unsupported in this milestone. `ProofEvidence` accepts immutable
+bytes only, at most 64 unique SHA256 entries, 64 KiB per entry and 4 MiB aggregate;
+empty streams are valid, while missing streams are distinct failures. No path,
+URL, import, command or resolver callback is selected by a document.
+
+Proof validation checks original structured observations, process identities,
+nonce-bound input/output/effects, private reference hashes/sizes/media types,
+complete case order and cleanup. Replay preserves original outcomes and subjects
+and separately binds the installed verifier inventory. All returned assessments
+keep `producer_authenticated` and `production_dispatch_allowed` false. No M2
+receipt, trust policy, current producer approval or runtime registration is
+created. See [qualification](qualification.md#model-free-host-experiments-and-offline-replay)
+for operation boundaries and exits.
+
+Private inventory `host.privilege` is a closed controller-only observation:
+`scope` is `controller`, `effective_uid` is a nonnegative 32-bit integer, and
+`class` is `effective_uid_zero` or `effective_uid_nonzero` consistently with that
+integer. Booleans, missing/extra fields and inconsistent classes refuse even
+when a document is resealed. The four existing OS facts remain strings. This
+observation participates in the host digest; it is never a task-selected UID,
+child-identity proof, privilege grant or public report field.
