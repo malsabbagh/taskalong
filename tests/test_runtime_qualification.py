@@ -470,6 +470,20 @@ class RuntimeManifestContractTests(unittest.TestCase):
             with self.subTest(variant=index), self.assertRaises(TaskAlongError):
                 validate_proof(RuntimeProofManifest.from_dict(sealed(document)),
                     expected_plan=ExperimentPlan.from_dict(document["plan"]), evidence=ProofEvidence.from_blobs(blobs))
+        # A well-typed replacement still cannot retain the expected original
+        # host identity by resealing just the containing manifest/reference.
+        document, blobs = copy.deepcopy(original), dict(original_blobs)
+        inventory = json.loads(blobs.pop(document["inventory_ref"]["sha256"]))
+        uid = inventory["measurements"]["host"]["privilege"]["effective_uid"]
+        inventory["measurements"]["host"]["privilege"] = {
+            "scope": "controller", "effective_uid": 0 if uid else 123,
+            "class": "effective_uid_zero" if uid else "effective_uid_nonzero"}
+        raw = canonical_bytes(inventory)
+        document["inventory_ref"] = private_ref(raw)
+        blobs[hashlib.sha256(raw).hexdigest()] = raw
+        with self.assertRaises(TaskAlongError):
+            validate_proof(RuntimeProofManifest.from_dict(sealed(document)),
+                expected_plan=ExperimentPlan.from_dict(original["plan"]), evidence=ProofEvidence.from_blobs(blobs))
 
     def test_replay_keeps_original_privilege_separate_from_constructed_verifier_class(self):
         from taskalong.runtime_qualification import ProofEvidence, RuntimeReplayReport, evidence_set_digest, validate_replay
@@ -1229,6 +1243,33 @@ runpy.run_path(sys.argv[0],run_name="__main__")
             self.assertEqual([case["verdict"] for case in document["cases"]], ["passed"] + ["not_run"] * 6)
             self.assertEqual(document["first_error"], {"case_id": None, "code": "runtime_inputs_changed"})
             self.assertFalse(document["quarantined"])
+
+    def test_controller_identity_drift_at_final_inventory_check_refuses_completion(self):
+        tool = self.entrypoint()
+        original = tool._controller_privilege
+        calls = {"count": 0}
+        def changed_at_finish():
+            value = original()
+            calls["count"] += 1
+            if calls["count"] > 1:
+                value = {"scope": "controller", "effective_uid": value["effective_uid"] + 1,
+                         "class": "effective_uid_nonzero"}
+            return value
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "final-identity-drift"
+            stdout = io.StringIO()
+            with patch.object(tool, "_controller_privilege", changed_at_finish), \
+                    patch("taskalong.process.run_bounded", side_effect=AssertionError("inventory cannot launch")) as owner, \
+                    redirect_stdout(stdout):
+                code = tool.main(qualifier_context()[1] + ["--stage", "inventory", "--evidence-dir", str(destination)])
+            self.assertEqual(code, 1)
+            self.assertEqual(owner.call_count, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["code"], "runtime_inputs_changed")
+            self.assertFalse(result["complete"])
+            self.assertNotIn("effective_uid", stdout.getvalue())
+            document = json.loads((destination / "manifest.json").read_bytes())
+            self.assertFalse(document["inputs_rechecked"])
 
 
 from test_execution_bindings import BindingFixture
