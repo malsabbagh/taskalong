@@ -90,6 +90,11 @@ the primary failure and bounded stage/errno diagnostics without raw OS messages.
 A live process that cannot be signalled returns within the existing escalation,
 drain and final-wait allowances with unconfirmed cessation. Later operator or
 test cleanup cannot change that returned receipt or release its unresolved effect.
+Target non-dispatch and owned wrapper cessation are separate facts. A refused
+verifier gate with missing or unconfirmed cleanup retains an unknown capture,
+its conservative output reservation and the workspace lease; cancellation cannot
+be acknowledged from target non-dispatch alone. This also applies to independent
+review schema and version probes.
 
 The standard foreground `verify` CLI defers Ctrl-C while it collects the owned
 process cleanup receipt and persists the capture outcome, then returns exit 130

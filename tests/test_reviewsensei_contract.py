@@ -166,6 +166,42 @@ class ReviewProcessOutcomeTests(unittest.TestCase):
                 self.assertTrue((root / (stage + ".dispatched")).exists())
                 self.assert_stopped_before_later_stages(root, stage)
 
+    def test_unconfirmed_closed_gate_cleanup_stays_uncertain_in_every_stage(self):
+        from taskalong import process as boundary
+        tracker_type = boundary._LinuxTracker if sys.platform == "linux" else boundary._DescendantTracker
+        real_close = tracker_type.close
+        for stage in self.STAGES:
+            with self.subTest(stage=stage):
+                root, adapter, invoke = self.invocation("unconfirmed-gate-" + stage)
+                observed = []
+                def fail_close(tracker):
+                    real_close(tracker)
+                    raise OSError(5, "PRIVATE_REVIEW_CLEANUP")
+                def owned_boundary(argv, **kwargs):
+                    if self.stage(argv) != stage:
+                        return actual_run_bounded(argv, **kwargs)
+                    def veto(_receipt):
+                        raise ProcessBoundaryError("Synthetic closed gate", effect_outcome="not_sent")
+                    kwargs["on_spawn"] = veto
+                    try:
+                        with patch.object(tracker_type, "close", fail_close):
+                            return actual_run_bounded(argv, **kwargs)
+                    except ProcessBoundaryError as exc:
+                        observed.append(exc)
+                        raise
+                with patch("taskalong.integrations.reviewsensei.run_bounded", side_effect=owned_boundary):
+                    with self.assertRaises(TaskAlongError) as failure:
+                        invoke()
+                self.assertEqual(len(observed), 1)
+                self.assertEqual(observed[0].effect_outcome, "not_sent")
+                self.assertFalse(observed[0].process_result.termination_confirmed)
+                self.assertIn(("tracker_close", 5), observed[0].boundary_failures)
+                self.assertEqual(failure.exception.effect_outcome, "uncertain")
+                self.assertEqual(failure.exception.exit_code, 5)
+                self.assertNotIn("PRIVATE_REVIEW_CLEANUP", str(failure.exception))
+                self.assertFalse((root / (stage + ".dispatched")).exists())
+                self.assert_stopped_before_later_stages(root, stage)
+
     def test_control_callback_default_not_sent_does_not_relabel_dispatched_child(self):
         root, adapter, invoke = self.invocation("heartbeat", slow_stage="schemas")
         def lost_control():

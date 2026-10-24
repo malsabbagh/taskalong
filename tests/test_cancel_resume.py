@@ -1,8 +1,10 @@
 """Cancellation, explicit continuation, retained work and persisted budgets."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -15,6 +17,122 @@ from helpers import ServiceFixture, git
 
 
 class CancelResumeTests(ServiceFixture, unittest.TestCase):
+    def _closed_gate_verifier_cleanup_failure(self, stage, *, interrupted=False, receipt_missing=False):
+        from taskalong import process as boundary
+        from taskalong.validation import seal
+        target = self.root / "verifier-target-entered"
+        config = self.root / "closed-gate-review.yml"
+        config.write_text("schema: 1\n")
+        spec = self.spec(check_argv=[sys.executable, "-c",
+            "from pathlib import Path; Path(" + repr(str(target)) + ").touch()"])
+        spec["review"]["config_digest"] = hashlib.sha256(config.read_bytes()).hexdigest()
+        run, _ = self.submit(seal("task-spec", spec))
+        self.start(run)
+        stopped = self.wait(run["run_id"])
+        self.assertIn("required_review_missing", {b["code"] for b in stopped["blockers"]})
+        target.unlink()
+        if stage == "review":
+            self.service.configure_review(config, fixture_response=config, executable=self.executable,
+                                          python_executable=sys.executable)
+        real_run = boundary.run_bounded
+        tracker_type = boundary._LinuxTracker if sys.platform == "linux" else boundary._DescendantTracker
+        real_close = tracker_type.close
+        observed, closes = [], []
+        def fail_close(tracker):
+            real_close(tracker)
+            closes.append(True)
+            raise OSError(5, "PRIVATE_VERIFIER_CLEANUP")
+        def failed_boundary(argv, **kwargs):
+            before_dispatch = kwargs.get("on_spawn")
+            def veto(receipt):
+                if interrupted:
+                    signal.raise_signal(signal.SIGINT)
+                else:
+                    current = self.service.inspect(run["run_id"])
+                    self.service.cancel(run["run_id"], operation_key="cancel-closed-gate",
+                                        expected_revision=current["revision"])
+                if before_dispatch:
+                    before_dispatch(receipt)
+                raise boundary.ProcessBoundaryError("Synthetic closed gate refusal", code="cancel_pending",
+                                                     effect_outcome="not_sent")
+            kwargs["on_spawn"] = veto
+            try:
+                with patch.object(tracker_type, "close", fail_close):
+                    return real_run(argv, **kwargs)
+            except boundary.ProcessBoundaryError as exc:
+                observed.append((exc, exc.process_result))
+                if receipt_missing:
+                    # Lose a real failed invocation's receipt; never fabricate
+                    # a successful process result or final workflow state.
+                    exc.process_result = None
+                raise
+        selected = ("taskalong.integrations.reviewsensei.run_bounded" if stage == "review"
+                    else "taskalong.process.run_bounded")
+        failure = None
+        with patch(selected, side_effect=failed_boundary):
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    self.service.verify(run["run_id"], operation_key="verify-closed-gate",
+                                        expected_revision=stopped["revision"])
+                    break
+                except TaskAlongError as exc:
+                    if exc.code == "operation_in_progress" and time.monotonic() < deadline:
+                        time.sleep(.025)
+                        continue
+                    if not interrupted:
+                        raise
+                    failure = exc
+                    break
+        self.assertEqual(len(observed), 1)
+        error, actual_result = observed[0]
+        self.assertEqual(error.effect_outcome, "not_sent")
+        self.assertFalse(actual_result.termination_confirmed)
+        self.assertTrue(actual_result.unaccounted_descendants)
+        self.assertEqual(error.process_result is None, receipt_missing)
+        self.assertIn(("tracker_close", 5), error.boundary_failures)
+        self.assertEqual(closes, [True])
+        if stage == "check":
+            self.assertFalse(target.exists())
+        current = self.service.inspect(run["run_id"])
+        self.assertEqual(current["state"], "blocked")
+        self.assertTrue(current["pending_effect_ids"])
+        self.assertIsNone(current["acceptance_id"])
+        self.assertEqual(current["budget_consumed"]["output_bytes"], spec["budget"]["max_output_bytes"])
+        self.assertEqual(current["blockers"][0]["effect_outcome"], "uncertain")
+        for effect_id in current["pending_effect_ids"]:
+            effect = self.service._store.detail("effects", effect_id)
+            self.assertEqual(effect["kind"], "verifier.capture")
+            self.assertEqual(effect["phase"], "unknown")
+            self.assertFalse(effect["response"]["termination_confirmed"])
+        self.assertFalse([e for e in self.service.events(run["run_id"]) if e["type"] == "cancel.confirmed"])
+        if interrupted:
+            self.assertIsNotNone(failure)
+            self.assertEqual((failure.code, failure.exit_code, failure.effect_outcome),
+                             ("verification_interrupted", 130, "uncertain"))
+            self.assertEqual(failure.recovery, [{"action": "inspect_and_reconcile"}])
+        for method in (self.service.verify, self.service.reconcile):
+            with self.assertRaises(TaskAlongError) as blocked:
+                method(run["run_id"], operation_key="refuse-" + method.__name__,
+                       expected_revision=current["revision"])
+            self.assertEqual(blocked.exception.effect_outcome, "uncertain")
+        with self.assertRaises(TaskAlongError):
+            self.service.retire_workspace(run["run_id"], operation_key="refuse-retirement",
+                                          expected_revision=current["revision"])
+        self.assertEqual(len(self.invocations()), 1)
+
+    def test_check_closed_gate_cleanup_failure_never_confirms_cancellation(self):
+        self._closed_gate_verifier_cleanup_failure("check")
+
+    def test_review_closed_gate_cleanup_failure_never_confirms_cancellation(self):
+        self._closed_gate_verifier_cleanup_failure("review")
+
+    def test_interrupted_closed_gate_cleanup_keeps_reservation_unknown(self):
+        self._closed_gate_verifier_cleanup_failure("check", interrupted=True)
+
+    def test_closed_gate_missing_cleanup_receipt_never_settles_capture(self):
+        self._closed_gate_verifier_cleanup_failure("check", receipt_missing=True)
+
     def cancelled_run(self):
         self.set_mode("hang")
         run, _ = self.submit()

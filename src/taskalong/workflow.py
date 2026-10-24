@@ -552,13 +552,19 @@ class Workflow:
                 try:
                     outcome = run_bounded(argv, cwd=check_cwd, timeout_seconds=check["timeout_seconds"], max_output_bytes=capture["request"]["reserved_output_bytes"], env=environment, on_spawn=before_dispatch, cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
                 except ProcessBoundaryError as exc:
-                    consumed = 0 if exc.code == "verification_interrupted" and exc.effect_outcome == "not_sent" else capture["request"]["reserved_output_bytes"]
-                    self._capture_finish(run_id, capture, consumed, confirmed=exc.effect_outcome != "uncertain")
+                    # A closed target gate says nothing about its owned
+                    # wrapper's cleanup. Settle only an actual cessation
+                    # receipt as well as a non-uncertain effect outcome.
+                    confirmed = (exc.effect_outcome != "uncertain" and exc.process_result is not None
+                                 and exc.process_result.termination_confirmed is True)
+                    consumed = (0 if confirmed and exc.code == "verification_interrupted"
+                                and exc.effect_outcome == "not_sent" else capture["request"]["reserved_output_bytes"])
+                    self._capture_finish(run_id, capture, consumed, confirmed=confirmed)
                     if interruption.requested:
-                        self._verification_interrupted(run_id, confirmed=exc.effect_outcome != "uncertain")
+                        self._verification_interrupted(run_id, confirmed=confirmed)
                     if self.store.run(run_id)["state"] == "cancel_pending":
                         return self._cancel_verification(run_id)
-                    return _block(self.store, run_id, exc.code, phase="verifying", uncertain=exc.effect_outcome == "uncertain")
+                    return _block(self.store, run_id, exc.code, phase="verifying", uncertain=not confirmed)
                 self._capture_finish(run_id, capture, outcome.output_bytes, confirmed=outcome.termination_confirmed)
                 if interruption.requested:
                     self._verification_interrupted(run_id, confirmed=outcome.termination_confirmed)
