@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.8:driver-config",
+  "title": "E1 exact real-start intent, not execution authority",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "driver_id",
+    "harness",
+    "cli_version",
+    "projection",
+    "qualification",
+    "registration",
+    "installation_digest",
+    "provider_profile_digest",
+    "binding_digest",
+    "executable",
+    "credential_ref",
+    "expected_reported_model",
+    "policy_digests",
+    "host",
+    "launch",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "driver_config"
+    },
+    "schema_version": {
+      "const": "2.8"
+    },
+    "driver_id": {
+      "const": "codex-real-start-1"
+    },
+    "harness": {
+      "const": "codex-cli"
+    },
+    "cli_version": {
+      "const": "0.163.0"
+    },
+    "projection": {
+      "const": "codex-real-start/1"
+    },
+    "qualification": {
+      "const": "production"
+    },
+    "registration": {
+      "const": "operator_registered_trial"
+    },
+    "installation_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "provider_profile_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "binding_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "executable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "credential_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s\\x00-\\x1f\\x7f]+(?![\\s\\S])",
+      "not": {
+        "enum": [
+          "*",
+          "default",
+          "latest"
+        ]
+      }
+    },
+    "expected_reported_model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s\\x00-\\x1f\\x7f*]+(?![\\s\\S])",
+      "not": {
+        "enum": [
+          "*",
+          "default",
+          "latest"
+        ]
+      }
+    },
+    "policy_digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instructions",
+        "tools",
+        "worker_sandbox",
+        "check_binding"
+      ],
+      "properties": {
+        "instructions": {
+          "$ref": "#/$defs/sha256"
+        },
+        "tools": {
+          "$ref": "#/$defs/sha256"
+        },
+        "worker_sandbox": {
+          "$ref": "#/$defs/sha256"
+        },
+        "check_binding": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend_id",
+        "backend_version",
+        "host_digest",
+        "runtime_closure_digest"
+      ],
+      "properties": {
+        "backend_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\s\\x00-\\x1f\\x7f]+(?![\\s\\S])",
+          "not": {
+            "enum": [
+              "*",
+              "default",
+              "latest"
+            ]
+          }
+        },
+        "backend_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\s\\x00-\\x1f\\x7f]+(?![\\s\\S])",
+          "not": {
+            "enum": [
+              "*",
+              "default",
+              "latest"
+            ]
+          }
+        },
+        "host_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtime_closure_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "launch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "session_policy",
+        "result_contract",
+        "protective_policy"
+      ],
+      "properties": {
+        "operation": {
+          "const": "start"
+        },
+        "session_policy": {
+          "const": "fresh"
+        },
+        "result_contract": {
+          "const": "codex-exec-0.163.0-json/1"
+        },
+        "protective_policy": {
+          "const": "preserve-managed-rules"
+        }
+      }
+    },
+    "digest": {
+      "$ref": "#/$defs/sha256"
+    }
+  }
+}

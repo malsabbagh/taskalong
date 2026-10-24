@@ -287,3 +287,33 @@ owned launch or during final input/replay rechecking stops completion while
 preserving earlier observations and actual cleanup facts. Public summaries omit
 UID details. Replay keeps the original observation and the current verifier's
 observation separate; differing identities do not promote or relabel the proof.
+
+## E1 preparation and real trial gates
+
+The 2.8 contracts, format 8 fence, offline observation/assessment readers and
+completed-handoff recovery regression are preparation only. Generated complete
+ReviewSensei 0.8.12-shaped captures prove parser consistency, not an actual
+installed-provider review. The durable recovery regression uses the unchanged
+0.8.8 fixture reviewer and an original synthetic worker; it does not qualify
+Codex, Ollama, another vendor, instruction/tool isolation or real E1 readiness.
+
+Before the first real task, select and independently qualify one concrete
+authorized host/profile: exact installed worker/reviewer closures, provider,
+model/account/config, bounded workspace and permitted data, effective policy,
+cancellation and owned descendant cessation, results and enforceable budgets.
+No available tool, schema, healthy process or synthetic/Linux canary alone proves
+that tuple. Unknown token/cost limits or remote effects remain unsupported.
+Attaching an unrelated version output cannot authenticate a review invocation.
+The actual native App approval stage is separate from local CLI output and
+TaskAlong's attributed engineering assessment.
+
+The first real trial must agree a bounded genuine bug and expected behavior,
+show RED before/GREEN after, retain a completed-worker interruption/recovery
+without repeated work, invoke the actual installed local ReviewSensei before
+creating the draft, and reach complete exact-head native App APPROVED with
+legitimate findings dispositions. Retain elapsed time, human interventions,
+rework and unsupported steps so the user can assess the run without reconstructing
+it. The user is the final merge gate for that trial PR. Optional multi-provider
+features are not prerequisites for a narrower safe entry point. Milestone
+completion alone is not this acceptance evidence. The October 24–25, 2026
+America/Toronto target is a target, never permission to waive these gates.

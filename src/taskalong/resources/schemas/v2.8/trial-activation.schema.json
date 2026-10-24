@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.8:trial-activation",
+  "title": "Exact expiring E1 activation intent; issuer claims are not authority",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "activation_id",
+    "issuer_id",
+    "authorization_ref",
+    "nonce",
+    "subject",
+    "qualification_decision_digests",
+    "raw_evidence_digests",
+    "allowed_effects",
+    "limits",
+    "valid_from",
+    "valid_until",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "trial_activation"
+    },
+    "schema_version": {
+      "const": "2.8"
+    },
+    "activation_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+    },
+    "issuer_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+    },
+    "authorization_ref": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "nonce": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "spec_digest",
+        "repository_registration_id",
+        "base_commit",
+        "scope_digest",
+        "binding_digest",
+        "driver_config_digest",
+        "provider_profile_digest",
+        "reviewer_profile_digest",
+        "host_digest",
+        "runtime_closure_digest",
+        "policy_digest"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+        },
+        "spec_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "repository_registration_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+        },
+        "base_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "scope_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "binding_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "driver_config_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "provider_profile_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "reviewer_profile_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "host_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "runtime_closure_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "policy_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      }
+    },
+    "qualification_decision_digests": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true
+    },
+    "raw_evidence_digests": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true
+    },
+    "allowed_effects": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "execute",
+          "verify",
+          "commit_candidate",
+          "push_branch",
+          "create_draft_pr"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "attempt_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 180
+        },
+        "total_active_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 8388608
+        },
+        "hard_cost_usd": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hard_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "max_attempts",
+        "attempt_seconds",
+        "total_active_seconds",
+        "max_output_bytes",
+        "hard_cost_usd",
+        "hard_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "valid_from": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    }
+  }
+}

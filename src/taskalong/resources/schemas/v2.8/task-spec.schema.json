@@ -1,0 +1,513 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.8:task-spec",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "task_spec"
+    },
+    "schema_version": {
+      "const": "2.8"
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.-]*:[A-Za-z0-9_.-]+$"
+      }
+    },
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "non_goals": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 0,
+        "maxLength": 16384
+      },
+      "minItems": 0,
+      "maxItems": 128
+    },
+    "repository": {
+      "type": "object",
+      "properties": {
+        "registration_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "base_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "base_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "registration_id",
+        "base_commit",
+        "base_ref"
+      ],
+      "additionalProperties": false
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "add",
+              "modify"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "files",
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "check_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+            },
+            "minItems": 1,
+            "maxItems": 128,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "check_ids"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 128
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+          },
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "minItems": 1,
+            "maxItems": 128
+          },
+          "cwd": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 600
+          },
+          "expected_exit_code": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "criterion_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+            },
+            "minItems": 1,
+            "maxItems": 128,
+            "uniqueItems": true
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "argv",
+          "cwd",
+          "timeout_seconds",
+          "expected_exit_code",
+          "criterion_ids",
+          "required"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 128
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_digest",
+        "driver_config_digest"
+      ],
+      "properties": {
+        "binding_digest": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "driver_config_digest": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "local_edit": {
+          "type": "boolean"
+        },
+        "local_commit": {
+          "type": "boolean"
+        },
+        "inference_destination_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+        },
+        "allowed_effects": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "execute",
+              "verify",
+              "commit_candidate",
+              "push_branch",
+              "create_draft_pr"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "local_edit",
+        "local_commit",
+        "inference_destination_id",
+        "allowed_effects"
+      ],
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "attempt_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 180
+        },
+        "total_active_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 8388608
+        },
+        "hard_cost_usd": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]+(?:\\.[0-9]+)?$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hard_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "max_attempts",
+        "attempt_seconds",
+        "total_active_seconds",
+        "max_output_bytes",
+        "hard_cost_usd",
+        "hard_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "integration",
+        "contract",
+        "reviewer_profile_digest",
+        "config_digest",
+        "require_full_coverage"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "integration": {
+          "const": "reviewsensei"
+        },
+        "contract": {
+          "const": "reviewsensei-installed-0.8.12/full-diff-v1"
+        },
+        "reviewer_profile_digest": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "config_digest": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "require_full_coverage": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "publication": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "host",
+            "repository_id",
+            "repository_full_name",
+            "base_branch",
+            "title",
+            "body_template_digest",
+            "expected_visibility",
+            "base_commit",
+            "trial_branch",
+            "draft_only",
+            "final_merge_gate",
+            "disclosure_digest",
+            "authorization_ref"
+          ],
+          "properties": {
+            "host": {
+              "const": "github.com"
+            },
+            "repository_id": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "repository_full_name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+              "maxLength": 256
+            },
+            "base_branch": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "body_template_digest": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "expected_visibility": {
+              "enum": [
+                "private",
+                "public"
+              ]
+            },
+            "base_commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "trial_branch": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*(?![\\s\\S])"
+            },
+            "draft_only": {
+              "type": "boolean",
+              "const": true
+            },
+            "final_merge_gate": {
+              "const": "user"
+            },
+            "disclosure_digest": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            },
+            "authorization_ref": {
+              "type": "string",
+              "minLength": 64,
+              "maxLength": 64,
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "qualification": {
+      "const": "production"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "repeat_completed_worker",
+        "reset_budget"
+      ],
+      "properties": {
+        "policy": {
+          "const": "completed-worker-before-verify/1"
+        },
+        "repeat_completed_worker": {
+          "type": "boolean",
+          "const": false
+        },
+        "reset_budget": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "extensions",
+    "task_id",
+    "revision",
+    "goal",
+    "non_goals",
+    "repository",
+    "scope",
+    "criteria",
+    "checks",
+    "execution",
+    "permissions",
+    "budget",
+    "review",
+    "publication",
+    "qualification",
+    "digest",
+    "recovery"
+  ],
+  "additionalProperties": false,
+  "title": "E1 single-worker intent; production runtime remains unavailable"
+}

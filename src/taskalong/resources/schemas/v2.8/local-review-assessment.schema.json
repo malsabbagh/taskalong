@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.8:local-review-assessment",
+  "title": "Separately attributed engineering assessments; never ReviewSensei CLI or App approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "review_receipt_digest",
+    "subject",
+    "reviewer_profile_digest",
+    "policy_digest",
+    "authority_id",
+    "authority_digest",
+    "assessor",
+    "assessed_at",
+    "decisions",
+    "gate",
+    "native_app_approval",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "local_review_assessment"
+    },
+    "schema_version": {
+      "const": "2.8"
+    },
+    "review_receipt_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "spec_digest",
+        "base_commit",
+        "candidate_commit",
+        "candidate_tree",
+        "diff_sha256"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+        },
+        "spec_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "base_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "candidate_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "candidate_tree": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "diff_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      }
+    },
+    "reviewer_profile_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "authority_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+    },
+    "authority_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "assessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "principal",
+        "role",
+        "human_decision_observed"
+      ],
+      "properties": {
+        "principal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+        },
+        "role": {
+          "enum": [
+            "delegated_engineering",
+            "human_operator"
+          ]
+        },
+        "human_decision_observed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "assessed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "decisions": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fingerprint",
+          "disposition",
+          "reason",
+          "supporting_refs"
+        ],
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "disposition": {
+            "enum": [
+              "not_applicable",
+              "acceptable_risk",
+              "unfixed_defect"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+          },
+          "supporting_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+            },
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "gate": {
+      "const": "taskalong_local_review_gate"
+    },
+    "native_app_approval": {
+      "const": false
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    }
+  }
+}

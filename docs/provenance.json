@@ -33,6 +33,12 @@
       "verification": "M7_synthetic_cursor_and_distribution_inventory"
     },
     {
+      "destination_path": "docs/adr/0010-e1-offline-trial-preparation.md",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
       "destination_path": "docs/cursor-protocol.md",
       "classification": "original",
       "license": "MIT",
@@ -243,6 +249,66 @@
       "verification": "M7_synthetic_cursor_and_distribution_inventory"
     },
     {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/driver-config.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/local-review-assessment.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/packet-projection.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/publish-intent.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/review-receipt.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/reviewer-profile.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/task-spec.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/trial-activation.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/worker-packet.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/resources/schemas/v2.8/worker-result.schema.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
       "destination_path": "src/taskalong/resources/sql/002-document-history.sql",
       "classification": "original",
       "license": "MIT",
@@ -273,10 +339,34 @@
       "verification": "M7_synthetic_cursor_and_distribution_inventory"
     },
     {
+      "destination_path": "src/taskalong/resources/sql/008-e1-trial-compatibility.sql",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
       "destination_path": "src/taskalong/runtime_profiles.py",
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/trial.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/trial_control.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "src/taskalong/trial_review.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
     },
     {
       "destination_path": "tests/fixtures/fake_claude.py",
@@ -321,6 +411,12 @@
       "verification": "M7_synthetic_cursor_and_distribution_inventory"
     },
     {
+      "destination_path": "tests/fixtures/legacy_store_v7.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
       "destination_path": "tests/fixtures/m5-contract-hashes.json",
       "classification": "original",
       "license": "MIT",
@@ -331,6 +427,53 @@
       "classification": "original",
       "license": "MIT",
       "verification": "M7_synthetic_cursor_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/pre-e1-resources.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/reviewsensei-0.8.12/LICENSE",
+      "classification": "upstream_unmodified_schema_or_notice",
+      "license": "MIT",
+      "verification": "E1_exact_inventory_and_published_schema_hashes",
+      "origin": "review-sensei-0.8.12-published-wheel"
+    },
+    {
+      "destination_path": "tests/fixtures/reviewsensei-0.8.12/PROVENANCE.json",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/fixtures/reviewsensei-0.8.12/coverage-manifest.schema.json",
+      "classification": "upstream_unmodified_schema_or_notice",
+      "license": "MIT",
+      "verification": "E1_exact_inventory_and_published_schema_hashes",
+      "origin": "review-sensei-0.8.12-published-wheel"
+    },
+    {
+      "destination_path": "tests/fixtures/reviewsensei-0.8.12/review-result.schema.json",
+      "classification": "upstream_unmodified_schema_or_notice",
+      "license": "MIT",
+      "verification": "E1_exact_inventory_and_published_schema_hashes",
+      "origin": "review-sensei-0.8.12-published-wheel"
+    },
+    {
+      "destination_path": "tests/fixtures/reviewsensei-0.8.12/review-transaction.schema.json",
+      "classification": "upstream_unmodified_schema_or_notice",
+      "license": "MIT",
+      "verification": "E1_exact_inventory_and_published_schema_hashes",
+      "origin": "review-sensei-0.8.12-published-wheel"
+    },
+    {
+      "destination_path": "tests/fixtures/reviewsensei-0.8.12/run-outcome.schema.json",
+      "classification": "upstream_unmodified_schema_or_notice",
+      "license": "MIT",
+      "verification": "E1_exact_inventory_and_published_schema_hashes",
+      "origin": "review-sensei-0.8.12-published-wheel"
     },
     {
       "destination_path": "tests/test_claude_driver.py",
@@ -391,6 +534,48 @@
       "classification": "original",
       "license": "MIT",
       "verification": "candidate_manifest_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_trial_assessment.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_trial_contracts.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_trial_control.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_trial_handoff.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_trial_refusal.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_trial_review.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
+    },
+    {
+      "destination_path": "tests/test_trial_store.py",
+      "classification": "original",
+      "license": "MIT",
+      "verification": "E1_offline_contract_and_distribution_inventory"
     }
   ],
   "adaptations": [],

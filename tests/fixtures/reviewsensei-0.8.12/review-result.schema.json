@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://reviewsensei.dev/schemas/v1/review-result.schema.json",
+  "title": "ReviewSensei review result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "comments", "provider"],
+  "properties": {
+    "summary": {"type": "string", "minLength": 1},
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "body"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "line": {"type": "integer", "minimum": 1},
+          "body": {"type": "string", "minLength": 1},
+          "side": {"type": "string", "enum": ["LEFT", "RIGHT", "FILE"]},
+          "severity": {"type": "string", "minLength": 1},
+          "fix_effort": {"type": "string", "minLength": 1},
+          "blocking": {"type": "boolean"},
+          "category": {"type": "string", "minLength": 1},
+          "symbol": {"type": "string", "minLength": 1},
+          "defect_kind": {"type": "string", "minLength": 1},
+          "evidence_id": {"type": "string", "minLength": 1}
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {"side": {"const": "FILE"}},
+              "required": ["side"]
+            },
+            "then": {
+              "not": {"required": ["line"]}
+            },
+            "else": {
+              "required": ["line"]
+            }
+          }
+        ]
+      }
+    },
+    "provider": {"type": "string", "minLength": 1},
+    "persistence_status": {"const": "capacity-exceeded"},
+    "bounded_work_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "outcome", "execution_identity", "provider_calls", "scope_digest", "inventory_digest", "reviewed_digest"],
+      "properties": {
+        "schema_version": {"const": "1.0"}, "outcome": {"const": "bounded-stop"},
+        "execution_identity": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+        "provider_calls": {"type": "integer", "minimum": 1, "maximum": 64},
+        "scope_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "inventory_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "reviewed_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "coverage_only_partial": {"type": "boolean"},
+    "work_policy_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "continuation_scope_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "review_status": {
+      "type": "string",
+      "enum": ["complete", "partial", "incomplete", "summary-only"]
+    },
+    "evidence_policy": {
+      "type": "string",
+      "enum": ["legacy", "confirmed"]
+    },
+    "coverage_mode": {
+      "type": "string",
+      "enum": ["full", "incremental", "fallback-full"]
+    },
+    "finding_lifecycles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fingerprint", "state"],
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "state": {
+            "type": "string",
+            "enum": ["new", "still-present", "fixed", "outdated", "uncertain"]
+          }
+        }
+      }
+    },
+    "coverage": {
+      "$ref": "https://reviewsensei.dev/schemas/v1/coverage-manifest.schema.json"
+    },
+    "transaction": {
+      "$ref": "https://reviewsensei.dev/schemas/v1/review-transaction.schema.json"
+    },
+    "model": {
+      "anyOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "null"}
+      ]
+    },
+    "learning_proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "rule", "scope"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1},
+          "rule": {"type": "string", "minLength": 1},
+          "scope": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "rationale": {"type": "string", "minLength": 1},
+          "category": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "source_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "complete",
+        "snapshot",
+        "languages",
+        "excerpt_count",
+        "outcomes"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "complete": {"type": "boolean"},
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["revision", "kind"],
+          "properties": {
+            "revision": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40}$"
+            },
+            "kind": {"type": "string", "const": "base"}
+          }
+        },
+        "languages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {"type": "string", "const": "python"}
+        },
+        "excerpt_count": {"type": "integer", "minimum": 0},
+        "outcomes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "status"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "status": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "untrusted_head_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        }
+      }
+    }
+  },
+  "allOf": [{"if": {"required": ["persistence_status"]}, "then": {"properties": {"review_status": {"const": "partial"}}, "required": ["review_status"]}}]
+}

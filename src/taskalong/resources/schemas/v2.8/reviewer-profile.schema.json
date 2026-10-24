@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.8:reviewer-profile",
+  "title": "Explicit installed ReviewSensei0.8.12 independent-review intent",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "profile_id",
+    "contract",
+    "version",
+    "published_wheel_sha256",
+    "entrypoint",
+    "interpreter",
+    "import_root",
+    "runtime_closure_digest",
+    "import_closure_digest",
+    "backend",
+    "expected_reported_provider",
+    "expected_model",
+    "credential_ref",
+    "config_digest",
+    "effective_context_digest",
+    "allowed_read_roots",
+    "allowed_context_roots",
+    "invocation",
+    "schema_digests",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "reviewer_profile"
+    },
+    "schema_version": {
+      "const": "2.8"
+    },
+    "profile_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s\\x00-\\x1f\\x7f]+(?![\\s\\S])",
+      "not": {
+        "enum": [
+          "*",
+          "default",
+          "latest"
+        ]
+      }
+    },
+    "contract": {
+      "const": "reviewsensei-installed-0.8.12/full-diff-v1"
+    },
+    "version": {
+      "const": "0.8.12"
+    },
+    "published_wheel_sha256": {
+      "const": "ed13addc413752ba968564550be7e300c1c69d3ccd9e4a832782a4f7cb12b8c3"
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "interpreter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096,
+          "pattern": "^/[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "import_root": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 4096,
+      "pattern": "^/[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+    },
+    "runtime_closure_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "import_closure_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "backend": {
+      "enum": [
+        "local-ollama",
+        "cloud-ollama",
+        "openrouter",
+        "openai-compatible"
+      ]
+    },
+    "expected_reported_provider": {
+      "enum": [
+        "ollama",
+        "openrouter",
+        "openai-compatible"
+      ]
+    },
+    "expected_model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s\\x00-\\x1f\\x7f*]+(?![\\s\\S])",
+      "not": {
+        "enum": [
+          "*",
+          "default",
+          "latest"
+        ]
+      }
+    },
+    "credential_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\s\\x00-\\x1f\\x7f]+(?![\\s\\S])",
+          "not": {
+            "enum": [
+              "*",
+              "default",
+              "latest"
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "config_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "effective_context_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "allowed_read_roots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 4096,
+        "pattern": "^/[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+      },
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "allowed_context_roots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 4096,
+        "pattern": "^/[^\\u0000-\\u001f\\u007f]+(?![\\s\\S])"
+      },
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "invocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diff_scope",
+        "format",
+        "exit_semantics",
+        "learning_proposals",
+        "fixture_response",
+        "custom_endpoint_override",
+        "unqualified_profile_override"
+      ],
+      "properties": {
+        "diff_scope": {
+          "const": "base-to-candidate"
+        },
+        "format": {
+          "const": "json"
+        },
+        "exit_semantics": {
+          "const": "review"
+        },
+        "learning_proposals": {
+          "type": "boolean",
+          "const": false
+        },
+        "fixture_response": {
+          "type": "boolean",
+          "const": false
+        },
+        "custom_endpoint_override": {
+          "type": "boolean",
+          "const": false
+        },
+        "unqualified_profile_override": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "schema_digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "review-result",
+        "run-outcome",
+        "review-transaction",
+        "coverage-manifest"
+      ],
+      "properties": {
+        "review-result": {
+          "const": "27e39e010c79e66d5387e1895c0f71e167bc99f8b639d1dbec29e40bdc1ceb33"
+        },
+        "run-outcome": {
+          "const": "50edcd189e849b75ed119a906b66f89b5aa6a78aab9c4dda02a27d2fde4e5b86"
+        },
+        "review-transaction": {
+          "const": "2b638fef12295b6311a42d863b496ac117362f48d419cdb0e164dda4ddd440b5"
+        },
+        "coverage-manifest": {
+          "const": "9e1dbba7501aeb71b9bde1cd60131bb75b753e4181d7c2727b4d4f33d6ae9009"
+        }
+      }
+    },
+    "digest": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "backend": {
+            "const": "local-ollama"
+          }
+        },
+        "required": [
+          "backend"
+        ]
+      },
+      "then": {
+        "properties": {
+          "expected_reported_provider": {
+            "const": "ollama"
+          },
+          "credential_ref": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "backend": {
+            "const": "cloud-ollama"
+          }
+        },
+        "required": [
+          "backend"
+        ]
+      },
+      "then": {
+        "properties": {
+          "expected_reported_provider": {
+            "const": "ollama"
+          },
+          "credential_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\s\\x00-\\x1f\\x7f]+(?![\\s\\S])",
+            "not": {
+              "enum": [
+                "*",
+                "default",
+                "latest"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "backend": {
+            "const": "openrouter"
+          }
+        },
+        "required": [
+          "backend"
+        ]
+      },
+      "then": {
+        "properties": {
+          "expected_reported_provider": {
+            "const": "openrouter"
+          },
+          "credential_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\s\\x00-\\x1f\\x7f]+(?![\\s\\S])",
+            "not": {
+              "enum": [
+                "*",
+                "default",
+                "latest"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "backend": {
+            "const": "openai-compatible"
+          }
+        },
+        "required": [
+          "backend"
+        ]
+      },
+      "then": {
+        "properties": {
+          "expected_reported_provider": {
+            "const": "openai-compatible"
+          },
+          "credential_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\s\\x00-\\x1f\\x7f]+(?![\\s\\S])",
+            "not": {
+              "enum": [
+                "*",
+                "default",
+                "latest"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

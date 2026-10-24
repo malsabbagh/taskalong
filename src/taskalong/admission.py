@@ -29,7 +29,7 @@ def _refuse(code="execution_projection_unsupported"):
 
 
 def _require(store):
-    if store.format_version not in (3, 4, 5, 6, 7):
+    if store.format_version not in (3, 4, 5, 6, 7, 8):
         _refuse("store_upgrade_required")
 
 
@@ -59,6 +59,8 @@ def configure_execution(store, *, binding, installation, provider, policies,
         _refuse("execution_registration_conflict")
     profile = read_driver_config(driver_config) if is_driver else exact_document(store, runtime_profile_digest, RuntimeProfile)
     version = profile.to_dict()["schema_version"] if is_driver else "2.2"
+    if version == "2.8":
+        _refuse("trial_runtime_unqualified")
     if is_driver and store.format_version < {"2.3": 4, "2.4": 5, "2.5": 6, "2.6": 7}[version]:
         _refuse("store_upgrade_required")
     if not is_driver and projection != PROJECTION:
@@ -138,7 +140,7 @@ def registered_profile(store, binding_digest):
 
 
 def registered_driver_config(store, binding_digest):
-    if store.format_version not in (4, 5, 6, 7):
+    if store.format_version not in (4, 5, 6, 7, 8):
         _refuse("store_upgrade_required")
     registration = _registration(store, binding_digest)
     version = registration.get("schema_version")

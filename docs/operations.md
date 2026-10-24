@@ -399,3 +399,29 @@ inherits its caller identity and performs no elevation or identity switch.
 Neither zero nor nonzero classification establishes a privileged execution or
 confinement capability. A changed controller identity stops subsequent owned
 launches/completion; it does not rewrite earlier process or cleanup evidence.
+# Offline E1 preparation and format 8
+
+The explicit format 8 / SQL008 migration uses the same quiescent maintenance,
+complete private backup and quarantined restore process described below. Apply
+every preceding numbered migration first and pass `target_version=8` explicitly.
+Opening a store never upgrades it. The retained format 7 client rejects the new
+format before journal mutation. Preserve the complete backup for recovery;
+lowering metadata/version integers is unsupported.
+
+`RunService.register_trial_document(document, operation_key=...)` records one
+exact immutable 2.8 document as historical data on format 8. It cannot install
+a launcher, issue an authorization or make an activation-shaped record current
+authority. Worker-result lacks a document-history digest and is retained through
+the existing attempt/blob seam when an independently qualified route exists.
+All current 2.8 operational submissions and stored-run operations return
+`trial_runtime_unqualified`. No real worker or reviewer is launched.
+
+The existing synthetic service already exposes the completed worker handoff
+through `inspect()`/`result()` before `verify()`. The recovery regression stops
+the actual controller at that pre-verification boundary, observes cessation,
+and uses a fresh controller's first explicit `verify()` call. It preserves
+workspace ownership, worker result/captures, completed attempt/effect identities
+and consumed budget; new verification output remains charged. It does not
+resume an interrupted verification claim or repeat the worker. Pending effects,
+unknown worker cessation or changed subjects still refuse. No new stop/restart
+API, scheduler or native-session continuation is introduced.

@@ -43,6 +43,11 @@ class RunService:
         from .admission import configure_execution
         return configure_execution(self._store, **configuration)
 
+    def register_trial_document(self, document, *, operation_key):
+        """Trusted offline history only; no registration can enable E1 dispatch."""
+        from .trial_control import register_trial_document
+        return register_trial_document(self._store, document, operation_key=operation_key)
+
     def configure_review(self, config_path, *, fixture_response=None, executable=None, python_executable=None):
         return self._workflow.configure_review(config_path, fixture_response=fixture_response, executable=executable, python_executable=python_executable)
 

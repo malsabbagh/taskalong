@@ -72,6 +72,12 @@ class Workflow:
     def __init__(self, store: Store):
         self.store = store
 
+    def _refuse_trial_run(self, run_id):
+        # Read the immutable subject before even idempotency replay or a guard
+        # file can route a manually inserted E1 run through old fixture logic.
+        if self.store.spec(self.store.run(run_id))["schema_version"] == "2.8":
+            raise TaskAlongError("trial_runtime_unqualified", "The E1 trial runtime is not qualified or enabled.", exit_code=3)
+
     def register_repository(self, path, workspace_root=None):
         info = inspect_repository(path)
         root = Path(workspace_root).absolute() if workspace_root else Path(info["path"]).parent / ".taskalong-workspaces" / hashlib.sha256(info["identity"].encode()).hexdigest()[:16]
@@ -122,6 +128,10 @@ class Workflow:
         if type(spec) is not dict:
             raise TaskAlongError("invalid_document", "A task specification must be a JSON object.")
         screen_sensitive(spec)
+        if spec.get("schema_version") == "2.8":
+            from .trial import TrialTaskSpec
+            TrialTaskSpec.from_dict(spec)
+            raise TaskAlongError("trial_runtime_unqualified", "The E1 trial runtime is not qualified or enabled.", exit_code=3)
         # Select only the newly supported version explicitly. All other input
         # retains the original v1 CLI admission/error boundary.
         if spec.get("schema_version") not in ("2.2", "2.3", "2.4", "2.5", "2.6"):
@@ -156,6 +166,7 @@ class Workflow:
         return self.store.create_run(spec, operation_key)
 
     def authorize(self, run_id, *, decision_digest, scope, qualification=None):
+        self._refuse_trial_run(run_id)
         run = self.store.run(run_id)
         spec = self.store.spec(run)
         scope = sorted(set(scope))
@@ -197,6 +208,7 @@ class Workflow:
         invocation authorizes this local control-plane change, not cleanup,
         workspace reuse, process signaling or another execution.
         """
+        self._refuse_trial_run(run_id)
         prior = self.store.operation("retire-workspace", run_id, operation_key, {})
         if prior:
             return prior
@@ -229,6 +241,7 @@ class Workflow:
                                           expected_revision=expected_revision, workspace_subject=subject)
 
     def start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start"):
+        self._refuse_trial_run(run_id)
         with self.store.guard(run_id, "dispatch"):
             return self._start(run_id, operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id, mode=mode)
 
@@ -360,6 +373,7 @@ class Workflow:
         threading.Thread(target=process.wait, daemon=True, name="taskalong-supervisor-reaper").start()
 
     def cancel(self, run_id, *, operation_key, expected_revision):
+        self._refuse_trial_run(run_id)
         def change(run, db):
             if run["state"] in TERMINAL or run["state"] in {"accepted", "publishing"}:
                 raise TaskAlongError("cancel_not_applicable", "This run has no cancellable local worker phase.", exit_code=3)
@@ -367,6 +381,7 @@ class Workflow:
         return self.store.mutate(run_id, "cancel", operation_key, expected_revision, {}, change, events=[("cancel.requested", {})], actor="operator")
 
     def reconcile(self, run_id, *, operation_key, expected_revision):
+        self._refuse_trial_run(run_id)
         with self.store.guard(run_id, "dispatch"):
             return self._reconcile(run_id, operation_key=operation_key, expected_revision=expected_revision)
 
@@ -446,6 +461,7 @@ class Workflow:
         return self.store.mutate(run_id, "reconcile", operation_key, None, {}, observed, events=[("recovery.blocked", {"code": "no_implicit_retry"})])
 
     def verify(self, run_id, *, operation_key, expected_revision):
+        self._refuse_trial_run(run_id)
         with self.store.guard(run_id, "verify"):
             try:
                 return self._verify(run_id, operation_key=operation_key, expected_revision=expected_revision)
@@ -701,6 +717,7 @@ class Workflow:
         return self.store.mutate(run_id, "candidate.observed", effect_id, None, {"candidate": candidate}, frozen, events=[("candidate.frozen", candidate), ("effect.observed", {"effect_id": effect_id})], fence=run["lease_generation"])
 
     def publish_intent(self, run_id):
+        self._refuse_trial_run(run_id)
         from .integrations.github import build_publish_intent
         run = self.store.run(run_id)
         from .executors.observed_capture import validate_completed_run
@@ -720,6 +737,7 @@ class Workflow:
         return build_publish_intent(run, spec, acceptance)
 
     def publish(self, run_id, *, intent_digest, operation_key, expected_revision):
+        self._refuse_trial_run(run_id)
         with self.store.guard(run_id, "publish"):
             request = {"intent_digest": intent_digest}
             prior = self.store.operation("publish", run_id, operation_key, request)
@@ -860,6 +878,8 @@ def drive_run(state_dir, run_id, attempt_id):
         if run["active_attempt_id"] != attempt_id or attempt["spawn_phase"] != "not_dispatched":
             return
         spec = store.spec(run)
+        if spec["schema_version"] == "2.8":
+            raise TaskAlongError("trial_runtime_unqualified", "The E1 trial runtime is not qualified or enabled.", exit_code=3)
         profile = workflow._profile(spec)
         workspace = attempt["workspace"]
         manager = workflow._manager(run)
