@@ -1,9 +1,11 @@
 """Separate engineering consistency never fabricates CLI or App approval."""
+import copy
 import hashlib
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 
 from taskalong.errors import TaskAlongError
@@ -137,6 +139,80 @@ class TrialAssessmentTests(unittest.TestCase):
                 store.set_setting("trial-review-assessment-policy", policy | {"revoked_authority_ids": [authority["authority_id"]]})
                 revoked = inspect_local_assessment(store, receipt, profile=profile, schemas=reviewer_schema_bytes(), assessment=assessed)
                 self.assertEqual(revoked["assessment_status"], "blocked")
+
+
+    def assert_typed(self, call, code):
+        with self.assertRaises(TaskAlongError) as refused:
+            call()
+        self.assertEqual(refused.exception.code, code)
+
+    def test_assessment_times_are_typed_and_chronological_under_real_stored_authority(self):
+        from taskalong.store import Store, encode
+        from taskalong.trial import LocalReviewAssessment
+        from taskalong.trial_control import assessment_intent_digest, inspect_local_assessment
+        from test_antigravity_store import upgrade_through
+        from test_trial_contracts import example_trial_spec, reviewer_schema_bytes
+        values, receipt, evidence = self.example()
+        profile = values[0]
+        ordinary = seal_versioned("local-review-assessment", assessment_for(receipt), version="2.8")
+        with patch("subprocess.Popen", side_effect=AssertionError("No process")) as spawn, \
+                patch("socket.socket", side_effect=AssertionError("No network")) as sockets:
+            for stamp in ("2026-10-24Z", "2026-10-24T12:00:00", "not-timeZ", None, 1):
+                document = copy.deepcopy(ordinary)
+                document["assessed_at"] = stamp
+                document["digest"] = digest(document)
+                for boundary, call in (("reader", lambda: LocalReviewAssessment.from_dict(document)),
+                                       ("sealer", lambda: seal_versioned("local-review-assessment", document, version="2.8"))):
+                    with self.subTest(assessed_at=stamp, boundary=boundary):
+                        self.assert_typed(call, "schema_validation")
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                with Store(root / "state"):
+                    pass
+                with Store.maintenance(root / "state") as store:
+                    upgrade_through(store, root, 8)
+                    task = example_trial_spec()
+                    task["repository"]["base_commit"] = values[1]["base_commit"]
+                    task["review"]["reviewer_profile_digest"] = profile.digest
+                    task["review"]["config_digest"] = profile.to_dict()["config_digest"]
+                    run = store.create_run(seal_versioned("task-spec", task, version="2.8"), "generated-time-counterexample")
+                    subject = values[1] | {"run_id": run["run_id"], "spec_digest": run["spec_digest"]}
+                    receipt, evidence = observe_generated(profile, subject, values[2], values[3], values[4])
+                    run["candidate"] = {"base_commit": subject["base_commit"], "commit": subject["candidate_commit"],
+                                        "tree": subject["candidate_tree"], "diff_sha256": subject["diff_sha256"]}
+                    store.db.execute("UPDATE runs SET document=? WHERE run_id=?", (encode(run), run["run_id"]))
+                    for _, raw in evidence._entries:
+                        store.put_blob(raw, redaction_version="private-original")
+                    store.set_setting("trial-review-assessment-policy", {"policy_digest": "f" * 64,
+                                      "revoked_authority_ids": [], "revoked_receipt_digests": [], "revoked_profile_digests": []})
+                    clock = "2026-10-24T12:00:00Z"
+                    with patch("taskalong.store.now", return_value=clock):
+                        for stamp, expected in (("2026-10-24T10:00:00Z", True),
+                                                ("2026-10-24Z10:00:00Z", True),
+                                                ("2026-10-24A18:00:00Z", False)):
+                            with self.subTest(chronology=stamp):
+                                draft = assessment_for(receipt, authority_id=str(uuid.uuid4())) | {"assessed_at": stamp}
+                                provisional = LocalReviewAssessment.from_dict(seal_versioned("local-review-assessment", draft, version="2.8"))
+                                authority = seal("authority", {"authority_id": draft["authority_id"], "run_id": run["run_id"],
+                                    "source": "local_operator", "principal": str(os.getuid()), "decision": "authorized",
+                                    "scope": ["verify"], "intent_digest": assessment_intent_digest(provisional),
+                                    "issued_at": "2026-10-23T00:00:00Z", "expires_at": "2026-10-25T00:00:00Z",
+                                    "human_decision_observed": False, "qualification": "production"})
+                                assessed = LocalReviewAssessment.from_dict(seal_versioned("local-review-assessment",
+                                           draft | {"authority_digest": authority["digest"]}, version="2.8"))
+                                store.add_authority(run["run_id"], authority)
+                                original_bytes = assessed.to_bytes()
+                                before = list(store.db.iterdump())
+                                result = inspect_local_assessment(store, receipt, profile=profile,
+                                             schemas=reviewer_schema_bytes(), assessment=assessed)
+                                self.assertEqual(result["authority_checked"], expected)
+                                self.assertEqual(result["assessment_status"], "consistent" if expected else "blocked")
+                                self.assertEqual(result["taskalong_local_review_gate"], "blocked")
+                                self.assertFalse(result["execution_available"])
+                                self.assertFalse(result["native_app_approval"])
+                                self.assertEqual(assessed.to_bytes(), original_bytes)
+                                self.assertEqual(list(store.db.iterdump()), before)
+            self.assertEqual((spawn.call_count, sockets.call_count), (0, 0))
 
 
 if __name__ == "__main__":

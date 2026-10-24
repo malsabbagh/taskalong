@@ -7,7 +7,7 @@ from unittest.mock import patch
 import uuid
 
 from taskalong.errors import TaskAlongError
-from taskalong.validation import seal_versioned
+from taskalong.validation import digest, seal_versioned
 from test_trial_contracts import example_trial_config, example_trial_spec
 
 
@@ -208,6 +208,75 @@ class TrialTargetIdentityTests(unittest.TestCase):
                     target["base_branch"] += control
                 self.assert_invalid_target(task, intent, case="control-" + str(ord(control)))
             self.assertEqual((spawn.call_count, sockets.call_count), (0, 0))
+
+
+class TrialTimeConsumerTests(unittest.TestCase):
+    def assert_typed(self, call, code):
+        with self.assertRaises(TaskAlongError) as refused:
+            call()
+        self.assertEqual(refused.exception.code, code)
+
+    def test_inspection_uses_the_checked_suffix_and_preserves_original_time(self):
+        from taskalong.trial_control import inspect_trial_route
+        with patch("subprocess.Popen", side_effect=AssertionError("No process")) as spawn, \
+                patch("socket.socket", side_effect=AssertionError("No network")) as sockets:
+            for stamp in ("2026-10-24T12:00:00Z", "2026-10-24Z12:00:00Z"):
+                with self.subTest(valid=stamp):
+                    result = inspect_trial_route(at=stamp)
+                    self.assertEqual(result["at"], stamp)
+                    self.assertEqual(result["missing"], ["activation", "driver_config", "reviewer_profile", "task"])
+                    self.assertFalse(result["activation_eligible"])
+                    self.assertFalse(result["execution_available"])
+                    self.assertFalse(result["production_dispatch_allowed"])
+            for stamp in ("2026-10-24Z", "2026-10-24T12:00:00", "2026-10-24T12:00:00+00:00",
+                          "not-timeZ", None, 1):
+                with self.subTest(invalid=stamp):
+                    self.assert_typed(lambda: inspect_trial_route(at=stamp), "trial_inspection_invalid")
+            self.assertEqual((spawn.call_count, sockets.call_count), (0, 0))
+
+    def test_activation_readers_and_sealing_share_checked_time_and_window_order(self):
+        from taskalong.trial import TrialActivation
+        from taskalong.trial_control import inspect_trial_route
+        value = example_activation()
+        value.update(valid_from="2026-10-24T12:00:00Z", valid_until="2026-10-24T13:00:00Z")
+        original = seal_versioned("trial-activation", value, version="2.8")
+        with patch("subprocess.Popen", side_effect=AssertionError("No process")) as spawn, \
+                patch("socket.socket", side_effect=AssertionError("No network")) as sockets:
+            for fields in ((), ("valid_from",), ("valid_until",), ("valid_from", "valid_until")):
+                with self.subTest(valid_fields=fields):
+                    document = copy.deepcopy(original)
+                    for field in fields:
+                        document[field] = document[field].replace("T", "Z", 1)
+                    document["digest"] = digest(document)
+                    before = copy.deepcopy(document)
+                    record = TrialActivation.from_dict(document)
+                    self.assertEqual(record.to_dict(), before)
+                    self.assertEqual(seal_versioned("trial-activation", document, version="2.8"), before)
+                    result = inspect_trial_route(activation=record, at="2026-10-24Z12:30:00Z")
+                    self.assertNotIn("activation_expired", result["reason_codes"])
+                    self.assertFalse(result["execution_available"])
+                    expired = inspect_trial_route(activation=record, at="2026-10-24T13:00:00Z")
+                    self.assertIn("activation_expired", expired["reason_codes"])
+                    self.assertEqual(document, before)
+                    self.assertEqual(record.to_dict(), before)
+            for field in ("valid_from", "valid_until"):
+                for stamp in ("2026-10-24Z", "2026-10-24T12:00:00", "not-timeZ", None, 1):
+                    document = copy.deepcopy(original)
+                    document[field] = stamp
+                    document["digest"] = digest(document)
+                    for boundary, call in (("reader", lambda: TrialActivation.from_dict(document)),
+                                           ("sealer", lambda: seal_versioned("trial-activation", document, version="2.8"))):
+                        with self.subTest(field=field, stamp=stamp, boundary=boundary):
+                            self.assert_typed(call, "schema_validation")
+            reversed_window = copy.deepcopy(original)
+            reversed_window.update(valid_from="2026-10-24Z13:00:00Z", valid_until="2026-10-24Z12:00:00Z")
+            reversed_window["digest"] = digest(reversed_window)
+            for boundary, call in (("reader", lambda: TrialActivation.from_dict(reversed_window)),
+                                   ("sealer", lambda: seal_versioned("trial-activation", reversed_window, version="2.8"))):
+                with self.subTest(reversed_boundary=boundary):
+                    self.assert_typed(call, "trial_activation_invalid")
+            self.assertEqual((spawn.call_count, sockets.call_count), (0, 0))
+
 
 
 if __name__ == "__main__":

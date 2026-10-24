@@ -355,6 +355,9 @@ def validate_versioned(name: str, document: dict[str, Any], *, expected_version:
         raise _invalid("A schema document must have an object root.")
     screen_sensitive(document)
     result = copy.deepcopy(document)
+    if expected_version == "2.8":
+        from .trial import _precheck_utc_fields
+        _precheck_utc_fields(name, result)
     validator = Draft202012Validator(selected, registry=schema_registry(version=expected_version), format_checker=_FORMAT_CHECKER)
     if next(validator.iter_errors(result), None) is not None:
         raise _invalid("The document does not match the selected schema.", "schema_validation")

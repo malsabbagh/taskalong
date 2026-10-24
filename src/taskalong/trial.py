@@ -9,6 +9,30 @@ from .errors import TaskAlongError
 from .validation import canonical_bytes, loads, validate_versioned
 
 
+def _utc_instant(value, *, error_code):
+    """Consume the shared UTC-Z syntax without changing retained timestamp bytes."""
+    try:
+        if type(value) is not str or not value.endswith("Z"):
+            raise ValueError
+        instant = datetime.fromisoformat(value[:-1] + "+00:00")
+        offset = instant.utcoffset()
+        if offset is None or offset.total_seconds() != 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise TaskAlongError(error_code, "An explicit UTC trial timestamp is required.") from None
+    return instant
+
+
+def _precheck_utc_fields(name, document):
+    """Keep malformed new-family dates out of the unchanged legacy checker."""
+    name = name.removesuffix(".schema.json").replace("_", "-")
+    fields = {"trial-activation": ("valid_from", "valid_until"),
+              "local-review-assessment": ("assessed_at",)}.get(name, ())
+    for field in fields:
+        if field in document:
+            _utc_instant(document[field], error_code="schema_validation")
+
+
 @dataclass(frozen=True, slots=True)
 class TrialDocument(JsonDocument):
     """Explicit additive family; document identity is not activation authority."""
@@ -94,7 +118,7 @@ def _semantics(document, name):
                 or document["observation_complete"] != (not document["reason_codes"])):
             raise TaskAlongError("trial_review_invalid", "The bounded review observation inventory is inconsistent.")
     if name == "trial-activation":
-        start, end = (datetime.fromisoformat(document[key].replace("Z", "+00:00"))
+        start, end = (_utc_instant(document[key], error_code="trial_activation_invalid")
                       for key in ("valid_from", "valid_until"))
         if start >= end:
             raise TaskAlongError("trial_activation_invalid", "Trial activation intent must expire after its valid-from time.")

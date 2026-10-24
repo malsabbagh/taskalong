@@ -4,11 +4,10 @@ The caller has the same single-user trust boundary as RunService. Worker JSON
 cannot register itself. No function installs a live route, discovers credentials
 or launches a process; activation-shaped history remains historical evidence.
 """
-from datetime import datetime
-
 from .errors import TaskAlongError
 from .trial import (LocalReviewAssessment, TrialActivation, TrialDriverConfig, TrialPacketProjection,
-                    TrialPublishIntent, TrialReviewerProfile, TrialReviewReceipt, TrialTaskSpec, TrialWorkerPacket)
+                    TrialPublishIntent, TrialReviewerProfile, TrialReviewReceipt, TrialTaskSpec, TrialWorkerPacket,
+                    _utc_instant)
 from .validation import canonical_bytes, digest, loads
 
 _HISTORICAL = (TrialDriverConfig, TrialTaskSpec, TrialWorkerPacket, TrialPacketProjection, TrialReviewerProfile,
@@ -32,14 +31,7 @@ def inspect_trial_route(*, task=None, driver_config=None, reviewer_profile=None,
     a fully linked generated tuple has no available execution backend here.
     Missing data is reported without inventing a partially sealed route.
     """
-    from .validation import _utc_time
-    try:
-        valid_time = type(at) is str and _utc_time(at)
-    except (ValueError, TypeError):
-        valid_time = False
-    if not valid_time:
-        raise TaskAlongError("trial_inspection_invalid", "An explicit UTC inspection time is required.")
-    instant = datetime.fromisoformat(at.replace("Z", "+00:00"))
+    instant = _utc_instant(at, error_code="trial_inspection_invalid")
     values, missing, reasons = {}, [], {"trial_runtime_unqualified", "current_authority_unproven",
                                       "installation_and_policy_qualification_unproven"}
     for name, value, cls in (("task", task, TrialTaskSpec), ("driver_config", driver_config, TrialDriverConfig),
@@ -61,7 +53,8 @@ def inspect_trial_route(*, task=None, driver_config=None, reviewer_profile=None,
             structural.add("trial_reviewer_subject_mismatch")
     if activation is not None:
         a = values["activation"]
-        if not datetime.fromisoformat(a["valid_from"].replace("Z", "+00:00")) <= instant < datetime.fromisoformat(a["valid_until"].replace("Z", "+00:00")):
+        if not (_utc_instant(a["valid_from"], error_code="trial_inspection_invalid") <= instant
+                < _utc_instant(a["valid_until"], error_code="trial_inspection_invalid")):
             structural.add("activation_expired")
         expected = {}
         if task is not None:
@@ -190,10 +183,14 @@ def inspect_local_assessment(store, receipt, *, profile, schemas, assessment=Non
                        (("base_commit", "base_commit"), ("commit", "candidate_commit"), ("tree", "candidate_tree"), ("diff_sha256", "diff_sha256")))):
             raise TaskAlongError("review_assessment_subject_mismatch", "The stored current candidate differs from the assessment.")
         authority = store.authority(run, {"verify"}, assessment_intent_digest(assessment), a["authority_id"])
+        assessed_at = _utc_instant(a["assessed_at"], error_code="trial_assessment_invalid")
+        issued_at = _utc_instant(authority["issued_at"], error_code="trial_assessment_invalid")
+        expires_at = _utc_instant(authority["expires_at"], error_code="trial_assessment_invalid")
+        checked_at = _utc_instant(now(), error_code="trial_assessment_invalid")
         if (authority["digest"] != a["authority_digest"] or authority["principal"] != a["assessor"]["principal"]
                 or a["assessor"]["human_decision_observed"] != authority["human_decision_observed"]
-                or not authority["issued_at"] <= a["assessed_at"] <= now()
-                or a["assessed_at"] >= authority["expires_at"]):
+                or not issued_at <= assessed_at <= checked_at
+                or assessed_at >= expires_at):
             raise TaskAlongError("review_assessment_authority_mismatch", "The current exact authority does not cover the assessment.")
         result["authority_checked"] = True
     except TaskAlongError as exc:
