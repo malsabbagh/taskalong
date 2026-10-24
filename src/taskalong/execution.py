@@ -3,12 +3,16 @@
 Version 2.2 is additive. The original 1.0, 2.0 and 2.1 readers and resource
 identities keep their shipped meanings. Portable documents are not authority.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, TYPE_CHECKING
 
 from .contracts import JsonDocument, TaskSpec
 from .errors import TaskAlongError
 from .validation import canonical_bytes, loads, seal, seal_versioned, validate_versioned
+if TYPE_CHECKING:
+    from .trial import TrialTaskSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +155,7 @@ class PolicyResolver:
         raise TaskAlongError("policy_unresolved", "The exact policy content and type are unavailable.", exit_code=3)
 
 
-def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec | OllamaTaskSpec | CursorTaskSpec | AntigravityTaskSpec:
+def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec | OllamaTaskSpec | CursorTaskSpec | AntigravityTaskSpec | TrialTaskSpec:
     """Select only an explicit version; never upgrade or rewrite legacy bytes."""
     if document.get("schema_version") == "1.0":
         return TaskSpec.from_dict(document)
@@ -165,4 +169,7 @@ def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec | O
         return CursorTaskSpec.from_dict(document)
     if document.get("schema_version") == "2.6":
         return AntigravityTaskSpec.from_dict(document)
+    if document.get("schema_version") == "2.8":
+        from .trial import TrialTaskSpec
+        return TrialTaskSpec.from_dict(document)
     raise TaskAlongError("unknown_schema_version", "The task specification version is unsupported.")

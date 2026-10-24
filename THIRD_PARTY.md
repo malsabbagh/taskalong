@@ -1,6 +1,6 @@
 # Dependency inventory
 
-No dependency source or wheel is vendored in TaskAlong's distribution. Runtime,
+No dependency implementation source or wheel is vendored in TaskAlong's distribution. Runtime,
 optional-review and locked development dependencies are installed separately.
 The current lock/qualification inventory records:
 
@@ -13,6 +13,7 @@ The current lock/qualification inventory records:
 | rpds-py | 2026.6.3 | MIT |
 | typing_extensions | 4.16.0 | PSF-2.0 |
 | ReviewSensei (optional, separately installed) | 0.8.8 | MIT |
+| ReviewSensei raw-schema test fixtures (four unmodified JSON files, source distribution only) | 0.8.12 | MIT; included upstream notice |
 | build | 1.6.1 | MIT |
 | pyproject_hooks | 1.2.0 | MIT (included license file) |
 | packaging | 26.3 | Apache-2.0 OR BSD-2-Clause |
@@ -24,3 +25,11 @@ legal clearance. Retain upstream license/attribution requirements when separatel
 redistributing dependencies. No vendor SDK implementation or private source is
 adapted into the package. GitHub Actions are external pinned workflow uses, not
 vendored package code. TaskAlong itself uses the [MIT License](LICENSE); dependency licenses are unchanged.
+
+The four released 0.8.12 schemas in `tests/fixtures/reviewsensei-0.8.12/` are
+offline validation inputs, not an embedded reviewer. Their `PROVENANCE.json`
+pins each original wheel member, raw bytes and published wheel hash. The
+adjacent upstream `LICENSE` retains the required MIT notice. They are included
+in the source distribution for tests, not in the runtime wheel. The old 0.8.8
+review extra and fixture acceptance contract remain unchanged. No 0.8.12 engine
+source is copied or imported by the new observation reader.

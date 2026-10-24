@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.8:review-receipt",
+  "title": "Bounded selected-profile review observations; no installation or approval authority",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "selected_profile_digest",
+    "contract",
+    "subject",
+    "originals",
+    "observed",
+    "observation_complete",
+    "reason_codes",
+    "findings",
+    "coverage",
+    "usage",
+    "observation_only",
+    "installation_authenticated",
+    "native_app_approval",
+    "digest",
+    "process_capture_contract"
+  ],
+  "properties": {
+    "kind": {
+      "const": "review_receipt"
+    },
+    "schema_version": {
+      "const": "2.8"
+    },
+    "selected_profile_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "contract": {
+      "const": "reviewsensei-installed-0.8.12/full-diff-v1"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "spec_digest",
+        "base_commit",
+        "candidate_commit",
+        "candidate_tree",
+        "diff_sha256"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+        },
+        "spec_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "base_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "candidate_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "candidate_tree": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "diff_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      }
+    },
+    "originals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diff",
+        "result",
+        "outcome",
+        "process",
+        "stdout",
+        "stderr"
+      ],
+      "properties": {
+        "diff": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "size_bytes"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            }
+          }
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "size_bytes"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            }
+          }
+        },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "size_bytes"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            }
+          }
+        },
+        "process": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "size_bytes"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            }
+          }
+        },
+        "stdout": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "size_bytes"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            }
+          }
+        },
+        "stderr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "size_bytes"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "size_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            }
+          }
+        }
+      }
+    },
+    "observed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exit_code",
+        "review_status",
+        "outcome_status",
+        "provider",
+        "model"
+      ],
+      "properties": {
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -128,
+          "maximum": 255
+        },
+        "review_status": {
+          "enum": [
+            "complete",
+            "partial",
+            "incomplete",
+            "summary-only",
+            "unknown"
+          ]
+        },
+        "outcome_status": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "observation_complete": {
+      "type": "boolean"
+    },
+    "reason_codes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+      },
+      "minItems": 0,
+      "maxItems": 64,
+      "uniqueItems": true
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "fingerprint"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4095
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+            "minLength": 64,
+            "maxLength": 64
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "hunks"
+      ],
+      "properties": {
+        "files": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "hunks": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_calls",
+        "tokens",
+        "cost_usd"
+      ],
+      "properties": {
+        "provider_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tokens": {
+          "type": "null"
+        },
+        "cost_usd": {
+          "type": "null"
+        }
+      }
+    },
+    "observation_only": {
+      "const": true
+    },
+    "installation_authenticated": {
+      "const": false
+    },
+    "native_app_approval": {
+      "const": false
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "process_capture_contract": {
+      "const": "taskalong-process-redaction-v1"
+    }
+  }
+}

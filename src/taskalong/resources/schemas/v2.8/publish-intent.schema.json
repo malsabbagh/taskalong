@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.8:publish-intent",
+  "title": "Exact E1 draft-only publication intent; this reader performs no effects",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "run_id",
+    "spec_digest",
+    "candidate_commit",
+    "candidate_tree",
+    "diff_sha256",
+    "target",
+    "title",
+    "body",
+    "body_sha256",
+    "local_assessment_digest",
+    "authorization_ref",
+    "draft_only",
+    "final_merge_gate",
+    "digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "publish_intent"
+    },
+    "schema_version": {
+      "const": "2.8"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![\\s\\S])"
+    },
+    "spec_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "candidate_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+      "minLength": 40,
+      "maxLength": 40
+    },
+    "candidate_tree": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}(?![\\s\\S])",
+      "minLength": 40,
+      "maxLength": 40
+    },
+    "diff_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "repository_id",
+        "repository_full_name",
+        "base_branch",
+        "title",
+        "body_template_digest",
+        "expected_visibility",
+        "base_commit",
+        "trial_branch",
+        "draft_only",
+        "final_merge_gate",
+        "disclosure_digest",
+        "authorization_ref"
+      ],
+      "properties": {
+        "host": {
+          "const": "github.com"
+        },
+        "repository_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "repository_full_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "maxLength": 256
+        },
+        "base_branch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "body_template_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "expected_visibility": {
+          "enum": [
+            "private",
+            "public"
+          ]
+        },
+        "base_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
+        },
+        "trial_branch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*(?![\\s\\S])"
+        },
+        "draft_only": {
+          "type": "boolean",
+          "const": true
+        },
+        "final_merge_gate": {
+          "const": "user"
+        },
+        "disclosure_digest": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        "authorization_ref": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        }
+      }
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\x00-\\x1f*\\x7f]+(?![\\s\\S])"
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "body_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "local_assessment_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "authorization_ref": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "draft_only": {
+      "const": true
+    },
+    "final_merge_gate": {
+      "const": "user"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    }
+  }
+}

@@ -539,3 +539,75 @@ integer. Booleans, missing/extra fields and inconsistent classes refuse even
 when a document is resealed. The four existing OS facts remain strings. This
 observation participates in the host digest; it is never a task-selected UID,
 child-identity proof, privilege grant or public report field.
+
+## Offline E1 trial intent (2.8)
+
+Family 2.8 has ten explicit resources: task-spec, driver-config, worker-packet,
+worker-result, packet-projection, reviewer-profile, trial-activation,
+publish-intent, review-receipt and local-review-assessment. The immutable readers
+live in `taskalong.trial`. All earlier resource bytes and version enumerations
+retain their meanings. The 2.8 production tag describes intended work, not
+qualified execution. There is no registered E1 runtime factory.
+
+The exact candidate is Codex 0.163.0 with `codex-real-start/1` and an explicitly
+selected installed `reviewsensei-installed-0.8.12/full-diff-v1` reviewer. No
+wildcard model, default/latest selection, fixture response, arbitrary argv/env,
+protective-policy bypass or automatic provider fallback is supported. A strict
+sealed document requires complete fields; an incomplete route is a separate
+observation, never a runnable document with invented defaults:
+
+```python
+from datetime import datetime, timezone
+from taskalong.trial_control import inspect_trial_route
+
+report = inspect_trial_route(at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+assert report["missing"]
+assert report["execution_available"] is False
+assert report["activation_eligible"] is False
+```
+
+`trial_review.observe_review` accepts a selected immutable reviewer profile,
+exact subject, original byte references, immutable `TrialReviewEvidence`, and
+four supplied raw schema resources matching the pinned profile hashes. Its
+bounded offline parser does not import the reviewer engine. Raw result/outcome,
+exit code, coverage and each finding instance remain unchanged. Original captures
+are private; the receipt contains hash/size references. Evidence allows at most
+128 unique entries, 1 MiB each and 16 MiB aggregate, including empty streams.
+These limits do not change M2 or M9 evidence semantics.
+
+The named `taskalong-process-redaction-v1` capture contract compares each
+original stream separately with the existing standard redaction and UTF-8
+replacement ProcessResult representation, and checks their combined raw byte
+count. Swapped, unrelated or additionally transformed stream representations
+cannot be marked complete. Private originals remain unchanged.
+
+`observation_complete` describes consistent supplied review/process evidence,
+including full base-to-candidate coverage and confirmed cessation. It is not
+producer authentication, installation qualification, a zero-finding decision,
+CLI approval or native App approval. Every receipt explicitly keeps
+`observation_only=true`, `installation_authenticated=false` and
+`native_app_approval=false`. Provider/model are reported observations checked
+against selection; unreported token/cost totals remain unknown.
+
+`assessment_consistency` checks all finding instances and independently supplied
+source/test rationales. `inspect_local_assessment` additionally re-reads original
+stored captures, exact current candidate, applicable existing OS authority and
+the trusted `trial-review-assessment-policy` setting. The latter is a closed
+operator setting with policy_digest, revoked_authority_ids,
+revoked_receipt_digests and revoked_profile_digests. Registering a document does
+not populate that policy or issue an authority. Missing, expired, revoked,
+wrong-subject or tampered inputs block; optional genuine defects also block.
+
+`assessment_intent_digest` binds the exact receipt, candidate, profile, policy,
+assessor, timestamp, authority ID and every per-instance decision. It excludes
+only the top-level digest and authority_digest to avoid a hash cycle. The final
+historical assessment separately binds the authority bytes. An applicable
+existing `verify` grant must cover this exact intent; a generic task/spec grant
+cannot substitute. This helper creates no grant, and no new authorizer is exposed.
+
+Assessment status may be `consistent`, `awaiting_assessment` or `blocked`.
+Installation qualification remains `unknown` in this preparation. The aggregate
+`taskalong_local_review_gate` remains blocked for
+`reviewer_qualification_unverified`, or awaiting missing assessments. Consistency
+does not change a raw CLI exit 1/2 into exit 0 or satisfy the separate native
+App stage. See [the E1 ADR](adr/0010-e1-offline-trial-preparation.md).

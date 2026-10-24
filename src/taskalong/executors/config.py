@@ -1,9 +1,13 @@
 """Immutable local driver descriptions; reading one cannot register a launcher."""
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, TYPE_CHECKING
 
 from ..execution import AntigravityDocument, CursorDocument, DriverDocument, OllamaDocument
 from ..errors import TaskAlongError
+if TYPE_CHECKING:
+    from ..trial import TrialDriverConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +30,7 @@ class AntigravityDriverConfig(AntigravityDocument):
     schema_name: ClassVar[str] = "driver-config"
 
 
-def read_driver_config(document: dict) -> DriverConfig | OllamaDriverConfig | CursorDriverConfig | AntigravityDriverConfig:
+def read_driver_config(document: dict) -> DriverConfig | OllamaDriverConfig | CursorDriverConfig | AntigravityDriverConfig | TrialDriverConfig:
     """Select an explicit immutable family, without registering or qualifying it."""
     if type(document) is not dict:
         raise TaskAlongError("schema_validation", "A driver configuration must be a JSON object.")
@@ -38,4 +42,7 @@ def read_driver_config(document: dict) -> DriverConfig | OllamaDriverConfig | Cu
         return CursorDriverConfig.from_dict(document)
     if document.get("schema_version") == "2.6":
         return AntigravityDriverConfig.from_dict(document)
+    if document.get("schema_version") == "2.8":
+        from ..trial import TrialDriverConfig
+        return TrialDriverConfig.from_dict(document)
     raise TaskAlongError("unknown_schema_version", "The driver configuration version is unsupported.")

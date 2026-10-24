@@ -85,3 +85,11 @@ closed no-inference host-canary tool and pure bounded proof/replay readers.
 It reuses the existing process owner, preserves original private captures and
 separates original proof subjects from installed replay-verifier identity.
 There is no new launcher, Store format, M2 trust authority or production path.
+
+The [E1 preparation ADR](adr/0010-e1-offline-trial-preparation.md) adds a separate
+2.8 intent/observation family and explicit format 8 fence. `trial.py` handles pure
+immutable links, `trial_review.py` decodes supplied exact released-schema review
+evidence, and `trial_control.py` owns historical registration and non-executing
+inspection. The unchanged closed executor registry has no E1 factory. A complete
+observation or consistent attributed assessment still cannot satisfy the combined
+local-review gate until producer qualification is independently established.

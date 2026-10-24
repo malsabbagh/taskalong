@@ -1,0 +1,29 @@
+{
+  "upstream": "review-sensei",
+  "version": "0.8.12",
+  "published_wheel_sha256": "ed13addc413752ba968564550be7e300c1c69d3ccd9e4a832782a4f7cb12b8c3",
+  "scope": "Unmodified released-schema test inputs only; no actual provider review or runtime qualification.",
+  "schemas": {
+    "review-result": {
+      "upstream_member": "review_sensei/schemas/review-result.schema.json",
+      "sha256": "27e39e010c79e66d5387e1895c0f71e167bc99f8b639d1dbec29e40bdc1ceb33",
+      "bytes": 5924
+    },
+    "run-outcome": {
+      "upstream_member": "review_sensei/schemas/run-outcome.schema.json",
+      "sha256": "50edcd189e849b75ed119a906b66f89b5aa6a78aab9c4dda02a27d2fde4e5b86",
+      "bytes": 1715
+    },
+    "review-transaction": {
+      "upstream_member": "review_sensei/schemas/review-transaction.schema.json",
+      "sha256": "2b638fef12295b6311a42d863b496ac117362f48d419cdb0e164dda4ddd440b5",
+      "bytes": 2144
+    },
+    "coverage-manifest": {
+      "upstream_member": "review_sensei/schemas/coverage-manifest.schema.json",
+      "sha256": "9e1dbba7501aeb71b9bde1cd60131bb75b753e4181d7c2727b4d4f33d6ae9009",
+      "bytes": 2798
+    }
+  },
+  "license_sha256": "eebd1b34e94e652cda6426b07244e2f851896f40e8a3831e5a678be256ac746b"
+}
