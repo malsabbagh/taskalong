@@ -85,6 +85,10 @@ class ProcessTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "darwin", "Darwin owned signal exit race")
     def test_signal_denial_after_real_exit_still_requires_kernel_cessation(self):
+        with tempfile.TemporaryDirectory() as raw:
+            self._signal_denial_after_real_exit(Path(raw).resolve()/"release")
+
+    def _signal_denial_after_real_exit(self, release):
         from taskalong import process as boundary
         real_signal = os.killpg
         children, denied, ready = [], [], []
@@ -96,14 +100,22 @@ class ProcessTests(unittest.TestCase):
         def deny_after_exit(pgid, sig):
             if sig == 0:
                 return real_signal(pgid, sig)
+            release.touch()
             children[0].wait(timeout=3)
             denied.append(sig)
             raise PermissionError(1, "PRIVATE_SYNTHETIC_SIGNAL_DETAIL")
-        with patch.object(boundary.subprocess, "Popen", spawn), patch.object(boundary.os, "killpg", deny_after_exit):
-            with self.assertRaises(ProcessBoundaryError) as failure:
-                self.run_python("import time;print('ready',flush=True);time.sleep(.15)",
-                    timeout_seconds=3, on_stdout_line=ready.append,
-                    cancel_requested=lambda: bool(ready), signal_grace_seconds=.05)
+        code = ("import time,pathlib;release=pathlib.Path("+repr(str(release))+");"
+                "deadline=time.monotonic()+10;print('ready',flush=True)\n"
+                "while not release.exists() and time.monotonic()<deadline:time.sleep(.01)")
+        try:
+            with patch.object(boundary.subprocess, "Popen", spawn), patch.object(boundary.os, "killpg", deny_after_exit):
+                with self.assertRaises(ProcessBoundaryError) as failure:
+                    self.run_python(code, timeout_seconds=3, on_stdout_line=ready.append,
+                        cancel_requested=lambda: bool(ready), signal_grace_seconds=.05)
+        finally:
+            release.touch()
+            for child in children:
+                child.wait(timeout=4)
         self.assertEqual(failure.exception.code, "process_signal_failed")
         result = failure.exception.process_result
         self.assertTrue(denied)

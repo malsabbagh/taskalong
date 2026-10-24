@@ -316,7 +316,13 @@ class ClaudeDriverBoundaryTests(unittest.TestCase):
             executable = root/"fake-claude"
             # Register these exact original finite fixture bytes afresh before
             # invocation, keeping the malformed frame observable before exit.
-            executable.write_text(executable.read_text()+"\ntime.sleep(.3)\n")
+            release = root/"release-after-signal"
+            script = executable.read_text()
+            terminal_exit = 'raise SystemExit(1 if mode == "nonzero" else 0)'
+            self.assertEqual(script.count(terminal_exit), 1)
+            barrier = ("deadline=time.monotonic()+10\n"
+                       "while not Path("+repr(str(release))+").exists() and time.monotonic()<deadline:time.sleep(.01)\n")
+            executable.write_text(script.replace(terminal_exit, barrier+terminal_exit))
             config, provider = fixture_driver_context(executable)
             fields, admission = driver_packet_inputs()
             admission["driver_config"] = config
@@ -327,11 +333,15 @@ class ClaudeDriverBoundaryTests(unittest.TestCase):
             def deny(pgid, sig):
                 if sig:
                     denied.append(sig)
+                    release.touch()
                     raise PermissionError(1, "PRIVATE_SIGNAL_DETAIL")
                 return real_signal(pgid, sig)
-            with patch.object(boundary.os, "killpg", deny):
-                with self.assertRaises(TaskAlongError) as failure:
-                    driver.run(packet, workspace=workspace, output_dir=root/"output")
+            try:
+                with patch.object(boundary.os, "killpg", deny):
+                    with self.assertRaises(TaskAlongError) as failure:
+                        driver.run(packet, workspace=workspace, output_dir=root/"output")
+            finally:
+                release.touch()
             self.assertTrue(denied)
             self.assertEqual(failure.exception.code, "process_signal_failed")
             self.assertEqual(failure.exception.effect_outcome, "uncertain")
