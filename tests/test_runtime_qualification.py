@@ -1074,6 +1074,27 @@ runpy.run_path(sys.argv[0],run_name="__main__")
             self.assertEqual(document["first_error"], {"case_id": None, "code": "runtime_inputs_changed"})
             self.assertFalse(document["inputs_rechecked"])
 
+    def test_missing_locked_distribution_metadata_is_blocked_before_helper_effects(self):
+        import importlib.metadata
+        tool = self.entrypoint()
+        original = importlib.metadata.distribution
+        def missing(name):
+            if name == "build":
+                raise importlib.metadata.PackageNotFoundError(name)
+            return original(name)
+        with tempfile.TemporaryDirectory() as temporary:
+            stdout = io.StringIO()
+            with patch("importlib.metadata.distribution", side_effect=missing), \
+                    patch("taskalong.process.run_bounded", side_effect=AssertionError("no dependency fallback")) as owner, \
+                    redirect_stdout(stdout):
+                code = tool.main(qualifier_context()[1] + ["--stage", "inventory",
+                    "--evidence-dir", str(Path(temporary) / "missing-locked-metadata")])
+            self.assertEqual(code, 3)
+            self.assertEqual(owner.call_count, 0)
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["code"], "runtime_dependency_unavailable")
+            self.assertFalse(result["durable_evidence"])
+
 
 from test_execution_bindings import BindingFixture
 

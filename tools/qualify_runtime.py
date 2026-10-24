@@ -260,6 +260,15 @@ def _metadata_path(distribution):
     return distribution.locate_file(matches[0])
 
 
+def _distribution(name):
+    from importlib.metadata import distribution, PackageNotFoundError
+
+    try:
+        return distribution(name)
+    except PackageNotFoundError:
+        raise _Blocked("runtime_dependency_unavailable") from None
+
+
 def _inventory_measurements(deadline, origin, artifact_inventory=None):
     import hashlib
     import importlib
@@ -305,7 +314,7 @@ def _inventory_measurements(deadline, origin, artifact_inventory=None):
         if (package_root.is_symlink() or not package_root.resolve().is_relative_to(Path(sys.prefix).resolve())
                 or package_root.resolve().is_relative_to(root)):
             raise _Blocked("runtime_package_origin_mismatch")
-        distribution = importlib.metadata.distribution("taskalong")
+        distribution = _distribution("taskalong")
         located = Path(distribution.locate_file("taskalong/__init__.py")).absolute()
         if (package_root / "__init__.py" != located or package_root.is_symlink()
                 or not package_root.resolve().is_relative_to(Path(sys.prefix).resolve())
@@ -352,7 +361,7 @@ def _inventory_measurements(deadline, origin, artifact_inventory=None):
     for name, expected in requirements:
         if time.monotonic() >= deadline:
             raise _Blocked("runtime_inventory_deadline")
-        distribution = importlib.metadata.distribution(name)
+        distribution = _distribution(name)
         metadata_path = _metadata_path(distribution)
         metadata = _measure(metadata_path, deadline, maximum=1048576)
         if distribution.version != expected:
@@ -365,7 +374,7 @@ def _inventory_measurements(deadline, origin, artifact_inventory=None):
         project_info = {"sha256": hashlib.sha256(project_raw).hexdigest(), "size_bytes": len(project_raw)}
         package_version = tomllib.loads(project_raw.decode())["project"]["version"]
     else:
-        distribution = importlib.metadata.distribution("taskalong")
+        distribution = _distribution("taskalong")
         project_path = _metadata_path(distribution)
         project_info = _measure(project_path, deadline, maximum=1048576)
         package_version = distribution.version
