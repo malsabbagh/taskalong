@@ -156,11 +156,15 @@
       "properties": {
         "base_commit": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "pattern": "^[0-9a-f]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
         },
         "initial_head": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "pattern": "^[0-9a-f]{40}(?![\\s\\S])",
+          "minLength": 40,
+          "maxLength": 40
         },
         "initial_content_digest": {
           "type": "string",

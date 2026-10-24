@@ -1,5 +1,6 @@
 """Generated E1 contract counterexamples; no actual route or inference is qualified."""
 from dataclasses import FrozenInstanceError
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -9,7 +10,7 @@ from importlib import resources
 from unittest.mock import patch
 
 from taskalong.errors import TaskAlongError
-from taskalong.validation import schema, schema_names, seal_versioned
+from taskalong.validation import digest, schema, schema_names, seal_versioned
 
 
 def example_trial_config():
@@ -183,6 +184,57 @@ class TrialTaskContractTests(unittest.TestCase):
                         changed["budget"]["total_active_seconds"] = 1
                     seal_versioned("task-spec", changed, version="2.8")
             self.assertEqual(spawn.call_count, 0)
+
+
+class TrialCommitIdentityTests(unittest.TestCase):
+    def commit_documents(self):
+        from taskalong.trial import TrialPublishIntent, TrialTaskSpec, TrialWorkerPacket
+        from test_trial_control import example_publish_intent
+        repository_only = example_trial_spec() | {"publication": None}
+        intent = example_publish_intent()
+        intent["body_sha256"] = hashlib.sha256(intent["body"].encode()).hexdigest()
+        published_task = example_trial_spec() | {"publication": copy.deepcopy(intent["target"])}
+        published_task["repository"]["base_commit"] = intent["target"]["base_commit"]
+        packet = example_trial_packet()
+        packet["bindings"]["initial_head"] = "0" * 40 if packet["bindings"]["base_commit"] != "0" * 40 else "1" * 40
+        packet["digest"] = digest(packet)
+        return [
+            ("task-spec", TrialTaskSpec, repository_only, ("repository", "base_commit"), None),
+            ("task-spec", TrialTaskSpec, published_task, ("publication", "base_commit"), ("repository", "base_commit")),
+            ("publish-intent", TrialPublishIntent, intent, ("target", "base_commit"), None),
+            ("worker-packet", TrialWorkerPacket, packet, ("bindings", "base_commit"), None),
+            ("worker-packet", TrialWorkerPacket, packet, ("bindings", "initial_head"), None),
+        ]
+
+    def assert_rejected_commit(self, name, reader, original, field, coupled, replacement):
+        valid = seal_versioned(name, original, version="2.8")
+        self.assertEqual(reader.from_dict(valid).to_dict(), valid)
+        changed = copy.deepcopy(valid)
+        changed[field[0]][field[1]] = replacement
+        # Keep task/target equality coherent so it cannot hide invalid grammar.
+        if coupled is not None:
+            changed[coupled[0]][coupled[1]] = replacement
+        changed["digest"] = digest(changed)
+        before = copy.deepcopy(changed)
+        with self.assertRaises(TaskAlongError) as refused:
+            reader.from_dict(changed)
+        self.assertEqual(refused.exception.code, "schema_validation")
+        self.assertEqual(changed, before)
+        with self.assertRaises(TaskAlongError) as sealing:
+            seal_versioned(name, changed, version="2.8")
+        self.assertEqual(sealing.exception.code, "schema_validation")
+
+    def test_new_commit_fields_reject_terminal_newlines_without_normalization(self):
+        for name, reader, original, field, coupled in self.commit_documents():
+            with self.subTest(document=name, field=".".join(field)):
+                self.assert_rejected_commit(name, reader, original, field, coupled,
+                                            original[field[0]][field[1]] + "\n")
+
+    def test_new_commit_fields_require_exact_lowercase_40_hex_characters(self):
+        for name, reader, original, field, coupled in self.commit_documents():
+            for replacement in ("a" * 39, "a" * 41, "g" * 40, "A" * 40):
+                with self.subTest(document=name, field=".".join(field), replacement=replacement):
+                    self.assert_rejected_commit(name, reader, original, field, coupled, replacement)
 
 
 class TrialResultContractTests(unittest.TestCase):
