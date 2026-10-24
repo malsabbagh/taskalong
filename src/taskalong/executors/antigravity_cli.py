@@ -108,8 +108,8 @@ class AntigravityCLI:
                 _refuse("runtime_policy_invalid", "The fixture executable requires an exact resolved path.")
             if fingerprint(executable) != config["executable"]["sha256"]:
                 _refuse("runtime_changed", "The selected executable bytes changed.")
-        except (OSError, ProcessBoundaryError):
-            _refuse("runtime_unavailable", "The selected fixture executable is unavailable.")
+        except (OSError, RuntimeError):
+            raise TaskAlongError("runtime_unavailable", "The selected fixture executable is unavailable.", exit_code=3) from None
 
     def build_argv(self, packet):
         packet = validate_versioned("worker-packet", packet, expected_version="2.6")

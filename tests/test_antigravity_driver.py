@@ -467,6 +467,55 @@ class AntigravityAdmissionTests(AntigravityBindingFixture, unittest.TestCase):
     test_changed_request_conflicts_and_retry_never_spawns_again = _Cases.test_changed_request_conflicts_and_retry_never_spawns_again
     test_cancel_between_initial_check_and_executor_prepare_is_confirmed = _Cases.test_cancel_between_initial_check_and_executor_prepare_is_confirmed
 
+    def test_executable_resolution_fault_refuses_start_without_reservation(self):
+        run = self.configure_and_submit()
+        before = self.service.inspect(run["run_id"])
+        changes = self.service._store.db.total_changes
+        operations = self.service._store.db.execute("SELECT count(*) FROM operations").fetchone()[0]
+        lease_query = "SELECT document FROM leases WHERE repository_id=?"
+        self.assertIsNone(self.service._store.db.execute(lease_query, (before["repository_registration_id"],)).fetchone())
+        resolve = Path.resolve
+        for error_type in (OSError, RuntimeError):
+            for strict in (False, True):
+                calls = []
+                def fail_selected(path, *args, **kwargs):
+                    if path == self.executable and kwargs.get("strict", False) is strict:
+                        calls.append(strict)
+                        raise error_type("synthetic-executable-resolution-canary: " + str(path))
+                    return resolve(path, *args, **kwargs)
+                with self.subTest(fault=error_type.__name__, strict=strict):
+                    with patch.object(Path, "resolve", fail_selected):
+                        with self.assertRaises(TaskAlongError) as failure:
+                            self.start(run)
+                    self.assertEqual(calls, [strict])
+                    self.assertEqual(failure.exception.code, "runtime_unavailable")
+                    self.assertEqual(failure.exception.exit_code, 3)
+                    self.assertEqual(failure.exception.effect_outcome, "not_sent")
+                    self.assertNotIn("synthetic-executable-resolution-canary", failure.exception.message)
+                    self.assertNotIn(str(self.executable), failure.exception.message)
+                    self.assertEqual(self.service._store.db.total_changes, changes)
+                    self.assertEqual(self.service._store.db.execute("SELECT count(*) FROM operations").fetchone()[0], operations)
+                    self.assertEqual(self.service.inspect(run["run_id"]), before)
+                    self.assertIsNone(self.service._store.db.execute(lease_query, (before["repository_registration_id"],)).fetchone())
+                    self.assert_no_attempt(run)
+
+    def test_executable_preflight_preserves_positive_policy_and_changed_byte_outcomes(self):
+        from taskalong.executors.antigravity_cli import AntigravityCLI
+        driver = AntigravityCLI(self.driver_config, provider=self.provider)
+        self.assertIsNone(driver.preflight(qualification="synthetic", budget={}))
+        alias = self.root / "unapproved-alias"
+        alias.symlink_to(self.executable)
+        fields = self.driver_config | {"executable": self.driver_config["executable"] | {"path": str(alias)}}
+        aliased = AntigravityCLI(seal_versioned("driver-config", fields, version="2.6"), provider=self.provider)
+        with self.assertRaises(TaskAlongError) as policy:
+            aliased.preflight(qualification="synthetic", budget={})
+        self.assertEqual(policy.exception.code, "runtime_policy_invalid")
+        self.executable.write_text(self.executable.read_text() + "\n# changed pinned fixture bytes\n")
+        with self.assertRaises(TaskAlongError) as changed:
+            driver.preflight(qualification="synthetic", budget={})
+        self.assertEqual(changed.exception.code, "runtime_changed")
+        self.assertEqual(self.invocations(), [])
+
 
 class AntigravityCaptureFaultTests(AntigravityBindingFixture, unittest.TestCase):
     def stopped_fault(self, change):
