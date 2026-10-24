@@ -28,6 +28,51 @@ _QUALIFIER_SPEC.loader.exec_module(qualifier)
 
 
 class DistributionTests(unittest.TestCase):
+    def test_installed_schedule_balances_complete_modules_with_explicit_version(self):
+        groups = {name: [f'test_{name}.Cases.test_{index:02d}' for index in range(count)]
+                  for name, count in [('a', 8), ('b', 7), ('c', 6), ('d', 5)]}
+        ids = sum(groups.values(), [])
+        expected = {'format_version': 2, 'rule': 'whole-modules-count-desc-greedy-two-v2',
+                    'inventory_sha256': qualifier.json_digest(sorted(ids)),
+                    'batches': [groups['a'] + groups['d'], groups['b'] + groups['c']]}
+        self.assertEqual(qualifier.make_schedule(ids), expected)
+        self.assertEqual(qualifier.make_schedule(list(reversed(ids))), expected)
+        self.assertEqual([len(batch) for batch in expected['batches']], [13, 13])
+
+    def test_installed_schedule_ties_and_small_inventories_preserve_lexical_execution(self):
+        groups = {name: [f'test_{name}.Cases.test_{index:02d}' for index in range(count)]
+                  for name, count in [('d', 1), ('b', 2), ('a', 2), ('c', 1)]}
+        ids = sum(groups.values(), [])
+        self.assertEqual(qualifier.make_schedule(ids)['batches'],
+                         [groups['a'] + groups['c'], groups['b'] + groups['d']])
+        self.assertEqual(qualifier.make_schedule(groups['b'])['batches'], [groups['b'], []])
+        self.assertEqual(qualifier.make_schedule(groups['c'] + groups['d'])['batches'],
+                         [groups['c'], groups['d']])
+        unequal = ['test_z.C.test_a', 'test_z.C.test_b', 'test_a.C.test_z']
+        self.assertEqual(qualifier.make_schedule(unequal)['batches'], [unequal[:2], unequal[2:]])
+        priority = {name: [f'test_{name}.Cases.test_{index:02d}' for index in range(count)]
+                    for name, count in [('z', 8), ('a', 7), ('y', 6), ('b', 5)]}
+        self.assertEqual(qualifier.make_schedule(sum(priority.values(), []))['batches'],
+                         [priority['b'] + priority['z'], priority['a'] + priority['y']])
+
+    def test_new_schedule_rejects_legacy_rule_inventory_and_order_substitution(self):
+        ids = ['test_a.C.test_a', 'test_a.C.test_b', 'test_b.C.test_a']
+        expected = {'format_version': 2, 'rule': 'whole-modules-count-desc-greedy-two-v2',
+                    'inventory_sha256': qualifier.json_digest(ids), 'batches': [ids[:2], ids[2:]]}
+        identity = {'phase': 'inventory'}
+        payload = {'schedule': expected, 'package_snapshot_sha256': 'a' * 64}
+        self.assertEqual(qualifier.validate_phase(qualifier.phase_receipt(identity, payload), identity), payload)
+        variants = [dict(expected, format_version=1, rule='sorted-modules-alternating-two-v1'),
+                    dict(expected, rule='unreviewed-rule'), dict(expected, inventory_sha256='b' * 64),
+                    dict(expected, batches=[list(reversed(ids[:2])), ids[2:]]),
+                    dict(expected, batches=[ids[2:], ids[:2]]),
+                    dict(expected, batches=[ids[:1], ids[2:]]),
+                    dict(expected, batches=[ids[:2] + ids[:1], ids[2:]]),
+                    dict(expected, batches=[ids[:2], ['test_other.C.test_a']])]
+        for changed in variants:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                qualifier.validate_phase(qualifier.phase_receipt(identity, dict(payload, schedule=changed)), identity)
+
     def test_installed_schedule_is_fixed_disjoint_and_module_preserving(self):
         ids = ['test_b.C.test_z', 'test_a.C.test_y', 'test_a.C.test_x', 'test_c.C.test_x']
         schedule = qualifier.make_schedule(ids)

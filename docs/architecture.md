@@ -72,3 +72,10 @@ The [Cursor fixture ADR](adr/0007-cursor-fixture-driver.md) adds an independent
 separately from untouched worker JSON and binds exact private captures to the
 fenced finish operation. Format 6 excludes predecessor clients. This synthetic
 protocol does not qualify actual Cursor execution or enable production.
+
+The [Antigravity fixture ADR](adr/0008-antigravity-fixture-driver.md) adds the
+independent 2.6 driver/decoder and four schemas while reusing neutral result 2.5.
+A frozen descriptor in the same closed registry selects shared private capture
+validation without changing 2.5 meanings or adding another lifecycle. Format 7
+fences executable conversation state. Exact input/output and reported usage are
+rechecked by core. This original fixture does not qualify actual agy execution.

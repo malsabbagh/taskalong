@@ -341,3 +341,22 @@ recovery/publication. Private complete backups contain these captures. Public
 result, events and exports omit raw capture/session/model content. A crash before
 durable finish leaves uncertainty and quarantine, even if a valid stream exists.
 Do not retry by looking up a vendor chat. See the [Cursor contract](contracts.md#cursor-fixture-contracts-v25).
+
+## Antigravity fixture store and conversation boundary
+
+The 2.6 `antigravity-headless-fixture/1` tuple requires sequential format6-to-7
+maintenance under the same exclusive, quiescent complete-backup/restore API.
+Use `target_version=7` only from format6, with separate private backup and fresh
+restore directories. SQL007 adds no table; prior schemas, receipts, rows and
+blobs stay intact. The byte-pinned format6 predecessor refuses format7 before
+journal mutation. Never edit markers or restore over current state.
+
+Register only the explicit original fixture and exact current identities/policies
+and synthetic start evidence. Its account reference is never resolved. One framed
+user input plus EOF is supplied to the owned runner; the canonical packet remains
+unchanged. A fresh conversation is observed, not preselected. Private captures
+include intended stdin and actual stdout/stderr. A stopped completed handoff is
+redecoded before dependent reads or recovery; a closed gate does not prove stdin
+was delivered. Restart uses a new conversation and the same persisted budget.
+Native continuation, provider lookup, remote cessation, live execution and hard
+caps refuse. See the [Antigravity contract](contracts.md#antigravity-fixture-contracts-v26).

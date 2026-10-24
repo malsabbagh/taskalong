@@ -12,15 +12,37 @@ from ..errors import TaskAlongError
 from .base import HarnessDriver
 from .codex_cli import CodexCLI
 from .cursor_cli import CursorCLI, compile_packet as compile_cursor_packet, represent as represent_cursor
+from .cursor_cli import _represent_provider as cursor_provider
+from .cursor_protocol import CursorStreamDecoder
+from .antigravity_cli import (AntigravityCLI, compile_packet as compile_agy_packet,
+    represent as represent_agy, _represent_provider as agy_provider, encode_input as agy_input,
+    reported_usage as agy_usage, _resolve_workspace as agy_workspace)
+from .antigravity_protocol import AntigravityStreamDecoder
+from .config import AntigravityDriverConfig, CursorDriverConfig
 from .claude_code import ClaudeCode, OLLAMA_FIXTURE, compile_packet as compile_claude_packet, represent as represent_claude
 from .codex_projection import represent as represent_codex
 from ..validation import seal
+
+
+@dataclass(frozen=True, slots=True)
+class CaptureContract:
+    """Closed built-in observation/capture semantics, never task-selected code."""
+    version: str
+    name: str
+    error_prefix: str
+    config_reader: type
+    represent_provider: Callable
+    decoder: Callable
+    input_bytes: Callable | None = None
+    reported_usage: Callable | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class DriverContract:
     factory: Callable
     compile_packet: Callable
     represent: Callable
+    capture: CaptureContract | None = None
 
 
 def _codex_packet(fields, admission):
@@ -49,6 +71,21 @@ def _cursor_driver(configuration, provider):
     return CursorCLI(configuration, provider=provider)
 
 
+def _agy_driver(configuration, provider):
+    if provider is None:
+        raise TaskAlongError("execution_document_unresolved", "An exact provider document is required.", exit_code=3)
+    return AntigravityCLI(configuration, provider=provider)
+
+
+def _cursor_decoder(packet, config, attempt, limit):
+    return CursorStreamDecoder(packet, expected_model=config["expected_reported_model"], max_output_bytes=limit)
+
+
+def _agy_decoder(packet, config, attempt, limit):
+    return AntigravityStreamDecoder(packet, expected_model=config["expected_reported_model"],
+        expected_cwd=agy_workspace(attempt["workspace"]["path"]), max_output_bytes=limit)
+
+
 _CODEX = DriverContract(lambda configuration, provider: CodexCLI(configuration), _codex_packet, represent_codex)
 _CONTRACTS = MappingProxyType({
     ("1.0", "codex-v1", "runtime_profile", "1.0"): _CODEX,
@@ -57,8 +94,17 @@ _CONTRACTS = MappingProxyType({
     ("2.4", "claude-ollama-fixture/1", "driver_config", "2.4"): DriverContract(_ollama_driver,
         partial(compile_claude_packet, contract=OLLAMA_FIXTURE), partial(represent_claude, contract=OLLAMA_FIXTURE)),
     ("2.5", "cursor-print-fixture/1", "driver_config", "2.5"): DriverContract(
-        _cursor_driver, compile_cursor_packet, represent_cursor),
+        _cursor_driver, compile_cursor_packet, represent_cursor,
+        CaptureContract("2.5", "cursor", "cursor", CursorDriverConfig, cursor_provider, _cursor_decoder)),
+    ("2.6", "antigravity-headless-fixture/1", "driver_config", "2.6"): DriverContract(
+        _agy_driver, compile_agy_packet, represent_agy,
+        CaptureContract("2.6", "antigravity", "agy", AntigravityDriverConfig, agy_provider, _agy_decoder, agy_input, agy_usage)),
 })
+
+
+def capture_for_version(version):
+    """Optional built-in captured-session contract; no runtime discovery."""
+    return next((item.capture for key, item in _CONTRACTS.items() if key[0] == version and item.capture), None)
 
 
 def contract_for(configuration: dict, *, task_version="1.0", projection="codex-v1") -> DriverContract:

@@ -42,10 +42,18 @@ def json_digest(value) -> str:
 def make_schedule(ids: list[str]) -> dict:
     if not ids or len(ids) != len(set(ids)) or any('._FailedTest.' in i or not i.startswith('test_') for i in ids):
         raise ValueError('invalid installed test inventory')
-    modules = sorted({i.split('.')[0] for i in ids})
-    batches = [[i for module in modules[index::2] for i in sorted(ids) if i.split('.')[0] == module]
-               for index in range(2)]
-    return {'format_version': 1, 'rule': 'sorted-modules-alternating-two-v1',
+    modules: dict[str, list[str]] = {}
+    for identifier in sorted(ids):
+        modules.setdefault(identifier.split('.')[0], []).append(identifier)
+    assigned: list[list[str]] = [[], []]
+    loads = [0, 0]
+    for module in sorted(modules, key=lambda name: (-len(modules[name]), name)):
+        index = min(range(2), key=lambda value: (loads[value], value))
+        assigned[index].append(module)
+        loads[index] += len(modules[module])
+    batches = [[identifier for module in sorted(group) for identifier in modules[module]]
+               for group in assigned]
+    return {'format_version': 2, 'rule': 'whole-modules-count-desc-greedy-two-v2',
             'inventory_sha256': json_digest(sorted(ids)), 'batches': batches}
 
 

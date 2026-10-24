@@ -43,9 +43,16 @@ review blocks acceptance. These checks produce no runtime authority.
 
 Each wheel or rebuilt-sdist journey uses one frozen artifact, harness and lock
 snapshot in one fresh environment. A separate inventory child discovers the
-copied installed tests. The fixed schedule sorts modules, assigns alternating
-modules to two batches, and keeps each module intact; it never uses prior test
-outcomes or timings to select cases. One sample journey and both batches must
+copied installed tests. Schedule version 2 visits whole modules by descending
+discovered test count, breaking ties lexically, and assigns each to the batch
+with fewer tests (batch 0 wins equal loads). Each batch then executes modules
+and their tests in lexical order. The rule is
+`whole-modules-count-desc-greedy-two-v2`; its digest includes the version, rule,
+complete inventory digest and exact ordered batches. It keeps every module
+intact and never uses prior outcomes, skip predictions or timings to select
+cases. Old alternating schedules cannot supply the new campaign's evidence.
+Count balancing does not guarantee a wall-time bound; every deadline still
+applies and a timeout remains a failure. One sample journey and both batches must
 succeed. Their disjoint executed-ID union must equal the discovered inventory,
 including shared subclasses, with exactly the platform-specific skip cases and
 reasons. Missing, duplicate or unexpected tests, skips, or terminal receipts fail.
@@ -178,3 +185,26 @@ fixture permits only balanced scoped Edit events and no nonempty stderr. It
 performs no provider request and proves no remote cancellation or cost. Unknown
 usage stays unknown; production and hard cost/token caps refuse. See the
 [protocol boundary](cursor-protocol.md) and [2.5 contracts](contracts.md#cursor-fixture-contracts-v25).
+
+## Antigravity fixture qualification scope
+
+M8 adds the explicit 2.6 Antigravity fixture and reuses neutral worker-result 2.5.
+Original fake_agy framing exercises one input envelope, exact observed
+conversation/model/tool/schema, sticky denial, strict step order and terminal
+structured output. Any stderr blocks success, even at exit zero. Raw counters
+are one reported cumulative snapshot; core independently rechecks them without
+summing step counters, inferring missing values or granting budget refunds.
+
+Shared contracts cover owned and closed-gate cancellation, exact-mode authority,
+independent checks/review, fresh restart, preserved budgets and uncertainty after
+supervisor loss. Tampered private input/output, observations and predecessor
+captures must refuse without dispatch or journal mutation. Format7 maintenance
+preserves complete prior state and excludes the actual byte-pinned format6 Store.
+Source and every wheel/rebuilt-sdist/hosted profile need their own current receipts.
+
+Installed agy 1.4.0 help/version evidence establishes only version and flags.
+No actual start, schema enforcement, model/account route, conversation persistence,
+instruction/tool/config isolation or complete vendor lifetime is qualified.
+Native resume, provider lookup, remote cancellation, hard token/cost caps and
+production remain unsupported. No credential lookup, provider request, new host
+or registry release is introduced. See the [protocol](antigravity-protocol.md).
