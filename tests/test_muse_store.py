@@ -1,6 +1,7 @@
 """Explicit Muse format fence and additive resource compatibility."""
 import hashlib
 import importlib.util
+from importlib import resources
 from pathlib import Path
 import tempfile
 import unittest
@@ -79,9 +80,10 @@ class MuseStoreTests(unittest.TestCase):
         # Frozen original resource inventory is generated from the base commit,
         # independently of the new reader and schemas.
         import json
-        root = Path(__file__).resolve().parents[1]
+        root = resources.files("taskalong.resources")
         for name, expected in json.loads((Path(__file__).parent / "fixtures/pre-muse-resources.json").read_bytes()).items():
-            self.assertEqual(hashlib.sha256((root / name).read_bytes()).hexdigest(), expected, name)
+            raw = root.joinpath(name.removeprefix("src/taskalong/resources/")).read_bytes()
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), expected, name)
 
 
 if __name__ == "__main__":
