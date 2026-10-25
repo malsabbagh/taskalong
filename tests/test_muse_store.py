@@ -86,5 +86,69 @@ class MuseStoreTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(raw).hexdigest(), expected, name)
 
 
+class MuseResultViewSchemaTests(unittest.TestCase):
+    def view(self, *, state="created", outcome="pending", accepted=False, **changes):
+        value = {"run_id": "00000000-0000-4000-8000-000000000001", "revision": 1,
+            "state": state, "outcome": outcome, "independently_accepted": accepted,
+            "acceptance_digest": None, "execution_handoff_digest": None,
+            "canonical_packet_digest": None, "evidence_artifacts": [],
+            "production_dispatch_allowed": False}
+        return value | changes
+
+    def seal(self, value):
+        return seal_versioned("result-view", value, version="2.9")
+
+    def test_valid_pending_handoff_accepted_cancelled_and_retained_assessments(self):
+        refs = {name: "a" * 64 for name in ("acceptance_digest",
+            "execution_handoff_digest", "canonical_packet_digest")}
+        values = [self.view(), self.view(state="running"),
+            self.view(state="blocked", outcome="execution_handoff_ready", **refs),
+            self.view(state="accepted", outcome="accepted", accepted=True, **refs),
+            self.view(state="cancelled", outcome="cancelled"),
+            self.view(state="cancelled", outcome="cancelled", **refs),
+            self.view(state="cancel_pending", **refs)]
+        for value in values:
+            with self.subTest(state=value["state"], outcome=value["outcome"]):
+                self.assertEqual(self.seal(value)["acceptance_digest"], value["acceptance_digest"])
+
+    def test_acceptance_state_outcome_and_boolean_must_agree(self):
+        from itertools import product
+        for state, outcome, accepted in product((False, True), repeat=3):
+            if state == outcome == accepted:
+                continue
+            value = self.view(state="accepted" if state else "blocked",
+                outcome="accepted" if outcome else "pending", accepted=accepted,
+                acceptance_digest="a" * 64, execution_handoff_digest="b" * 64,
+                canonical_packet_digest="c" * 64)
+            with self.subTest(state=state, outcome=outcome, accepted=accepted):
+                with self.assertRaises(TaskAlongError):
+                    self.seal(value)
+
+    def test_accepted_requires_all_three_digests(self):
+        value = self.view(state="accepted", outcome="accepted", accepted=True,
+            acceptance_digest="a" * 64, execution_handoff_digest="b" * 64,
+            canonical_packet_digest="c" * 64)
+        for field in ("acceptance_digest", "execution_handoff_digest", "canonical_packet_digest"):
+            for missing in (False, True):
+                changed = value | {field: None}
+                if missing:
+                    del changed[field]
+                with self.subTest(field=field, missing=missing):
+                    with self.assertRaises(TaskAlongError):
+                        self.seal(changed)
+
+    def test_handoff_ready_requires_handoff_and_packet_digests(self):
+        value = self.view(state="blocked", outcome="execution_handoff_ready",
+            execution_handoff_digest="b" * 64, canonical_packet_digest="c" * 64)
+        for field in ("execution_handoff_digest", "canonical_packet_digest"):
+            for missing in (False, True):
+                changed = value | {field: None}
+                if missing:
+                    del changed[field]
+                with self.subTest(field=field, missing=missing):
+                    with self.assertRaises(TaskAlongError):
+                        self.seal(changed)
+
+
 if __name__ == "__main__":
     unittest.main()

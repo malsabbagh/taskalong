@@ -76,6 +76,116 @@ class MuseHandoffTests(ServiceFixture, unittest.TestCase):
         self.start(run)
         return self.wait(run["run_id"])
 
+    def test_completed_handoff_survives_cancel_result_and_reconcile_without_replay(self):
+        run = self.completed()
+        attempt_id = run["attempts"][-1]["attempt_id"]
+        before = self.service._store.detail("attempts", attempt_id)
+        budget = dict(run["budget_consumed"])
+        pending = self.service.cancel(run["run_id"], operation_key="cancel-completed",
+            expected_revision=run["revision"])
+        self.assertEqual(pending["state"], "cancel_pending")
+        self.assertIsNone(pending["active_attempt_id"])
+        self.assertEqual(pending["pending_effect_ids"], [])
+        view = self.service.result(run["run_id"])
+        self.assertEqual(view["outcome"], "pending")
+        self.assertFalse(view["independently_accepted"])
+        operations = self.service._store.db.execute("SELECT count(*) FROM operations").fetchone()[0]
+        with self.assertRaises(TaskAlongError) as refused:
+            self.service.verify(run["run_id"], operation_key="verify-during-cancel",
+                expected_revision=pending["revision"])
+        self.assertEqual(refused.exception.code, "workspace_not_quiescent")
+        self.assertEqual(self.service._store.db.execute("SELECT count(*) FROM operations").fetchone()[0], operations)
+        cancelled = self.service.reconcile(run["run_id"], operation_key="reconcile-cancel",
+            expected_revision=pending["revision"])
+        self.assertEqual(cancelled["state"], "cancelled")
+        self.assertEqual(self.service.result(run["run_id"])["outcome"], "cancelled")
+        self.assertEqual(self.service._store.detail("attempts", attempt_id), before)
+        self.assertEqual(cancelled["budget_consumed"], budget)
+        self.assertEqual(len((self.root / "muse-invocations.jsonl").read_text().splitlines()), 1)
+
+    def test_completed_missing_handoff_still_refuses_result_and_cancel_reconciliation(self):
+        run = self.completed()
+        attempt = self.service._store.detail("attempts", run["attempts"][-1]["attempt_id"])
+        attempt["execution_handoff"] = None
+        with self.service._store.transaction() as db:
+            db.execute("UPDATE attempts SET document=? WHERE attempt_id=?",
+                (canonical_bytes(attempt).decode(), attempt["attempt_id"]))
+        pending = self.service.cancel(run["run_id"], operation_key="cancel-missing-handoff",
+            expected_revision=run["revision"])
+        for action in (lambda: self.service.result(run["run_id"]),
+                lambda: self.service.reconcile(run["run_id"], operation_key="reconcile-missing-handoff",
+                    expected_revision=pending["revision"])):
+            with self.assertRaises(TaskAlongError) as refused:
+                action()
+            self.assertEqual(refused.exception.code, "muse_handoff_missing")
+        self.assertEqual(self.service.inspect(run["run_id"])["state"], "cancel_pending")
+
+    def test_completed_tampered_handoff_still_refuses_cancel_reconciliation(self):
+        run = self.completed()
+        attempt = self.service._store.detail("attempts", run["attempts"][-1]["attempt_id"])
+        (self.state / "blobs" / attempt["execution_handoff"]["sha256"]).write_bytes(b"tampered")
+        pending = self.service.cancel(run["run_id"], operation_key="cancel-tampered-handoff",
+            expected_revision=run["revision"])
+        for action in (lambda: self.service.result(run["run_id"]),
+                lambda: self.service.reconcile(run["run_id"], operation_key="reconcile-tampered-handoff",
+                    expected_revision=pending["revision"])):
+            with self.assertRaises(TaskAlongError):
+                action()
+        self.assertEqual(self.service.inspect(run["run_id"])["state"], "cancel_pending")
+
+    def test_pending_verifier_effect_prevents_completed_run_cancellation(self):
+        run = self.completed()
+        self.service._store.mutate(run["run_id"], "test.verifying", "pending-effect", run["revision"], {},
+            lambda current, db: current.update(state="verifying", blockers=[]), fence=run["lease_generation"])
+        self.service._workflow._capture_prepare(run["run_id"], "test-pending", "pending-effect")
+        current = self.service.inspect(run["run_id"])
+        pending = self.service.cancel(run["run_id"], operation_key="cancel-pending-effect",
+            expected_revision=current["revision"])
+        self.assertEqual(self.service.result(run["run_id"])["outcome"], "pending")
+        with self.assertRaises(TaskAlongError) as refused:
+            self.service.reconcile(run["run_id"], operation_key="reconcile-pending-effect",
+                expected_revision=pending["revision"])
+        self.assertEqual(refused.exception.code, "effect_unreconciled")
+        after = self.service.inspect(run["run_id"])
+        self.assertEqual(after["state"], "cancel_pending")
+        self.assertEqual(after["pending_effect_ids"], pending["pending_effect_ids"])
+        self.assertEqual(len((self.root / "muse-invocations.jsonl").read_text().splitlines()), 1)
+
+    def test_accepted_retirement_preserves_history_but_refuses_current_lease_operations(self):
+        import shutil
+        from taskalong.muse_handoff import configuration
+        from test_cancel_resume import CancelResumeTests
+        reviewer = shutil.which("review-sensei") or str(Path(sys.executable).parent / "review-sensei")
+        if not Path(reviewer).is_file():
+            self.skipTest("released reviewer environment missing; full installed qualification requires this boundary")
+        fixtures = Path(__file__).parent / "fixtures" / "reviewsensei"
+        selected = self.service.configure_review(fixtures / "approved.yml",
+            fixture_response=fixtures / "clean.json", executable=reviewer)
+        config = configuration(self.service._store, self.task["execution"]["driver_config_digest"])
+        config["review_config_digest"] = selected["config_digest"]
+        config.pop("digest")
+        config = self.service.configure_muse_capture(config)
+        self.task = seal_versioned("task-spec", self.task | {
+            "execution": {"driver_config_digest": config["digest"]},
+            "review": self.task["review"] | {"config_digest": selected["config_digest"]}}, version="2.9")
+        accepted = self.completed()
+        self.assertEqual(accepted["state"], "accepted")
+        before = self.service.result(accepted["run_id"])
+        self.assertEqual(before["outcome"], "accepted")
+        retired = CancelResumeTests.retire_when_quiescent(self, accepted, "retire-muse")
+        self.assertEqual(self.service.inspect(accepted["run_id"]), retired)
+        self.assertEqual(retired["acceptance_id"], accepted["acceptance_id"])
+        for action, code in ((lambda: self.service.result(accepted["run_id"]), "lease_retired"),
+                (lambda: self.service.start(accepted["run_id"], operation_key="retired-start",
+                    expected_revision=retired["revision"]), "invalid_run_state"),
+                (lambda: self.service.verify(accepted["run_id"], operation_key="retired-verify",
+                    expected_revision=retired["revision"]), "lease_retired")):
+            with self.assertRaises(TaskAlongError) as refused:
+                action()
+            self.assertEqual(refused.exception.code, code)
+        self.assertEqual(self.service.inspect(accepted["run_id"]), retired)
+        self.assertEqual(len((self.root / "muse-invocations.jsonl").read_text().splitlines()), 1)
+
     def test_incorrect_code_is_not_accepted_even_with_valid_local_handoff(self):
         run = self.completed("bad")
         self.assertNotEqual(run["state"], "accepted")
@@ -212,6 +322,31 @@ class MuseHandoffTests(ServiceFixture, unittest.TestCase):
         self.assertEqual(stopped["evidence_ids"], [])
         self.assertIsNone(stopped["candidate"])
 
+    def test_cancel_between_handoff_creation_and_finish_cannot_commit_completion(self):
+        from taskalong import muse_handoff
+        create = muse_handoff.create_handoff
+        def cancelled_after_creation(store, run_id, *args):
+            handoff = create(store, run_id, *args)
+            current = self.service.inspect(run_id)
+            self.service.cancel(run_id, operation_key="cancel-before-finish",
+                expected_revision=current["revision"])
+            with self.assertRaises(TaskAlongError):
+                create(store, run_id, *args)
+            return handoff
+        stopped = self.foreground(cancelled_after_creation)
+        attempt = self.service._store.detail("attempts", stopped["attempts"][-1]["attempt_id"])
+        self.assertEqual(stopped["state"], "cancelled")
+        self.assertTrue(attempt["termination_confirmed"])
+        self.assertNotEqual(attempt["status"], "completed")
+        self.assertIsNone(attempt.get("execution_handoff"))
+        self.assertIsNotNone(attempt.get("muse_capture"))
+        self.assertIsNone(stopped["acceptance_id"])
+        self.assertIsNone(stopped["candidate"])
+        self.assertEqual(stopped["evidence_ids"], [])
+        self.assertEqual(stopped["budget_consumed"]["attempts"], 1)
+        self.assertEqual(stopped["budget_consumed"]["output_bytes"], attempt["process"]["output_bytes"])
+        self.assertEqual(len((self.root / "muse-invocations.jsonl").read_text().splitlines()), 1)
+
     def test_unknown_termination_retains_quarantine_and_never_manufactures_handoff(self):
         from taskalong.executors.muse_fixture import MuseFixtureDriver
         from taskalong.workflow import drive_run
@@ -238,6 +373,16 @@ class MuseHandoffTests(ServiceFixture, unittest.TestCase):
         self.assertEqual(stopped["blockers"][0]["effect_outcome"], "uncertain")
         self.service.start(run["run_id"], operation_key="start", expected_revision=0)
         self.assertEqual(len((self.root / "muse-invocations.jsonl").read_text().splitlines()), 1)
+        pending = self.service.cancel(run["run_id"], operation_key="cancel-unknown",
+            expected_revision=stopped["revision"])
+        # Root disappearance is not complete descendant-cessation proof.
+        with patch("taskalong.process.receipt_is_alive", return_value=False):
+            reconciled = self.service.reconcile(run["run_id"], operation_key="reconcile-unknown-cancel",
+                expected_revision=pending["revision"])
+        self.assertEqual(reconciled["state"], "blocked")
+        self.assertIsNotNone(reconciled["active_attempt_id"])
+        self.assertEqual(reconciled["pending_effect_ids"], stopped["pending_effect_ids"])
+        self.assertFalse(self.service._store.detail("attempts", attempt["attempt_id"])["termination_confirmed"])
         self.run_ids.remove(run["run_id"])
         # Only the observation was fault-injected. The real fixture had already
         # ceased, as asserted above; teardown does not reconcile the quarantine.

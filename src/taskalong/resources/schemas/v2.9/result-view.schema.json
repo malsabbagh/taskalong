@@ -127,5 +127,75 @@
         }
       ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "outcome": {
+                "const": "accepted"
+              }
+            }
+          },
+          {
+            "properties": {
+              "independently_accepted": {
+                "const": true
+              }
+            }
+          },
+          {
+            "properties": {
+              "state": {
+                "const": "accepted"
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "accepted"
+          },
+          "outcome": {
+            "const": "accepted"
+          },
+          "independently_accepted": {
+            "const": true
+          },
+          "acceptance_digest": {
+            "type": "string"
+          },
+          "execution_handoff_digest": {
+            "type": "string"
+          },
+          "canonical_packet_digest": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "execution_handoff_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution_handoff_digest": {
+            "type": "string"
+          },
+          "canonical_packet_digest": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
 }

@@ -13,6 +13,10 @@ it never fabricates a vendor worker-result or session. Exact Store operations,
 authority, admission, packet, lease, captures, cessation and workspace snapshot
 must agree before independent verification. Model/session/usage remain unknown.
 The read-only result reports `execution_handoff_ready`, separately from acceptance.
+Its schema requires accepted state, outcome and independent-acceptance flag to
+agree, with acceptance, handoff and packet digests present. Handoff readiness
+requires handoff and packet digests. These consistency rules supply no Store
+authority; nonaccepted views may retain a prior assessment digest.
 
 Explicit format 9 is required for executable history. Earlier schema/SQL bytes
 and registry tuples retain their meanings. This route accepts registered original

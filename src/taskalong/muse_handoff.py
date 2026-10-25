@@ -192,8 +192,7 @@ def retain_capture(store, run_id, attempt_id, result):
 def _subject(store, run, spec, attempt, manager, workspace):
     store.require_fence(run, attempt["lease_generation"])
     if (run["lease_generation"] != attempt["lease_generation"]
-            or run["attempts"][-1]["attempt_id"] != attempt["attempt_id"]
-            or run["state"] == "cancel_pending"):
+            or run["attempts"][-1]["attempt_id"] != attempt["attempt_id"]):
         _refuse("muse_handoff_stale")
     packet = validate_versioned("worker-packet", attempt["packet"], expected_version=VERSION)
     admission = attempt["dispatch_admission"]
@@ -259,6 +258,8 @@ def _subject(store, run, spec, attempt, manager, workspace):
 
 def create_handoff(store, run_id, attempt_id, manager, workspace):
     run = store.run(run_id)
+    # Cancellation prohibits new handoffs, not validation of an already
+    # committed completed handoff during cancellation reconciliation.
     if run["active_attempt_id"] != attempt_id or run["state"] != "running":
         _refuse("lease_fenced")
     spec = store.spec(run)
@@ -267,7 +268,10 @@ def create_handoff(store, run_id, attempt_id, manager, workspace):
 
 
 def validate_handoff(store, run, spec, attempt, manager, workspace, *, before_finish=False, handoff=None):
-    if not before_finish:
+    if before_finish:
+        if run["state"] != "running" or run["active_attempt_id"] != attempt["attempt_id"]:
+            _refuse("muse_handoff_stale")
+    else:
         ref = attempt.get("execution_handoff")
         if not ref or attempt["status"] != "completed" or attempt["termination_confirmed"] is not True:
             _refuse("muse_handoff_missing")
@@ -323,6 +327,8 @@ def result_view(store, run):
     accepted = bool(acceptance and acceptance["decision"] == "accepted" and run["state"] == "accepted")
     if run["state"] == "cancelled":
         outcome = "cancelled"
+    elif run["state"] == "cancel_pending":
+        outcome = "pending"
     elif accepted:
         outcome = "accepted"
     elif run["active_attempt_id"] or run["pending_effect_ids"]:
