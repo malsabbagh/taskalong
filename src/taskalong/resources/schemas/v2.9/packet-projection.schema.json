@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.9:packet-projection",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "packet_projection"
+    },
+    "schema_version": {
+      "const": "2.9"
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "spec_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "canonical_packet_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "wire_packet_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "admission_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "projection_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "projection": {
+      "const": "muse-plain-fixture/1"
+    },
+    "driver_config_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "extensions",
+    "run_id",
+    "attempt_id",
+    "spec_digest",
+    "canonical_packet_digest",
+    "wire_packet_digest",
+    "admission_digest",
+    "projection_digest",
+    "projection",
+    "driver_config_digest",
+    "digest"
+  ],
+  "additionalProperties": false
+}

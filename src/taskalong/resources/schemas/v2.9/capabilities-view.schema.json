@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.9:capabilities-view",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "run_id",
+    "revision",
+    "mode",
+    "requirements_satisfied",
+    "decision_digest",
+    "reason_codes",
+    "production_dispatch_allowed",
+    "digest",
+    "configuration_digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "capabilities_view"
+    },
+    "schema_version": {
+      "const": "2.9"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "mode": {
+      "enum": [
+        "start",
+        "restart",
+        "native_resume",
+        "observe",
+        "cancel",
+        "result"
+      ]
+    },
+    "requirements_satisfied": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "decision_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason_codes": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      }
+    },
+    "production_dispatch_allowed": {
+      "const": false
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "configuration_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

@@ -183,6 +183,9 @@ def validate_handoff(store, run, spec, attempt):
 def validate_completed_run(store, run):
     """Read-only no-op for earlier families or outcomes without completion."""
     spec = store.spec(run)
+    if spec["schema_version"] == "2.9":
+        from ..muse_handoff import validate_current
+        return validate_current(store, run)
     if capture_for_version(spec["schema_version"]) is not None and run["attempts"]:
         attempt = store.detail("attempts", run["attempts"][-1]["attempt_id"])
         if attempt["status"] == "completed" or run["acceptance_id"]:

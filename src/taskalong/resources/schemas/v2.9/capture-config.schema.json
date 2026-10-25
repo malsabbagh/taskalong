@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.9:capture-config",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "capture_config"
+    },
+    "schema_version": {
+      "const": "2.9"
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "config_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "qualification": {
+      "const": "synthetic"
+    },
+    "projection": {
+      "const": "muse-plain-fixture/1"
+    },
+    "transport": {
+      "const": "operator_registered_original_fixture"
+    },
+    "executable": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "build": {
+      "const": "1.4.10-R6427.1"
+    },
+    "requested_model": {
+      "const": "synthetic-muse-model"
+    },
+    "permission_profile": {
+      "const": "synthetic-profile"
+    },
+    "max_model_steps": {
+      "const": 1
+    },
+    "inference_destination_id": {
+      "const": "synthetic-local-muse"
+    },
+    "check_profile_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "checks_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "review_config_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "command_sandbox_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "extensions",
+    "config_id",
+    "qualification",
+    "projection",
+    "transport",
+    "executable",
+    "build",
+    "requested_model",
+    "permission_profile",
+    "max_model_steps",
+    "inference_destination_id",
+    "check_profile_digest",
+    "checks_digest",
+    "review_config_digest",
+    "command_sandbox_digest",
+    "digest"
+  ],
+  "additionalProperties": false
+}

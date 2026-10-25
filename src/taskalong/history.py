@@ -1,6 +1,7 @@
 """Exact immutable document history; storage supplies no current authority."""
 from .bindings import ExecutionBinding, HarnessInstallation, ProviderProfile
 from .contracts import RuntimeProfile
+from .muse_handoff import MuseConfiguration
 from .errors import TaskAlongError
 from .qualification import QualificationDecision
 from .execution import InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding
@@ -15,13 +16,14 @@ _TYPES = {"runtime_profile":RuntimeProfile, "harness_installation":HarnessInstal
           "execution_binding":ExecutionBinding, "qualification_decision":QualificationDecision}
 _TYPES.update({cls.schema_name.replace("-", "_"): cls for cls in (InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding)})
 _TYPES["driver_config"] = DriverConfig
+_TYPES["capture_config"] = MuseConfiguration
 _TRIAL_TYPES = {cls.schema_name.replace("-", "_"): cls for cls in
                 (TrialDriverConfig, TrialTaskSpec, TrialWorkerPacket, TrialPacketProjection, TrialReviewerProfile,
                  TrialActivation, TrialPublishIntent, TrialReviewReceipt, LocalReviewAssessment)}
 
 
 def _require(store):
-    if store.format_version not in (2, 3, 4, 5, 6, 7, 8):
+    if store.format_version not in (2, 3, 4, 5, 6, 7, 8, 9):
         raise TaskAlongError("store_upgrade_required", "Versioned history requires the explicit backed-up store upgrade.", exit_code=3)
 
 
@@ -46,6 +48,8 @@ def record_document(store, document, *, operation_key):
         raise TaskAlongError("history_document_invalid", "Only validated immutable profile/binding/decision documents can be stored.")
     document = type(document)(document.to_bytes())
     value = document.to_dict()
+    if value["schema_version"] == "2.9" and store.format_version < 9:
+        raise TaskAlongError("store_upgrade_required", "Muse configuration requires explicit format-9 maintenance.", exit_code=3)
     if value["schema_version"] == "2.2" and store.format_version < 3:
         raise TaskAlongError("store_upgrade_required", "V2 execution policy history requires format 3.", exit_code=3)
     if value["schema_version"] == "2.3" and store.format_version < 4:
