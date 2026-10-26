@@ -54,6 +54,7 @@ def validate_producer(value: dict, binding: dict, system: str, python: str):
     expected = binding | {'format_version': 1, 'os_profile': system, 'python_profile': python,
                          'producer_job_key': f'producer / {system} / Python {python}'}
     if (not isinstance(value, dict) or set(value) != set(expected) | {'artifacts'}
+            or type(value['format_version']) is not int
             or any(value[k] != v for k, v in expected.items())
             or not isinstance(value['artifacts'], dict)
             or set(value['artifacts']) != set(ARTIFACTS.values())
@@ -176,7 +177,7 @@ def validate_lane(directory: Path, binding: dict, system: str, python: str, lane
     validate_producer(producer, binding, system, python)
     canonical = read_json(directory / 'installed-inventory.json')
     if (not isinstance(canonical, dict) or 'test_ids' not in canonical
-            or canonical != inventory_receipt(binding, producer, canonical['test_ids'])):
+            or json_digest(canonical) != json_digest(inventory_receipt(binding, producer, canonical['test_ids']))):
         raise ValueError('producer inventory identity mismatch')
     files = ['producer-identity.json', 'installed-inventory.json', *(f'installed-{mode}.json' for mode in LANES[lane])]
     receipts = {mode: read_json(directory / f'installed-{mode}.json') for mode in LANES[lane]}
@@ -195,7 +196,7 @@ def validate_lane(directory: Path, binding: dict, system: str, python: str, lane
         with path.open('x', encoding='utf-8') as output:
             json.dump(expected, output, sort_keys=True)
             output.write('\n')
-    elif read_json(path) != expected:
+    elif json_digest(read_json(path)) != json_digest(expected):
         raise ValueError('missing, stale or mismatched shard envelope')
     return producer, receipts
 
