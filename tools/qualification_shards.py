@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Seal and aggregate artifact lanes without changing format-2 qualification."""
+"""Seal and aggregate explicitly versioned qualification artifact lanes."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +12,7 @@ import unittest
 
 from qualification_bundle import hashes
 from qualify_installed import (PHASE_SECONDS, QUALIFICATION_SECONDS, REVIEW_SHA256,
-                               is_sha, json_digest, make_schedule,
+                               batch_count, is_sha, json_digest, make_schedule,
                                validate_journey, validate_test_accounting)
 
 PROFILES = [(system, python) for system in ('ubuntu-24.04', 'macos-15')
@@ -100,14 +100,15 @@ def discover_inventory(root: Path):
     return sorted(ids)
 
 
-def validate_receipt(value: dict, producer: dict, mode: str):
+def validate_receipt(value: dict, producer: dict, mode: str, *, format_version: int = 2):
     """Recheck closed terminal receipts, phases and the complete skip inventory."""
     if not isinstance(value, dict) or set(value) != JOURNEY_FIELDS | EXTRA_FIELDS:
         raise ValueError('invalid closed installed receipt')
     core = mode == 'core-only'
     artifact = 'wheel' if core else mode
     system = {'ubuntu-24.04': 'Linux', 'macos-15': 'Darwin'}[producer['os_profile']]
-    fixed = {'format_version': 2, 'artifact': artifact,
+    phase_count = batch_count(format_version)
+    fixed = {'format_version': format_version, 'artifact': artifact,
         'artifact_sha256': producer['artifacts'][ARTIFACTS[artifact]],
         'dependency_lock_sha256': producer['source_files']['requirements-dev.lock'],
         'review_wheel_sha256': None if core else REVIEW_SHA256,
@@ -128,8 +129,10 @@ def validate_receipt(value: dict, producer: dict, mode: str):
         if ids != [] or schedule is not None or value['installed_behavior_tests'] != 0 or value['skipped_platform_cases'] != []:
             raise ValueError('core-only lane cannot substitute behavior coverage')
     else:
-        if (not isinstance(ids, list) or ids != sorted(ids) or schedule != make_schedule(ids)):
-            raise ValueError('behavior inventory differs from format-2 schedule')
+        if (not isinstance(ids, list) or ids != sorted(ids)
+                or schedule != make_schedule(ids, format_version=format_version)
+                or type(schedule['format_version']) is not int):
+            raise ValueError('behavior inventory differs from the declared schedule format')
         skips = value['skipped_platform_cases']
         if not isinstance(skips, list) or any(not isinstance(r, dict) or set(r) != {'test', 'reason', 'required_platform'} for r in skips):
             raise ValueError('invalid skip inventory')
@@ -140,7 +143,7 @@ def validate_receipt(value: dict, producer: dict, mode: str):
         count, _ = validate_test_accounting(schedule, results, system.lower())
         if type(value['installed_behavior_tests']) is not int or value['installed_behavior_tests'] != count:
             raise ValueError('behavior count differs from exact test accounting')
-    phases = ['sample'] if core else ['inventory', 'sample', 'tests-0', 'tests-1']
+    phases = ['sample'] if core else ['inventory', 'sample', *(f'tests-{i}' for i in range(phase_count))]
     if not isinstance(value['phases'], list) or len(value['phases']) != len(phases):
         raise ValueError('missing or duplicate terminal phases')
     for phase, receipt in zip(phases, value['phases']):
@@ -171,7 +174,9 @@ def lane_name(system, python, lane):
     return f'{system}-py{python}-{lane}'
 
 
-def validate_lane(directory: Path, binding: dict, system: str, python: str, lane: str, *, seal=False):
+def validate_lane(directory: Path, binding: dict, system: str, python: str, lane: str, *, seal=False,
+                  format_version: int = 2):
+    batch_count(format_version)
     producer_path = directory / 'producer-identity.json'
     producer = read_json(producer_path)
     validate_producer(producer, binding, system, python)
@@ -182,7 +187,7 @@ def validate_lane(directory: Path, binding: dict, system: str, python: str, lane
     files = ['producer-identity.json', 'installed-inventory.json', *(f'installed-{mode}.json' for mode in LANES[lane])]
     receipts = {mode: read_json(directory / f'installed-{mode}.json') for mode in LANES[lane]}
     for mode, value in receipts.items():
-        validate_receipt(value, producer, mode)
+        validate_receipt(value, producer, mode, format_version=format_version)
         if mode != 'core-only' and value['behavior_test_ids'] != canonical['test_ids']:
             raise ValueError('installed behavior differs from independent producer inventory')
     # All modes in this lane use the same immutable source harness and lock.
@@ -191,6 +196,8 @@ def validate_lane(directory: Path, binding: dict, system: str, python: str, lane
     expected = {'kind': 'qualification_shard', 'format_version': 1, 'lane': lane,
         'os_profile': system, 'python_profile': python, 'binding': binding,
         'files': hashes(directory, files), 'producer_identity_sha256': json_digest(producer)}
+    if format_version == 3:
+        expected.update(format_version=2, qualification_format_version=3)
     path = directory / 'shard.json'
     if seal:
         with path.open('x', encoding='utf-8') as output:
@@ -201,7 +208,8 @@ def validate_lane(directory: Path, binding: dict, system: str, python: str, lane
     return producer, receipts
 
 
-def aggregate(root: Path, binding: dict, profiles=PROFILES):
+def aggregate(root: Path, binding: dict, profiles=PROFILES, *, format_version: int = 2):
+    batch_count(format_version)
     expected = {result_name(binding, system, python, lane) for system, python in profiles for lane in LANES}
     if root.is_symlink() or not root.is_dir() or {p.name for p in root.iterdir()} != expected:
         raise ValueError('missing, duplicate or extra shard results')
@@ -216,7 +224,8 @@ def aggregate(root: Path, binding: dict, profiles=PROFILES):
             allowed = {'shard.json', 'producer-identity.json', 'installed-inventory.json', *(f'installed-{m}.json' for m in LANES[lane])}
             if {p.name for p in directory.iterdir()} != allowed:
                 raise ValueError('extra or missing lane files')
-            producer, receipts = validate_lane(directory, binding, system, python, lane)
+            producer, receipts = validate_lane(directory, binding, system, python, lane,
+                                               format_version=format_version)
             producers.append(producer)
             lanes.update(receipts)
         wheel, sdist = lanes['wheel'], lanes['sdist']
@@ -232,8 +241,11 @@ def aggregate(root: Path, binding: dict, profiles=PROFILES):
             'passed_per_artifact': wheel['installed_behavior_tests'],
             'skips_per_artifact': len(wheel['skipped_platform_cases']),
             'qualification_seconds': {m: r['elapsed_seconds'] for m, r in lanes.items()}})
-    return {'kind': 'qualification_aggregate', 'format_version': 1, 'ok': True,
-            'binding': binding, 'shards': len(expected), 'profiles': summaries}
+    result = {'kind': 'qualification_aggregate', 'format_version': 1, 'ok': True,
+              'binding': binding, 'shards': len(expected), 'profiles': summaries}
+    if format_version == 3:
+        result.update(format_version=2, qualification_format_version=3)
+    return result
 
 
 def main():
@@ -243,6 +255,8 @@ def main():
     parser.add_argument('--os-profile', choices=sorted({s for s, _ in PROFILES}))
     parser.add_argument('--python-profile', choices=sorted({p for _, p in PROFILES}))
     parser.add_argument('--lane', choices=LANES)
+    parser.add_argument('--format-version', type=int, choices=(2, 3), default=2,
+                        help='Explicit qualification format expected by seal/aggregate')
     args = parser.parse_args()
     binding = source_binding(Path(__file__).resolve().parents[1])
     if args.operation == 'inventory':
@@ -254,13 +268,14 @@ def main():
     elif args.operation == 'seal':
         if not all((args.os_profile, args.python_profile, args.lane)):
             parser.error('seal requires profile and lane')
-        validate_lane(args.directory, binding, args.os_profile, args.python_profile, args.lane, seal=True)
+        validate_lane(args.directory, binding, args.os_profile, args.python_profile, args.lane,
+                      seal=True, format_version=args.format_version)
         result = {'kind': 'qualification_shard_sealed', 'ok': True}
     else:
         if args.lane or bool(args.os_profile) != bool(args.python_profile):
             parser.error('aggregate requires either both profile arguments or neither')
         profiles = [(args.os_profile, args.python_profile)] if args.os_profile else PROFILES
-        result = aggregate(args.directory, binding, profiles)
+        result = aggregate(args.directory, binding, profiles, format_version=args.format_version)
     print(json.dumps(result, sort_keys=True))
 
 
