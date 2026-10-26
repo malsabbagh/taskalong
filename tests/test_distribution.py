@@ -17,6 +17,7 @@ import unittest
 from unittest import mock
 from contextlib import redirect_stdout, redirect_stderr
 import zipfile
+import copy
 from pathlib import Path
 
 _SPEC = importlib.util.spec_from_file_location("taskalong_distribution_auditor", Path(__file__).resolve().parents[1] / "tools" / "check_dist.py")
@@ -25,6 +26,202 @@ _SPEC.loader.exec_module(auditor)
 _QUALIFIER_SPEC = importlib.util.spec_from_file_location("taskalong_installed_qualifier", Path(__file__).resolve().parents[1] / "tools" / "qualify_installed.py")
 qualifier = importlib.util.module_from_spec(_QUALIFIER_SPEC)
 _QUALIFIER_SPEC.loader.exec_module(qualifier)
+
+
+class QualificationShardTests(unittest.TestCase):
+    """The final gate must fail closed when a shard result is incomplete."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Distribution tests stay outside the installed behavior inventory.
+        # Import exactly the reviewed tools without changing installed tests.
+        with mock.patch.dict(sys.modules, {'qualification_bundle': cls.load_tool('qualification_bundle'),
+                                           'qualify_installed': qualifier}):
+            cls.shards = cls.load_tool('qualification_shards')
+
+    @staticmethod
+    def load_tool(name):
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parents[1] / 'tools' / (name + '.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def fixture(self, system='ubuntu-24.04', python='3.11'):
+        q = self.shards
+        binding = {'run_id': '1234', 'run_attempt': '2', 'event': 'pull_request',
+                   'source_commit': 'c' * 40, 'source_tree': 'd' * 40,
+                   'source_files': {name: 'a' * 64 for name in ('requirements-dev.lock',
+                       'tools/qualify_installed.py', 'tools/qualify_runtime.py', 'tests/test_a.py')}}
+        producer = binding | {'format_version': 1, 'os_profile': system, 'python_profile': python,
+            'producer_job_key': f'producer / {system} / Python {python}',
+            'artifacts': {name: 'b' * 64 for name in q.ARTIFACTS.values()}}
+        ids = ['test_a.Cases.test_one', 'test_a.Cases.test_two', 'test_b.Cases.test_three']
+        schedule = qualifier.make_schedule(ids)
+        receipts = {}
+        for mode in ('wheel', 'sdist', 'core-only'):
+            core = mode == 'core-only'
+            value = {'kind': 'installed_journey', 'format_version': 2, 'ok': True,
+                'state': 'blocked' if core else 'draft_published', 'qualification': 'synthetic',
+                'review': 'missing-blocks' if core else 'released-fixture-full-diff',
+                'publication': 'review-blocked' if core else 'fixture-lost-response-reconciled-one-create',
+                'python': python + '.9', 'platform': 'Linux' if system.startswith('ubuntu') else 'Darwin',
+                'machine': 'synthetic', 'package_version': '0.1.0a1', 'attempts': 1, 'events': 2,
+                'source_import': False, 'real_sandbox_claim': False,
+                'installed_behavior_tests': 0 if core else len(ids), 'skipped_platform_cases': [],
+                'dependencies': {'jsonschema': '4.26.0', 'certifi': '2026.7.22', 'setuptools': '84.0.0'},
+                'artifact': 'wheel' if core else mode, 'artifact_sha256': 'b' * 64,
+                'behavior_test_ids': [] if core else ids, 'dependency_lock_sha256': 'a' * 64,
+                'editable': False, 'elapsed_seconds': 10, 'environment': 'fresh-venv-external-cwd',
+                'package_snapshot_sha256': 'e' * 64, 'phases': [],
+                'qualification_inputs_sha256': q.harness_digest(producer),
+                'review_wheel_sha256': None if core else qualifier.REVIEW_SHA256,
+                'schedule': None if core else schedule, 'total_budget_seconds': 1500}
+            for phase in (['sample'] if core else ['inventory', 'sample', 'tests-0', 'tests-1']):
+                identity = {'phase': phase, 'artifact_sha256': 'b' * 64,
+                    'harness_sha256': value['qualification_inputs_sha256'], 'lock_sha256': 'a' * 64,
+                    'schedule_sha256': None if core or phase == 'inventory' else qualifier.json_digest(schedule)}
+                parent = {'identity': identity, 'ok': True, 'failure': None, 'budget_seconds': 60 if phase == 'inventory' else 600,
+                    'elapsed_seconds': 1, 'direct_child_exit': 0, 'direct_child_reaped': True,
+                    'descendant_cleanup_confirmed': False, 'secondary_errors': [], 'receipt_persisted': True}
+                for stream in ('stdout', 'stderr'):
+                    parent[stream] = {'file': f'diagnostics/{phase}.{stream}', 'bytes': 1,
+                                      'truncated': False, 'sha256': 'f' * 64}
+                value['phases'].append(parent)
+            receipts[mode] = value
+        return binding, producer, receipts
+
+    def write_lanes(self, root, binding, producer, receipts):
+        q = self.shards
+        system, python = producer['os_profile'], producer['python_profile']
+        for lane, modes in q.LANES.items():
+            directory = root / q.result_name(binding, system, python, lane)
+            directory.mkdir()
+            (directory / 'producer-identity.json').write_text(json.dumps(producer))
+            canonical = q.inventory_receipt(binding, producer, receipts['wheel']['behavior_test_ids'])
+            (directory / 'installed-inventory.json').write_text(json.dumps(canonical))
+            for mode in modes:
+                (directory / f'installed-{mode}.json').write_text(json.dumps(receipts[mode]))
+            q.validate_lane(directory, binding, system, python, lane, seal=True)
+
+    def test_complete_matrix_requires_all_sixteen_shards(self):
+        q = self.shards
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            for system, python in q.PROFILES:
+                binding, producer, receipts = self.fixture(system, python)
+                self.write_lanes(root, binding, producer, receipts)
+            result = q.aggregate(root, binding)
+            self.assertTrue(result['ok'])
+            self.assertEqual(result['shards'], 16)
+            self.assertEqual(len(result['profiles']), 8)
+            for directory in root.iterdir():
+                if directory.is_dir():
+                    (directory / 'shard.json').unlink()
+                    break
+            with self.assertRaises(ValueError):
+                q.aggregate(root, binding)
+
+    def test_receipts_refuse_omissions_duplicates_skips_and_phase_faults(self):
+        q = self.shards
+        _, producer, receipts = self.fixture()
+        original = receipts['wheel']
+        mutations = [
+            lambda v: v['phases'].pop(),
+            lambda v: v['phases'].append(copy.deepcopy(v['phases'][0])),
+            lambda v: v['behavior_test_ids'].pop(),
+            lambda v: v['behavior_test_ids'].append(v['behavior_test_ids'][0]),
+            lambda v: v.update(installed_behavior_tests=2),
+            lambda v: v.update(total_budget_seconds=1501),
+            lambda v: v.update(source_import=True),
+            lambda v: v.update(artifact_sha256='0' * 64),
+            lambda v: v.update(dependency_lock_sha256='0' * 64),
+            lambda v: v.update(qualification_inputs_sha256='0' * 64),
+            lambda v: v.update(elapsed_seconds=float('inf')),
+            lambda v: v['phases'][2]['identity'].update(schedule_sha256='0' * 64),
+            lambda v: v['phases'][2].update(ok=False),
+            lambda v: v['phases'][2].update(budget_seconds=601),
+            lambda v: v['phases'][2]['stderr'].update(truncated=True),
+            lambda v: v['skipped_platform_cases'].append({'test': v['behavior_test_ids'][0],
+                'reason': 'new skip', 'required_platform': 'Darwin'}),
+        ]
+        q.validate_receipt(original, producer, 'wheel')
+        for index, mutate in enumerate(mutations):
+            with self.subTest(fault=index):
+                value = copy.deepcopy(original)
+                mutate(value)
+                with self.assertRaises(ValueError):
+                    q.validate_receipt(value, producer, 'wheel')
+
+    def test_aggregate_refuses_missing_extra_duplicate_stale_and_tampered_results(self):
+        q = self.shards
+        binding, producer, receipts = self.fixture()
+        profile = [('ubuntu-24.04', '3.11')]
+        for fault in ('missing', 'duplicate', 'extra-file', 'stale-attempt', 'producer', 'receipt', 'envelope', 'symlink'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as scratch:
+                root = Path(scratch)
+                self.write_lanes(root, binding, producer, receipts)
+                lane = root / q.result_name(binding, *profile[0], 'sdist')
+                if fault == 'missing':
+                    import shutil
+                    shutil.rmtree(lane)
+                elif fault == 'duplicate':
+                    import shutil
+                    shutil.copytree(lane, root / 'duplicate')
+                elif fault == 'extra-file':
+                    (lane / 'unexpected.json').write_text('{}')
+                elif fault == 'stale-attempt':
+                    binding = binding | {'run_attempt': '3'}
+                elif fault in ('producer', 'receipt', 'envelope'):
+                    path = lane / {'producer': 'producer-identity.json', 'receipt': 'installed-sdist.json', 'envelope': 'shard.json'}[fault]
+                    value = json.loads(path.read_text())
+                    if fault == 'producer':
+                        value['artifacts'][q.ARTIFACTS['wheel']] = '0' * 64
+                    elif fault == 'receipt':
+                        value['events'] += 1
+                    else:
+                        value['lane'] = 'wheel-core'
+                    path.write_text(json.dumps(value))
+                else:
+                    path = lane / 'installed-sdist.json'
+                    raw = path.read_text()
+                    path.unlink()
+                    target = root / 'linked.json'
+                    target.write_text(raw)
+                    path.symlink_to(target)
+                with self.assertRaises(ValueError):
+                    q.aggregate(root, binding, profile)
+                binding, _, _ = self.fixture()
+
+    def test_even_resealed_sdist_cannot_change_inventory_or_producer(self):
+        q = self.shards
+        profile = [('ubuntu-24.04', '3.11')]
+        for fault in ('inventory', 'producer'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as scratch:
+                root = Path(scratch)
+                binding, producer, receipts = self.fixture()
+                self.write_lanes(root, binding, producer, receipts)
+                lane = root / q.result_name(binding, *profile[0], 'sdist')
+                (lane / 'shard.json').unlink()
+                if fault == 'producer':
+                    producer['artifacts'][q.ARTIFACTS['wheel']] = '0' * 64
+                    (lane / 'producer-identity.json').write_text(json.dumps(producer))
+                    canonical = q.inventory_receipt(binding, producer, receipts['wheel']['behavior_test_ids'])
+                    (lane / 'installed-inventory.json').write_text(json.dumps(canonical))
+                else:
+                    receipt = receipts['sdist']
+                    receipt['behavior_test_ids'] = receipt['behavior_test_ids'][:2]
+                    receipt['schedule'] = qualifier.make_schedule(receipt['behavior_test_ids'])
+                    receipt['installed_behavior_tests'] = 2
+                    for phase in receipt['phases'][1:]:
+                        phase['identity']['schedule_sha256'] = qualifier.json_digest(receipt['schedule'])
+                    (lane / 'installed-sdist.json').write_text(json.dumps(receipt))
+                if fault == 'inventory':
+                    with self.assertRaises(ValueError):
+                        q.validate_lane(lane, binding, *profile[0], 'sdist', seal=True)
+                    continue
+                q.validate_lane(lane, binding, *profile[0], 'sdist', seal=True)
+                with self.assertRaises(ValueError):
+                    q.aggregate(root, binding, profile)
 
 
 class DistributionTests(unittest.TestCase):

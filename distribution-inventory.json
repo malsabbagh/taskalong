@@ -423,6 +423,7 @@
     "tools/normalize_sdist.py",
     "tools/ordered_fixture.py",
     "tools/qualification_bundle.py",
+    "tools/qualification_shards.py",
     "tools/qualify_installed.py",
     "tools/qualify_runtime.py",
     "tools/sync_guides.py"
