@@ -82,10 +82,12 @@ live providers, hard token/cost guarantees and unknown versions refuse.
 Each worker reserves its full `attempt_seconds` and `attempt_output_bytes` before
 launch; each final pass reserves its declared time and output. Reservations never
 refund. `reservation_totals` records those allowances separately from
-`budget_consumed.output_bytes`, which records captured output. Legacy
-`budget_consumed.active_seconds` remains the conservative worker time reservation;
-process duration is retained on each private attempt. Token/cost usage remains
-unknown where unsupported. The final time declaration must cover every declared
+`observed_usage`, which reports measured worker duration and captured output.
+An unfinished worker or uncertain capture leaves the relevant observed total
+unknown. Legacy `budget_consumed.active_seconds` remains the conservative worker
+time reservation; legacy output consumption can also retain a conservative bound
+after an uncertain capture. Token/cost usage remains unknown where unsupported.
+The final time declaration must cover every declared
 check timeout plus the existing two 15-second reviewer probes and 60-second review.
 Replaying an operation returns the original receipt without another charge/launch.
 

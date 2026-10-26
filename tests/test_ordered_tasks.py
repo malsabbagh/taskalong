@@ -135,6 +135,8 @@ class OrderedTasksTests(OrderedFixture,unittest.TestCase):
         self.assertIsNone(run['candidate']);self.assertIsNone(run['acceptance_id'])
         code,view=self.cli('result',run['run_id']);self.assertEqual(code,0,view)
         self.assertEqual(view['data']['next_actions'],['advance']);self.assertFalse(view['data']['independently_accepted'])
+        self.assertLess(view['data']['observed_usage']['worker_duration_ms'],run['reservation_totals']['active_seconds']*1000)
+        self.assertLess(view['data']['observed_usage']['captured_output_bytes'],run['reservation_totals']['output_bytes'])
         self.assertEqual(len(self.invocations()),1)
         self.assertEqual(run['reservation_totals']['attempts'],1)
 
