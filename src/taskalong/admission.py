@@ -29,7 +29,7 @@ def _refuse(code="execution_projection_unsupported"):
 
 
 def _require(store):
-    if store.format_version not in (3, 4, 5, 6, 7, 8):
+    if store.format_version not in (3, 4, 5, 6, 7, 8, 9):
         _refuse("store_upgrade_required")
 
 
@@ -140,7 +140,7 @@ def registered_profile(store, binding_digest):
 
 
 def registered_driver_config(store, binding_digest):
-    if store.format_version not in (4, 5, 6, 7, 8):
+    if store.format_version not in (4, 5, 6, 7, 8, 9):
         _refuse("store_upgrade_required")
     registration = _registration(store, binding_digest)
     version = registration.get("schema_version")
@@ -158,6 +158,12 @@ def registered_driver_config(store, binding_digest):
 def worker_contract(store, spec, configuration):
     """Resolve an immutable driver selection; this does not grant dispatch."""
     from .executors.registry import contract_for
+    if spec["schema_version"] == "2.9":
+        from .muse_handoff import configuration as muse_configuration, PROJECTION
+        retained = muse_configuration(store, spec["execution"]["driver_config_digest"])
+        if retained != configuration:
+            _refuse("execution_identity_mismatch")
+        return contract_for(retained, task_version="2.9", projection=PROJECTION), None
     if spec["schema_version"] == "1.0":
         return contract_for(configuration), None
     getter = registered_driver_config if spec["schema_version"] in {"2.3", "2.4", "2.5", "2.6"} else registered_profile
@@ -171,6 +177,9 @@ def worker_contract(store, spec, configuration):
 
 def resolve(store, spec, *, mode="start", authority_id=None):
     """Resolve current trusted facts; caller owns the transaction/fence boundary."""
+    if spec["schema_version"] == "2.9":
+        from .muse_handoff import resolve as resolve_muse
+        return resolve_muse(store, spec, mode=mode, authority_id=authority_id)
     is_driver = spec["schema_version"] in {"2.3", "2.4", "2.5", "2.6"}
     getter = registered_driver_config if is_driver else registered_profile
     profile, registration = getter(store, spec["execution"]["binding_digest"])

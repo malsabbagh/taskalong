@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.9:result-view",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "run_id",
+    "revision",
+    "state",
+    "outcome",
+    "independently_accepted",
+    "acceptance_digest",
+    "canonical_packet_digest",
+    "evidence_artifacts",
+    "production_dispatch_allowed",
+    "digest",
+    "execution_handoff_digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "result_view"
+    },
+    "schema_version": {
+      "const": "2.9"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "state": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "outcome": {
+      "enum": [
+        "pending",
+        "unknown",
+        "execution_handoff_ready",
+        "accepted",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "independently_accepted": {
+      "type": "boolean"
+    },
+    "acceptance_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "canonical_packet_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence_artifacts": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha256",
+          "bytes",
+          "media_type",
+          "redaction_version"
+        ],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "redaction_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    "production_dispatch_allowed": {
+      "const": false
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+    },
+    "execution_handoff_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "anyOf": [
+          {
+            "properties": {
+              "outcome": {
+                "const": "accepted"
+              }
+            }
+          },
+          {
+            "properties": {
+              "independently_accepted": {
+                "const": true
+              }
+            }
+          },
+          {
+            "properties": {
+              "state": {
+                "const": "accepted"
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "accepted"
+          },
+          "outcome": {
+            "const": "accepted"
+          },
+          "independently_accepted": {
+            "const": true
+          },
+          "acceptance_digest": {
+            "type": "string"
+          },
+          "execution_handoff_digest": {
+            "type": "string"
+          },
+          "canonical_packet_digest": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "execution_handoff_ready"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "execution_handoff_digest": {
+            "type": "string"
+          },
+          "canonical_packet_digest": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

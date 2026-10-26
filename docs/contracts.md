@@ -4,6 +4,25 @@ The original provisional contracts use schema version `1.0`; the package/API ver
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).
 
+## Muse supervisor handoff v2.9
+
+Seven additive schemas use the closed `muse-plain-fixture/1` contract. A task
+names an immutable capture-config instead of inventing an observed M2 provider.
+The supervisor retains opaque original output and authors `execution_handoff`;
+it never fabricates a vendor worker-result or session. Exact Store operations,
+authority, admission, packet, lease, captures, cessation and workspace snapshot
+must agree before independent verification. Model/session/usage remain unknown.
+The read-only result reports `execution_handoff_ready`, separately from acceptance.
+Its schema requires accepted state, outcome and independent-acceptance flag to
+agree, with acceptance, handoff and packet digests present. Handoff readiness
+requires handoff and packet digests. These consistency rules supply no Store
+authority; nonaccepted views may retain a prior assessment digest.
+
+Explicit format 9 is required for executable history. Earlier schema/SQL bytes
+and registry tuples retain their meanings. This route accepts registered original
+synthetic executables only, refuses production/native resume/provider lookup and
+cannot publish. See the proposed [handoff ADR](adr/0012-muse-supervisor-handoff.md).
+
 ## Antigravity fixture contracts v2.6
 
 Four additive resources define task-spec, driver-config, worker-packet and

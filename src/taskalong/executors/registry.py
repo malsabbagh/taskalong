@@ -10,6 +10,7 @@ from functools import partial
 
 from ..errors import TaskAlongError
 from .base import HarnessDriver
+from .muse_fixture import MuseFixtureDriver, compile_packet as compile_muse_packet
 from .codex_cli import CodexCLI
 from .cursor_cli import CursorCLI, compile_packet as compile_cursor_packet, represent as represent_cursor
 from .cursor_cli import _represent_provider as cursor_provider
@@ -41,8 +42,9 @@ class CaptureContract:
 class DriverContract:
     factory: Callable
     compile_packet: Callable
-    represent: Callable
+    represent: Callable | None  # Supervisor handoffs do not represent an M2 provider.
     capture: CaptureContract | None = None
+    supervisor_handoff: str | None = None
 
 
 def _codex_packet(fields, admission):
@@ -88,6 +90,9 @@ def _agy_decoder(packet, config, attempt, limit):
 
 _CODEX = DriverContract(lambda configuration, provider: CodexCLI(configuration), _codex_packet, represent_codex)
 _CONTRACTS = MappingProxyType({
+    ("2.9", "muse-plain-fixture/1", "capture_config", "2.9"): DriverContract(
+        lambda config, provider: MuseFixtureDriver(config), compile_muse_packet, None,
+        supervisor_handoff="muse-execution-handoff/1"),
     ("1.0", "codex-v1", "runtime_profile", "1.0"): _CODEX,
     ("2.2", "codex-v1-fixture/1", "runtime_profile", "1.0"): _CODEX,
     ("2.3", "claude-print-fixture/1", "driver_config", "2.3"): DriverContract(_claude_driver, compile_claude_packet, represent_claude),

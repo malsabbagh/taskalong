@@ -7,6 +7,12 @@ a separate sandbox seam. Explicit versioned Codex and Claude fixture contracts
 are registered; both refuse production while actual runtime qualification is
 incomplete. No task-selected imports, arbitrary vendor flags or fallback exist.
 
+The synthetic Muse route adds a distinct supervisor-authored execution handoff
+for plain opaque output. It binds authoritative Store operations, owned cessation
+and a scope snapshot, then uses the same candidate/verification/acceptance path.
+It does not invent a vendor result or provider identity. See the proposed
+[handoff ADR](adr/0012-muse-supervisor-handoff.md); production remains refused.
+
 Worker results are untrusted data bound to exact packet, task, attempt and
 candidate inputs. Deterministic checks and independent ReviewSensei evidence
 cannot be replaced by a worker's success claim. External effects have durable

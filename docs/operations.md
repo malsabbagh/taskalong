@@ -12,6 +12,25 @@ remain unqualified; a passing no-model command probe or operator-supplied receip
 ID does not remove this gate. Synthetic test profiles exercise the implemented
 core without enabling live source transmission.
 
+The offline Muse fixture route requires an explicitly upgraded format 9 Store.
+The trusted Python API `RunService.configure_muse_capture(document)` registers
+its exact original executable, independent check profile, checks/review digests
+and command sandbox; task-spec 2.9 then uses normal submit/start/status/cancel
+and verification. Configuration grants no execution authority. The closed route
+allows at most 60 seconds and 1 MiB per attempt, and no hard token/cost claim.
+Unknown cessation or incomplete capture persistence quarantines the attempt;
+repeated start cannot rerun it. No vendor login, model call or live qualification
+follows from fixture success. See [the contract](adr/0012-muse-supervisor-handoff.md).
+
+Cancelling a completed Muse fixture run reports a pending result until explicit
+reconciliation confirms cancellation. The existing completed handoff, captures
+and consumed budgets remain intact; missing evidence or unresolved effects still
+refuse reconciliation. Cancellation prevents new handoff creation or completion.
+After workspace retirement, `inspect` retains the run history; the Muse current-lease
+result view refuses with `lease_retired`, and start and verification remain
+forbidden. Retirement does not add a historical result API or restore execution
+authority.
+
 State belongs outside repositories and site-packages. Linux defaults to
 `$XDG_STATE_HOME/taskalong` (absolute paths only) or `~/.local/state/taskalong`;
 macOS defaults to `~/Library/Application Support/TaskAlong`. An explicit operator

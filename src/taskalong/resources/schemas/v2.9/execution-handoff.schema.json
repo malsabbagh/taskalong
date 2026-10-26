@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.9:execution-handoff",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "execution_handoff"
+    },
+    "schema_version": {
+      "const": "2.9"
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "producer_role": {
+      "const": "supervisor"
+    },
+    "projection": {
+      "const": "muse-plain-fixture/1"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "attempt_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "spec_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "packet_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "admission_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "driver_config_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "authority_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "workspace_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "lease_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "capture_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "process_observation_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "process_receipt_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "workspace_snapshot": {
+      "type": "object",
+      "properties": {
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "content_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        },
+        "changed_files": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "operation": {
+                "enum": [
+                  "add",
+                  "modify",
+                  "delete"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "operation"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "head",
+        "content_digest",
+        "manifest_sha256",
+        "changed_files"
+      ],
+      "additionalProperties": false
+    },
+    "observed_model": {
+      "type": "null"
+    },
+    "observed_session": {
+      "type": "null"
+    },
+    "usage": {
+      "const": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cost_usd": null
+      }
+    },
+    "outcome": {
+      "const": "local_turn_completed"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "extensions",
+    "producer_role",
+    "projection",
+    "run_id",
+    "attempt_id",
+    "spec_digest",
+    "packet_digest",
+    "admission_digest",
+    "driver_config_digest",
+    "authority_id",
+    "workspace_id",
+    "lease_generation",
+    "capture_digest",
+    "process_observation_digest",
+    "process_receipt_digest",
+    "workspace_snapshot",
+    "observed_model",
+    "observed_session",
+    "usage",
+    "outcome",
+    "digest"
+  ],
+  "additionalProperties": false
+}

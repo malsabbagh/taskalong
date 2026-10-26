@@ -38,6 +38,11 @@ class RunService:
     def register_profile(self, profile):
         return self._workflow.register_profile(profile)
 
+    def configure_muse_capture(self, configuration):
+        """Trusted original synthetic Muse registration, not a live capability grant."""
+        from .muse_handoff import configure
+        return configure(self._store, configuration)
+
     def configure_execution(self, **configuration):
         """Trusted operator fixture registration; task/worker JSON cannot call it."""
         from .admission import configure_execution
@@ -75,6 +80,9 @@ class RunService:
             raise TaskAlongError("execution_mode_unsupported", "Select an explicit supported observation mode.")
         run = self._store.run(run_id)
         spec = self._store.spec(run)
+        if spec["schema_version"] == "2.9":
+            from .muse_handoff import capabilities_view
+            return capabilities_view(self._store, run, spec, mode)
         binding, satisfied, decision, reasons = None, None, None, ["v1_runtime_unqualified"]
         if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6"}:
             binding = spec["execution"]["binding_digest"]
@@ -97,6 +105,9 @@ class RunService:
         task/policy bodies, runtime paths, credentials and logs are excluded.
         """
         run = self._store.run(run_id)
+        if self._store.spec(run)["schema_version"] == "2.9":
+            from .muse_handoff import result_view
+            return result_view(self._store, run)
         attempt = self._store.detail("attempts", run["attempts"][-1]["attempt_id"]) if run["attempts"] else None
         from .executors.observed_capture import validate_completed_run
         validate_completed_run(self._store, run)
