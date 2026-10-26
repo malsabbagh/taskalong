@@ -1,7 +1,7 @@
 """Format-11 fence preserves accepted M10 and all predecessor private history.
 
 The pinned reader and resource inventory come from accepted M10 commit
-b796a651cf064d52cccf970d01a9b9f9bc0f1748. No live executor is registered or run.
+b7e50ef8109912a2d45f7067c1d241a1a9759b47. No live executor is registered or run.
 """
 import copy
 import hashlib

@@ -27,6 +27,25 @@ class ArtifactIOTests(unittest.TestCase):
         return read_regular(self.root, "value", max_bytes=len(self.payload),
                             expected_sha256=self.sha, expected_bytes=len(self.payload), **options)
 
+    def test_add_absence_is_observational_and_refuses_existing_entries(self):
+        artifact_io.require_absent(self.root,"missing/parent/leaf")
+        self.assertFalse((self.root/"missing").exists())
+        self.rejects(lambda:artifact_io.require_absent(self.root,"value"))
+        (self.root/"link").symlink_to(self.root/"missing")
+        self.rejects(lambda:artifact_io.require_absent(self.root,"link"))
+        self.rejects(lambda:artifact_io.require_absent(self.root,"link/leaf"))
+        self.rejects(lambda:artifact_io.require_absent(self.root/"absent-root","leaf"))
+
+    def test_fresh_add_exclusive_creation_refuses_entry_after_absence_check(self):
+        artifact_io.require_absent(self.root,"new")
+        target=self.root/"new"
+        target.write_bytes(self.payload)
+        target.chmod(0o644)
+        before=target.stat().st_mtime_ns
+        self.rejects(lambda:apply_regular(self.root,"new",self.payload,before_sha256=None,before_bytes=None))
+        self.assertEqual(target.read_bytes(),self.payload)
+        self.assertEqual(target.stat().st_mtime_ns,before)
+
     def test_os_controlled_alias_prefixes_preserve_private_store_readback(self):
         from taskalong.store import Store
         selected = self.root

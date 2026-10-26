@@ -156,8 +156,10 @@ class ArtifactImportTests(HandoffFixture, unittest.TestCase):
             apply_regular(*args,**kwargs)
             current=self.service._store.run(first["run_id"])
             self.service.cancel(first["run_id"],operation_key="cancel-import",expected_revision=current["revision"])
-        with patch("taskalong.artifact_io.apply_regular",side_effect=cancel_after_write):
+        with patch("taskalong.artifact_io.apply_regular",side_effect=cancel_after_write), \
+             patch("taskalong.artifact_io.stage_regular") as stage:
             drive_run(self.state,first["run_id"],prepared["active_attempt_id"])
+        stage.assert_not_called()
         stopped=self.service.inspect(first["run_id"])
         self.assertEqual(stopped["state"],"cancel_pending",stopped)
         self.assertEqual(len(self.starts()),1)
@@ -169,7 +171,65 @@ class ArtifactImportTests(HandoffFixture, unittest.TestCase):
         self.assertEqual(final["pending_effect_ids"],[])
         self.assertEqual(len(self.starts()),1)
 
+    def test_cancellation_between_envelope_and_payload_preserves_only_staged_envelope(self):
+        first,_=self.first(self.patch_task())
+        with patch.object(self.service._workflow,"_launch_supervisor",lambda *a:None):
+            prepared=self.advance(first)
+        from taskalong.workflow import drive_run
+        from taskalong.artifact_io import stage_regular
+        staged=[]
+        def cancel_after_stage(*args,**kwargs):
+            stage_regular(*args,**kwargs)
+            staged.append(Path(args[0])/args[1])
+            current=self.service._store.run(first["run_id"])
+            self.service.cancel(first["run_id"],operation_key="cancel-staged-envelope",expected_revision=current["revision"])
+        with patch("taskalong.artifact_io.stage_regular",side_effect=cancel_after_stage):
+            drive_run(self.state,first["run_id"],prepared["active_attempt_id"])
+        self.assertEqual(len(staged),1,"Cancellation must prevent the referenced payload staging write")
+        original=(staged[0].read_bytes(),staged[0].stat().st_mtime_ns)
+        stopped=self.service.inspect(first["run_id"])
+        reserved=copy.deepcopy(stopped["reservation_totals"])
+        with patch("taskalong.artifact_io.stage_regular") as stage:
+            final=self.service.reconcile(first["run_id"],operation_key="observe-cancelled-stage",expected_revision=stopped["revision"])
+        stage.assert_not_called()
+        self.assertEqual(final["state"],"cancelled",final)
+        self.assertEqual(final["reservation_totals"],reserved)
+        self.assertEqual((staged[0].read_bytes(),staged[0].stat().st_mtime_ns),original)
+        self.assertEqual(len(self.starts()),1)
+
+    def assert_existing_add_refused(self, *, identical):
+        task=self.patch_task()
+        path=self.executables[self.direction[0]].with_suffix(".mode.json")
+        settings=loads(path.read_bytes())
+        payload=BEFORE if identical else FIXED.encode()
+        entry=settings["patch"]["files"][0] | {"operation":"add","before_sha256":None,"before_bytes":None,
+            "after_sha256":hashlib.sha256(payload).hexdigest(),"after_bytes":len(payload)}
+        settings.update(patch=seal_versioned("file-set-patch",{"files":[entry]},version="2.10"),payload=payload.decode())
+        path.write_text(json.dumps(settings))
+        task["steps"][1]["import_scope"]["operations"]=["add"]
+        first,_=self.first(seal_versioned("task-spec",task,version="2.10"))
+        self.advance(first)
+        final=self.wait(first["run_id"],timeout=35)
+        attempt=self.service._store.detail("attempts",final["attempts"][-1]["attempt_id"])
+        self.assertFalse(attempt.get("import_committed"),"Fresh adds must require absence even when bytes match")
+        self.assertNotIn("import_journal_blob_sha256",attempt)
+        self.assertEqual((Path(attempt["workspace"]["path"])/"second.py").read_bytes(),BEFORE)
+        self.assertEqual(len(self.starts()),1)
+        self.assertIsNone(final["acceptance_id"])
+
+    def test_fresh_add_refuses_identical_existing_bytes(self):
+        self.assert_existing_add_refused(identical=True)
+
+    def test_fresh_add_refuses_differing_existing_bytes(self):
+        self.assert_existing_add_refused(identical=False)
+
     def test_sigkill_between_files_recovers_exact_journal_once(self):
+        self.assert_interrupted_import_recovers(after_add=False)
+
+    def test_sigkill_after_add_recovers_exact_after_without_rewriting(self):
+        self.assert_interrupted_import_recovers(after_add=True)
+
+    def assert_interrupted_import_recovers(self, *, after_add):
         task = self.patch_task()
         settings=loads(self.executables[self.direction[0]].with_suffix(".mode.json").read_bytes())
         extra=copy.deepcopy(settings["patch"]["files"][0]) | {"path":"extra.txt","operation":"add","before_sha256":None,"before_bytes":None}
@@ -188,18 +248,18 @@ import os,signal,sys
 from taskalong._supervisor import run_guard
 from taskalong.workflow import drive_run
 from taskalong import artifact_io
-state,run,attempt,fd=sys.argv[1:];fd=int(fd)
+state,run,attempt,fd,barrier_count=sys.argv[1:];fd=int(fd);barrier_count=int(barrier_count)
 original=artifact_io.apply_regular
 count=0
 def barrier(*args,**kwargs):
     global count
     original(*args,**kwargs);count+=1
-    if count==1:
+    if count==barrier_count:
         os.write(fd,b'W');signal.pause()
 artifact_io.apply_regular=barrier
 with run_guard(state,run):drive_run(state,run,attempt)
 '''
-        child=subprocess.Popen([sys.executable,"-B","-c",program,str(self.state),first["run_id"],prepared["active_attempt_id"],str(writer)],
+        child=subprocess.Popen([sys.executable,"-B","-c",program,str(self.state),first["run_id"],prepared["active_attempt_id"],str(writer),"2" if after_add else "1"],
             pass_fds=(writer,),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         os.close(writer)
         try:
@@ -210,7 +270,8 @@ with run_guard(state,run):drive_run(state,run,attempt)
             workspace=Path(self.service._store.lease(self.service._store.run(first["run_id"]))["workspace"]["path"])
             first_mtime=(workspace/"second.py").stat().st_mtime_ns
             self.assertEqual((workspace/"second.py").read_text(),FIXED)
-            self.assertFalse((workspace/"extra.txt").exists())
+            self.assertEqual((workspace/"extra.txt").exists(),after_add)
+            add_mtime=(workspace/"extra.txt").stat().st_mtime_ns if after_add else None
             child.send_signal(signal.SIGKILL);child.communicate(timeout=5)
             self.assertEqual(child.returncode,-signal.SIGKILL)
             current=self.service._store.run(first["run_id"])
@@ -228,6 +289,8 @@ with run_guard(state,run):drive_run(state,run,attempt)
             self.assertEqual(recovered["attempt_id"],original_attempt["attempt_id"])
             self.assertEqual((workspace/"extra.txt").read_text(),FIXED)
             self.assertEqual((workspace/"second.py").stat().st_mtime_ns,first_mtime)
+            if after_add:
+                self.assertEqual((workspace/"extra.txt").stat().st_mtime_ns,add_mtime)
             self.assertEqual(final["reservation_totals"]["attempts"],reservations["attempts"])
             self.assertEqual(len(self.starts()),2)
         finally:

@@ -320,9 +320,22 @@ def expected_manifest(workspace, before, files, store):
     return [manifest[k] for k in sorted(manifest)]
 
 
+def require_import_owner(store, run, attempt):
+    """Re-read cancellation and current ownership before each new import write."""
+    from .steps import require_finish_identity
+    current=store.run(run["run_id"])
+    if current["state"] == "cancel_pending":
+        refuse("cancel_pending",uncertain=True)
+    if (current["active_attempt_id"] != attempt["attempt_id"]
+            or current["lease_generation"] != attempt["lease_generation"]):
+        refuse("artifact_import_changed",uncertain=True)
+    store.require_fence(current,attempt["lease_generation"])
+    require_finish_identity(current,store.spec(current),store.detail("attempts",attempt["attempt_id"]))
+
+
 def prepare_import(store, run, attempt, manager, workspace):
     """Own/journal imports after target reservation, before executor intent."""
-    from .artifact_io import read_regular, stage_regular, apply_regular
+    from .artifact_io import read_regular, require_absent, stage_regular, apply_regular
     from .steps import contains
     from .workflow import _effect, _observe_effect
     spec = store.spec(run)
@@ -336,7 +349,8 @@ def prepare_import(store, run, attempt, manager, workspace):
         return inherit_import(store, run, attempt, first)
     admission = attempt["dispatch_admission"]
     _, configuration, _ = admit(store,spec,index,authority_id=attempt["admission"]["authority_id"])
-    if attempt.get("import_journal_blob_sha256"):
+    retained_journal=bool(attempt.get("import_journal_blob_sha256"))
+    if retained_journal:
         journal_sha = attempt["import_journal_blob_sha256"]
         journal = blob_document(store,journal_sha,"import-journal")
         if any(journal[k] != v for k,v in subject(run,attempt).items()):
@@ -380,6 +394,8 @@ def prepare_import(store, run, attempt, manager, workspace):
                 refuse("artifact_import_scope")
             if f["before_sha256"] is not None:
                 read_regular(workspace["path"], f["path"], max_bytes=MAX_BYTES, expected_sha256=f["before_sha256"], expected_bytes=f["before_bytes"])
+            else:
+                require_absent(workspace["path"],f["path"])
         after = expected_manifest(workspace,snapshot["manifest"],files,store)
         authority = store.authority(run,{"execute","verify","commit_candidate"},spec["digest"])
         fields = subject(run,attempt) | {"workspace_id":workspace["workspace_id"],"binding_digest":target["binding_digest"],
@@ -414,11 +430,10 @@ def prepare_import(store, run, attempt, manager, workspace):
         return store.detail("attempts",attempt["attempt_id"])
     # Exact journal/recovery; only known before/after states may be reconciled.
     for f in files:
-        current=store.run(run["run_id"])
-        if current["state"] == "cancel_pending":
-            refuse("cancel_pending",uncertain=True)
-        apply_regular(workspace["path"],f["path"],store.get_blob(f["payload_sha256"]),before_sha256=f["before_sha256"],
-                      before_bytes=f["before_bytes"],mode=f["mode"],allow_after=True)
+        payload=store.get_blob(f["payload_sha256"])
+        require_import_owner(store,run,attempt)
+        apply_regular(workspace["path"],f["path"],payload,before_sha256=f["before_sha256"],
+                      before_bytes=f["before_bytes"],mode=f["mode"],allow_after=retained_journal)
     scratch=Path(workspace["path"])/workspace["scratch_relative"]
     for entry in entries:
         ref=entry["output"]["artifact"]
@@ -426,13 +441,17 @@ def prepare_import(store, run, attempt, manager, workspace):
             read_regular(scratch,entry["staged_relative_path"],max_bytes=MAX_BYTES,expected_sha256=ref["sha256"],expected_bytes=ref["bytes"],private=True,expected_mode=0o400)
         except TaskAlongError:
             # O_EXCL creation preserves an existing conflicting path.
-            stage_regular(scratch,entry["staged_relative_path"],artifact_bytes(store,ref),expected_sha256=ref["sha256"])
+            payload=artifact_bytes(store,ref)
+            require_import_owner(store,run,attempt)
+            stage_regular(scratch,entry["staged_relative_path"],payload,expected_sha256=ref["sha256"])
         for pi,payload in enumerate(entry["output"]["payloads"]):
             path=entry["staged_relative_path"]+"-payload-"+str(pi)
             try:
                 read_regular(scratch,path,max_bytes=MAX_BYTES,expected_sha256=payload["artifact"]["sha256"],private=True,expected_mode=0o400)
             except TaskAlongError:
-                stage_regular(scratch,path,artifact_bytes(store,payload["artifact"]),expected_sha256=payload["artifact"]["sha256"])
+                raw=artifact_bytes(store,payload["artifact"])
+                require_import_owner(store,run,attempt)
+                stage_regular(scratch,path,raw,expected_sha256=payload["artifact"]["sha256"])
     if manager.snapshot(workspace,spec["scope"],expected_head=spec["repository"]["base_commit"])["content_digest"] != journal["after_content_digest"]:
         refuse("artifact_import_changed",uncertain=True)
     resolution=seal_versioned("resolved-inputs",fields | {"import_journal_blob_sha256":journal_sha},version=VERSION)

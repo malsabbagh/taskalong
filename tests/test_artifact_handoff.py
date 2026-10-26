@@ -194,6 +194,60 @@ class SharedHandoffContract:
         self.assertEqual(observed["steps"][1]["receipt_digest"],None)
         return observed
 
+    def test_finish_identity_guards_same_step_retry_before_and_during_commit(self):
+        first,_=self.first()
+        self.set_driver_mode(self.direction[1],"failed")
+        self.advance(first)
+        failed=self.wait(first["run_id"],timeout=25)
+        self.assertEqual(failed["steps"][1]["status"],"failed",failed)
+        older=failed["steps"][1]["attempt_ids"][0]
+        self.set_driver_mode(self.direction[1],"good")
+        with patch.object(self.service._workflow,"_launch_supervisor",lambda *a:None):
+            prepared=self.service.retry(first["run_id"],expected_step_id="B",operation_key="finish-identity-retry",expected_revision=failed["revision"])
+        from taskalong import workflow, steps
+        from taskalong.store import encode
+        captured=[]
+        finish=workflow._finish_attempt
+        def retain_result(store,run_id,attempt_id,result,worker,**kwargs):
+            captured.append((result,worker))
+            return store.run(run_id)
+        with patch("taskalong.workflow._finish_attempt",side_effect=retain_result):
+            workflow.drive_run(self.state,first["run_id"],prepared["active_attempt_id"])
+        self.assertEqual(len(captured),1)
+        result,worker=captured[0]
+        self.assertTrue(result["process"]["termination_confirmed"])
+        attempt_id=prepared["active_attempt_id"]
+        current=self.service._store.run(first["run_id"])
+        item=self.service._store.detail("attempts",attempt_id)
+        receipt=steps.completed_receipt
+        def replace(value):
+            self.service._store.db.execute("UPDATE attempts SET document=? WHERE attempt_id=?",(encode(value),attempt_id))
+        try:
+            for field,value in (("step_index",-1),("step_index",True),("step_index",0),("step_id","A"),("attempt_id",older)):
+                for during_commit in (False,True):
+                    with self.subTest(field=field,value=value,during_commit=during_commit):
+                        replace(item)
+                        def corrupt_after_receipt(*args,**kwargs):
+                            ref=receipt(*args,**kwargs)
+                            replace(item | {field:value})
+                            return ref
+                        if not during_commit:
+                            replace(item | {field:value})
+                        blobs=self.service._store.db.execute("SELECT count(*) FROM blobs").fetchone()[0]
+                        with patch("taskalong.steps.completed_receipt",side_effect=corrupt_after_receipt if during_commit else AssertionError("No receipt may precede identity validation")):
+                            with self.assertRaises(TaskAlongError) as error:
+                                finish(self.service._store,first["run_id"],attempt_id,result,worker)
+                        self.assertEqual(error.exception.code,"step_identity_mismatch")
+                        self.assertEqual(self.service._store.run(first["run_id"]),current)
+                        if not during_commit:
+                            self.assertEqual(self.service._store.db.execute("SELECT count(*) FROM blobs").fetchone()[0],blobs)
+        finally:
+            replace(item)
+            finish(self.service._store,first["run_id"],attempt_id,result,worker)
+        finished=self.service._store.run(first["run_id"])
+        self.assertEqual(finished["steps"][1]["status"],"completed")
+        self.assertEqual(finished["reservation_totals"]["attempts"],3)
+
     def test_two_driver_handoff_binds_exact_bytes_and_fresh_sessions(self):
         task = self.handoff_task()
         immutable = canonical_bytes(task)
@@ -221,6 +275,8 @@ class SharedHandoffContract:
         self.assertEqual(attempts[0]["thread_id"],observations[0]["session"] if self.direction[0] == "codex" else None)
         self.assertIsNotNone(final["execution_chain_digest"])
         result = self.service.result(final["run_id"])
+        self.assertLess(result["observed_usage"]["worker_duration_ms"],final["reservation_totals"]["active_seconds"]*1000)
+        self.assertLess(result["observed_usage"]["captured_output_bytes"],final["reservation_totals"]["output_bytes"])
         if self.review_executable:
             self.assertEqual(final["state"],"accepted",final)
             self.assertTrue(result["independently_accepted"])

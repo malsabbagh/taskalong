@@ -43,7 +43,7 @@
   "src/taskalong/resources/schemas/v2.6/packet-projection.schema.json": "5c29923a2c408b711c68e1538d09c7d45d7ff5d05466949ad43df88472c2a048",
   "src/taskalong/resources/schemas/v2.6/task-spec.schema.json": "938798a39e5d204bff9d3955229a2617142193162be94995c560875fe6a3704d",
   "src/taskalong/resources/schemas/v2.6/worker-packet.schema.json": "1f438ec8330fc1401ab8148e8972494c41e9364569026d2c550d357db548716d",
-  "src/taskalong/resources/schemas/v2.7/result-view.schema.json": "4e1ef285091d1b3b42ca511a90838cafe22c1c03157e1cf8791ca5871c105c06",
+  "src/taskalong/resources/schemas/v2.7/result-view.schema.json": "99be2debffbad226bfc8260139ab275469e4051ee359361e82629677f5f49e1f",
   "src/taskalong/resources/schemas/v2.7/step-receipt.schema.json": "56ed7b94a16a2019154b36f97d92f820c2cf72ac982c86a5227678fbb9ad45b3",
   "src/taskalong/resources/schemas/v2.7/task-run.schema.json": "8a7ad302fc86ec0703ddd70da430210dfc57cee1ead12479f25785b01f4bf468",
   "src/taskalong/resources/schemas/v2.7/task-spec.schema.json": "8f5242dec64a5ffa38985ad363f4239f617cc2b7b371763ffb457311c04c558d",

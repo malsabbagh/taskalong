@@ -65,7 +65,7 @@ def _digest(value):
 
 
 @contextmanager
-def _parent(root, relative, *, private, create=False, changes=None):
+def _parent(root, relative, *, private, create=False, changes=None, missing_ok=False):
     """Keep each directory alive, and retain its parent's exact entry identity."""
     directory_flags = _flags()
     if type(private) is not bool:
@@ -110,7 +110,14 @@ def _parent(root, relative, *, private, create=False, changes=None):
                     os.fsync(descriptor)
                 except FileExistsError:
                     pass
-            child = _open(part, os.O_RDONLY | directory_flags, dir_fd=descriptor)
+            try:
+                child = _open(part, os.O_RDONLY | directory_flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                if not missing_ok:
+                    raise
+                _unchanged_directories(links)
+                yield None, None, links
+                return
             descriptors.append(child)
             info = os.fstat(child)
             _directory(info, owned=True, private=private)
@@ -142,6 +149,26 @@ def _contents(descriptor, maximum):
         chunks.append(chunk)
         remaining -= len(chunk)
     return b"".join(chunks)
+
+
+def require_absent(root, relative):
+    """Check an add's initial absence without creating parents or following links.
+
+    This observation does not reserve the path. The later fresh write must still
+    use exclusive creation, so an intervening entry cannot become recovered work.
+    """
+    try:
+        with _parent(root, relative, private=False, missing_ok=True) as (parent, name, links):
+            if parent is not None:
+                try:
+                    _stat(name, dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise _invalid()
+            _unchanged_directories(links)
+    except (OSError, ValueError, TypeError, NotImplementedError):
+        raise _invalid() from None
 
 
 def read_regular(root, relative, *, max_bytes, expected_sha256=None,
