@@ -26,8 +26,11 @@ blocks with `required_review_missing`, and cannot be accepted.
 Run these CLI commands, substituting the observed run ID and revisions. Each
 mutation requires a unique key, except when deliberately replaying the identical
 operation and arguments. `status` and `result` never launch or reconcile work.
+For this generated fixture only, keep the same process-local Git configuration
+selection as the setup; these environment values do not edit Git configuration.
 
 ```sh
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 taskalong --state-dir /absolute/new-ordered-example/state validate \
   --spec /absolute/new-ordered-example/task.json --json
 taskalong --state-dir /absolute/new-ordered-example/state submit \
