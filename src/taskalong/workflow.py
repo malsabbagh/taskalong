@@ -139,7 +139,7 @@ class Workflow:
             raise TaskAlongError("trial_runtime_unqualified", "The E1 trial runtime is not qualified or enabled.", exit_code=3)
         # Select only the newly supported version explicitly. All other input
         # retains the original v1 CLI admission/error boundary.
-        if spec.get("schema_version") in {"2.7", "2.10"}:
+        if spec.get("schema_version") in ("2.7", "2.10"):
             from .steps import OrderedTaskSpec, preflight
             if spec["schema_version"] == "2.10":
                 from .artifact_handoff import ArtifactTaskSpec
