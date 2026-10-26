@@ -156,7 +156,8 @@ class QualificationShardTests(unittest.TestCase):
         q = self.shards
         binding, producer, receipts = self.fixture()
         profile = [('ubuntu-24.04', '3.11')]
-        for fault in ('missing', 'duplicate', 'extra-file', 'stale-attempt', 'producer', 'receipt', 'envelope', 'symlink'):
+        for fault in ('missing', 'duplicate', 'extra-file', 'stale-attempt', 'producer', 'receipt', 'envelope',
+                      'boolean-envelope-version', 'boolean-inventory-version', 'boolean-producer-version', 'symlink'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as scratch:
                 root = Path(scratch)
                 self.write_lanes(root, binding, producer, receipts)
@@ -171,15 +172,21 @@ class QualificationShardTests(unittest.TestCase):
                     (lane / 'unexpected.json').write_text('{}')
                 elif fault == 'stale-attempt':
                     binding = binding | {'run_attempt': '3'}
-                elif fault in ('producer', 'receipt', 'envelope'):
-                    path = lane / {'producer': 'producer-identity.json', 'receipt': 'installed-sdist.json', 'envelope': 'shard.json'}[fault]
+                elif fault in ('producer', 'receipt', 'envelope', 'boolean-envelope-version',
+                               'boolean-inventory-version', 'boolean-producer-version'):
+                    path = lane / {'producer': 'producer-identity.json', 'receipt': 'installed-sdist.json',
+                        'envelope': 'shard.json', 'boolean-envelope-version': 'shard.json',
+                        'boolean-inventory-version': 'installed-inventory.json',
+                        'boolean-producer-version': 'producer-identity.json'}[fault]
                     value = json.loads(path.read_text())
                     if fault == 'producer':
                         value['artifacts'][q.ARTIFACTS['wheel']] = '0' * 64
                     elif fault == 'receipt':
                         value['events'] += 1
-                    else:
+                    elif fault == 'envelope':
                         value['lane'] = 'wheel-core'
+                    else:
+                        value['format_version'] = True
                     path.write_text(json.dumps(value))
                 else:
                     path = lane / 'installed-sdist.json'
