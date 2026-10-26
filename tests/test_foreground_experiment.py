@@ -78,8 +78,17 @@ class ForegroundExperimentTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == 'darwin', 'Darwin foreground experiment processes')
     def test_timeout_cancellation_and_output_limit_use_owned_cleanup(self):
-        code = ("import os,signal,time\nsignal.signal(signal.SIGINT,signal.SIG_IGN)\n"
+        # Keep the root alive through child reaping. A root which simply dies
+        # on SIGTERM leaves child/group disappearance to OS orphan scheduling,
+        # which this foreground-only API deliberately does not guarantee.
+        code = ("import os,signal,time\nfrom pathlib import Path\n"
+                "signal.signal(signal.SIGINT,signal.SIG_IGN)\n"
                 "p=os.fork()\nif p==0:time.sleep(2);os._exit(0)\n"
+                "def stop(signum,frame):\n"
+                "    os.waitpid(p,0)\n"
+                "    Path('reaped-child').touch()\n"
+                "    os._exit(128+signum)\n"
+                "signal.signal(signal.SIGTERM,stop)\n"
                 "print('ready',flush=True)\ntime.sleep(2)")
         for case in ('timeout', 'cancel', 'output_limit'):
             ready = []
@@ -94,6 +103,7 @@ class ForegroundExperimentTests(unittest.TestCase):
                     cancel_requested=(lambda: bool(ready)) if case == 'cancel' else None, **options)
                 self.assertTrue(result.root_exit_observed)
                 self.assertTrue(result.fork_observed)
+                self.assertTrue((Path(root) / 'reaped-child').exists())
                 self.assertTrue(result.group_termination_confirmed)
                 self.assertTrue(getattr(result, {'timeout': 'timed_out', 'cancel': 'cancelled',
                                                 'output_limit': 'output_limited'}[case]))
