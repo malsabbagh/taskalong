@@ -237,6 +237,7 @@ def require_finish_identity(run, spec, item):
     index = item.get("step_index")
     if (type(index) is not int or not 0 <= index < len(spec["steps"])
             or index != run["current_step_index"] or index >= len(run["steps"])
+            or item.get("attempt_id") != run["active_attempt_id"]
             or item.get("step_id") != spec["steps"][index]["step_id"]
             or run["steps"][index]["step_id"] != spec["steps"][index]["step_id"]
             or item["attempt_id"] not in run["steps"][index]["attempt_ids"]):

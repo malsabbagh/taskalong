@@ -50,10 +50,15 @@ class OrderedFixture(ServiceFixture):
 
 
 class OrderedTasksTests(OrderedFixture,unittest.TestCase):
-    def capture_stopped_second_step(self):
+    def capture_stopped_second_step(self, *, retry=False):
         first,_=self.first()
+        if retry:
+            self.set_mode('failed');self.advance(first)
+            failed=self.wait(first['run_id'])
+            self.set_mode('good')
         with patch.object(self.service._workflow,'_launch_supervisor',lambda *a:None):
-            prepared=self.advance(first)
+            prepared=(self.service.retry(first['run_id'],expected_step_id='B',operation_key='identity-retry',expected_revision=failed['revision'])
+                if retry else self.advance(first))
         from taskalong import workflow
         captured=[]
         original=workflow._finish_attempt
@@ -65,6 +70,34 @@ class OrderedTasksTests(OrderedFixture,unittest.TestCase):
         self.assertEqual(len(captured),1)
         self.assertTrue(captured[0][0]['process']['termination_confirmed'])
         return first,prepared['active_attempt_id'],captured[0],original
+
+    def test_finish_identity_rejects_older_retry_of_the_same_step(self):
+        first,attempt_id,(result,worker),finish=self.capture_stopped_second_step(retry=True)
+        from taskalong.store import encode
+        from taskalong import steps
+        current=self.service._store.run(first['run_id'])
+        item=self.service._store.detail('attempts',attempt_id)
+        older=current['steps'][1]['attempt_ids'][0]
+        self.assertNotEqual(older,attempt_id)
+        original=steps.completed_receipt
+        def substitute():
+            self.service._store.db.execute('UPDATE attempts SET document=? WHERE attempt_id=?',(encode(item|{'attempt_id':older}),attempt_id))
+        def substitute_after_preparation(*args,**kwargs):
+            receipt=original(*args,**kwargs);substitute();return receipt
+        try:
+            for during_mutation in (False,True):
+                with self.subTest(during_mutation=during_mutation):
+                    self.service._store.db.execute('UPDATE attempts SET document=? WHERE attempt_id=?',(encode(item),attempt_id))
+                    if not during_mutation:substitute()
+                    with patch('taskalong.steps.completed_receipt',side_effect=substitute_after_preparation if during_mutation else AssertionError('receipt must not be prepared')):
+                        with self.assertRaises(TaskAlongError) as error:
+                            finish(self.service._store,first['run_id'],attempt_id,result,worker)
+                    self.assertEqual(error.exception.code,'step_identity_mismatch')
+                    self.assertEqual(self.service._store.run(first['run_id']),current)
+                    self.assertEqual(current['reservation_totals']['attempts'],3)
+        finally:
+            self.service._store.db.execute('UPDATE attempts SET document=? WHERE attempt_id=?',(encode(item),attempt_id))
+            finish(self.service._store,first['run_id'],attempt_id,result,worker)
 
     def test_finish_step_identity_faults_refuse_before_receipt_preparation(self):
         first,attempt_id,(result,worker),finish=self.capture_stopped_second_step()
