@@ -263,6 +263,18 @@ def completed_receipt(store, run, item, result, worker):
     return store.put_blob(canonical_bytes(seal_versioned("step-receipt", fields, version=store.spec(run)["schema_version"])))["sha256"]
 
 
+def require_finish_identity(run, spec, item):
+    """A live attempt may finish only its current immutable ordered step."""
+    index = item.get("step_index")
+    if (type(index) is not int or not 0 <= index < len(spec["steps"])
+            or index != run["current_step_index"] or index >= len(run["steps"])
+            or item.get("attempt_id") != run["active_attempt_id"]
+            or item.get("step_id") != spec["steps"][index]["step_id"]
+            or run["steps"][index]["step_id"] != spec["steps"][index]["step_id"]
+            or item["attempt_id"] not in run["steps"][index]["attempt_ids"]):
+        raise TaskAlongError("step_identity_mismatch", "The finishing attempt does not own the current ordered step.", exit_code=4)
+
+
 def view(store, run):
     validate_chain(store, run)
     acceptance = store.detail("acceptances", run["acceptance_id"]) if run["acceptance_id"] else None
@@ -315,6 +327,8 @@ def view(store, run):
     elif run["steps"][run["current_step_index"]]["status"] == "failed": outcome, actions = "failed", ["retry"]
     elif completed: outcome, actions = "pending", ["advance"]
     else: outcome, actions = "pending", ["start"]
+    if actions == ["retry"] and not store.detail("attempts", run["steps"][run["current_step_index"]]["attempt_ids"][-1]).get("checkpoint"):
+        actions = ["inspect"]
     if actions and actions[0] in {"start","advance","retry","verify"}:
         probe = copy.deepcopy(run)
         if actions == ["advance"]:
@@ -340,10 +354,22 @@ def view(store, run):
                 "import_journal_blob_sha256":item.get("import_journal_blob_sha256"),
                 "canonical_packet_digest":(item.get("canonical_packet") or {}).get("digest"),
                 "wire_packet_digest":(item.get("packet") or {}).get("digest")})
+    worker_processes = [store.detail("attempts", item["attempt_id"]).get("process") or {} for item in run["attempts"]]
+    duration = sum(p["duration_ms"] for p in worker_processes) if all(p.get("termination_confirmed") is True and type(p.get("duration_ms")) is int for p in worker_processes) else None
+    captured = sum(p["output_bytes"] for p in worker_processes) if all(p.get("termination_confirmed") is True and type(p.get("output_bytes")) is int for p in worker_processes) else None
+    for row in store.db.execute("SELECT document FROM effects WHERE run_id=? AND kind='verifier.capture'", (run["run_id"],)):
+        effect = loads(row[0])
+        response = effect.get("response") or {}
+        if effect["phase"] != "observed" or response.get("termination_confirmed") is not True or type(response.get("output_bytes")) is not int:
+            captured = None
+        elif captured is not None:
+            captured += response["output_bytes"]
+    observed = {"worker_duration_ms":duration,"captured_output_bytes":captured,
+        **{key:run["budget_consumed"][key] for key in ("input_tokens","output_tokens","cost_usd")}}
     return seal_versioned("result-view", {**extra,"run_id":run["run_id"],"revision":run["revision"],"state":run["state"],
         "outcome":outcome,"independently_accepted":accepted,"steps":run["steps"],"current_step_index":run["current_step_index"],
         "completed_steps":completed,"total_steps":len(run["steps"]),"reservation_totals":run["reservation_totals"],
-        "observed_usage":run["budget_consumed"],"execution_chain_digest":run["execution_chain_digest"],
+        "observed_usage":observed,"execution_chain_digest":run["execution_chain_digest"],
         "acceptance_digest":digest(acceptance) if acceptance else None,"stop_reason":reason,"next_actions":actions,
         "step_results":step_results,"final_verification":{"passes_reserved":len(run["final_verification_ids"]),
             "status":verification_status,"checks":checks,"review_result":review_result},

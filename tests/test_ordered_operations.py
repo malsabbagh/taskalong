@@ -9,6 +9,7 @@ class OrderedOperationTests(OrderedFixture, unittest.TestCase):
     def setUp(self):
         super().setUp()
         source=self.executable.read_text()
+        self.assertEqual(source.count('    result = {'),1, 'The original fixture injection point must be exact.')
         additions='''    if mode == "ordered-add":
         Path("new.py").write_text("def value():\\n    return 1\\n")
         changed = [{"path":"new.py", "operation":"add"}]
@@ -33,10 +34,14 @@ class OrderedOperationTests(OrderedFixture, unittest.TestCase):
 
     def test_added_file_can_be_modified_by_later_modify_step(self):
         self.set_mode('ordered-add');first,_=self.first(self.task())
+        from pathlib import Path
+        workspace=Path(self.service._store.lease(first)['workspace']['path'])
+        self.assertIn('return 1',(workspace/'new.py').read_text())
         self.set_mode('good');self.advance(first)
         final=self.wait(first['run_id'])
         self.assertEqual([s['status'] for s in final['steps']],['completed','completed'],final)
         self.assertEqual(len(self.invocations()),2)
+        self.assertIn('return 2',(workspace/'new.py').read_text())
 
     def test_added_file_removal_refuses_even_under_add_step(self):
         self.set_mode('ordered-add');first,_=self.first(self.task('add'))
@@ -47,6 +52,7 @@ class OrderedOperationTests(OrderedFixture, unittest.TestCase):
         self.assertIsNone(failed['steps'][1]['receipt_digest'])
         self.assertIsNone(self.service._store.detail('attempts',failed['steps'][1]['attempt_ids'][-1])['checkpoint'])
         self.assertIsNone(failed['candidate'])
+        self.assertEqual(self.service.result(first['run_id'])['next_actions'],['inspect'])
 
     def test_added_file_modification_refuses_under_add_only_step(self):
         self.set_mode('ordered-add');first,_=self.first(self.task('add'))
