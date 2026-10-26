@@ -50,6 +50,42 @@ class OrderedFixture(ServiceFixture):
 
 
 class OrderedTasksTests(OrderedFixture,unittest.TestCase):
+    def cancel_during_finish(self, *, final):
+        task=self.ordered()
+        if final:
+            task['steps']=task['steps'][:1]
+            task=seal_versioned('task-spec',task,version='2.7')
+        run,_=self.submit(task)
+        with patch.object(self.service._workflow,'_launch_supervisor',lambda *a:None):
+            prepared=self.start(run)
+        from taskalong.workflow import drive_run
+        from taskalong import steps
+        original=steps.completed_receipt
+        reserved=self.service._store.run(run['run_id'])['reservation_totals']
+        def cancel_at_receipt(*args,**kwargs):
+            receipt=original(*args,**kwargs)
+            current=self.service.inspect(run['run_id'])
+            self.service.cancel(run['run_id'],operation_key='cancel-at-receipt',expected_revision=current['revision'])
+            return receipt
+        with patch('taskalong.steps.completed_receipt',cancel_at_receipt):
+            drive_run(self.state,run['run_id'],prepared['active_attempt_id'])
+        self.service.close();self.service=RunService(self.state)
+        current=self.service.inspect(run['run_id'])
+        self.assertEqual(current['state'],'cancelled')
+        self.assertEqual(current['steps'][0]['status'],'cancelled')
+        self.assertIsNone(current['steps'][0]['receipt_digest'])
+        self.assertEqual(current['reservation_totals'],reserved)
+        self.assertIsNone(current['candidate']);self.assertIsNone(current['acceptance_id'])
+        self.assertEqual(current['final_verification_ids'],[])
+        self.assertEqual(len(self.invocations()),1)
+        self.assertEqual(self.service.result(run['run_id'])['outcome'],'cancelled')
+
+    def test_cancellation_wins_intermediate_receipt_finish_race(self):
+        self.cancel_during_finish(final=False)
+
+    def test_cancellation_wins_final_receipt_finish_race(self):
+        self.cancel_during_finish(final=True)
+
     def test_preparation_interruption_recovers_the_same_reserved_attempt(self):
         run,_=self.submit(self.ordered())
         with patch.object(self.service._workflow,'_launch_supervisor',side_effect=RuntimeError('test interruption before supervisor launch')):

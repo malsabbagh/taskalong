@@ -287,3 +287,4 @@ include tests/test_ordered_cli.py
 include tests/test_ordered_tasks.py
 include tools/ordered_fixture.py
 include tests/test_ordered_store.py
+include tests/test_ordered_operations.py

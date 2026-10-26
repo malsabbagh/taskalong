@@ -394,6 +394,7 @@
     "tests/test_ollama_profiles.py",
     "tests/test_ollama_store.py",
     "tests/test_ordered_cli.py",
+    "tests/test_ordered_operations.py",
     "tests/test_ordered_store.py",
     "tests/test_ordered_tasks.py",
     "tests/test_privacy.py",

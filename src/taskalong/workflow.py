@@ -1292,9 +1292,13 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
             current["blockers"] = [{"code": result.get("error") or "executor_incomplete", "effect_outcome": "known" if confirmed else "uncertain", "message": "Inspect the stopped attempt before continuation.", "recovery": [{"action": "reconcile"}]}]
         if ordered:
             state = current["steps"][item["step_index"]]
-            state["status"] = "cancelled" if current["state"] == "cancelled" else "completed" if receipt_digest else "failed"
-            state["receipt_digest"] = receipt_digest
-            if receipt_digest:
+            # Cancellation may have committed after the immutable receipt was
+            # prepared. Decide attachment from current transactional state;
+            # any unused blob remains inert, with the worker artifact retained.
+            attached_receipt = receipt_digest if current["state"] != "cancelled" else None
+            state["status"] = "cancelled" if current["state"] == "cancelled" else "completed" if attached_receipt else "failed"
+            state["receipt_digest"] = attached_receipt
+            if attached_receipt:
                 current["blockers"], current["blocked_from"] = [], None
                 if all(s["status"] == "completed" for s in current["steps"]):
                     current["execution_chain_digest"] = digest({"spec_digest":current["spec_digest"], "step_receipts":[s["receipt_digest"] for s in current["steps"]]})

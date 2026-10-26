@@ -42,9 +42,17 @@ def delta(before_manifest, after_manifest, scope):
     before = {f["path"]:f for f in before_manifest}
     after = {f["path"]:f for f in after_manifest}
     changed = sorted(p for p in before.keys() | after.keys() if before.get(p) != after.get(p))
-    if any(not contains(scope, p) or (after.get(p) or before[p])["operation"] not in scope["operations"] for p in changed):
-        refuse("step_scope_violation", "The worker changed bytes outside its current step scope.")
-    return [{"path":p,"operation":(after.get(p) or before[p])["operation"]} for p in changed]
+    result = []
+    for path in changed:
+        # Manifests describe changes from the task base. A previously added
+        # file exists at this step's start; changing it is now a modification.
+        if path in before and before[path]["operation"] == "add" and path not in after:
+            refuse("step_delete_unsupported", "A step cannot delete a file added by an earlier attempt.")
+        operation = "add" if path not in before and after[path]["operation"] == "add" else "modify"
+        if not contains(scope, path) or operation not in scope["operations"]:
+            refuse("step_scope_violation", "The worker changed bytes outside its current step scope.")
+        result.append({"path":path,"operation":operation})
+    return result
 
 
 def semantics(value, name):
