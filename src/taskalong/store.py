@@ -16,7 +16,7 @@ from importlib.resources import files
 from typing import Callable
 
 from .errors import TaskAlongError
-from .validation import canonical_bytes, digest, loads, validate
+from .validation import canonical_bytes, digest, loads, validate, validate_versioned
 
 
 def now() -> str:
@@ -139,10 +139,10 @@ class Store:
         self.db.execute("PRAGMA busy_timeout=5000")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9) or (version == 0 and tables):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10) or (version == 0 and tables):
             self.db.close()
             raise TaskAlongError("unsupported_store_version", "Store format is unknown; preserve it and use a compatible runtime.", exit_code=70)
-        if version in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+        if version in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
             try:
                 current_metadata = dict(self.db.execute("SELECT key,value FROM metadata"))
                 if current_metadata.get("format_version") != str(version):
@@ -154,7 +154,7 @@ class Store:
             if current_metadata.get("application") != "taskalong":
                 self.db.close()
                 raise TaskAlongError("unsupported_store_application", "This is not a tagged TaskAlong store; preserve it and use its owning application.", exit_code=70)
-            if version in (2, 3, 4, 5, 6, 7, 8, 9):
+            if version in (2, 3, 4, 5, 6, 7, 8, 9, 10):
                 self.store_uuid = str(uuid.UUID(current_metadata["store_uuid"]))
                 from .maintenance import validate_history_schema
                 validate_history_schema(self)
@@ -295,6 +295,8 @@ class Store:
         if digest(document) != document["digest"] or document["digest"] != run["spec_digest"]:
             raise TaskAlongError("store_integrity", "The immutable specification digest does not match.", exit_code=70)
         from .execution import read_task_spec
+        if document.get("schema_version") == "2.7" and self.format_version < 10:
+            raise TaskAlongError("store_upgrade_required", "Ordered tasks require explicit format-10 maintenance.", exit_code=3)
         if document.get("schema_version") == "2.9" and self.format_version < 9:
             raise TaskAlongError("store_upgrade_required", "Muse handoffs require explicit format-9 maintenance.", exit_code=3)
         if document.get("schema_version") == "2.8" and self.format_version < 8:
@@ -336,6 +338,8 @@ class Store:
         return self._prior(self.db, command, run_id, operation_key, digest(request))
 
     def create_run(self, spec: dict, operation_key: str):
+        if spec.get("schema_version") == "2.7" and self.format_version < 10:
+            raise TaskAlongError("store_upgrade_required", "Ordered tasks require explicit format-10 maintenance.", exit_code=3)
         if spec.get("schema_version") == "2.9" and self.format_version < 9:
             raise TaskAlongError("store_upgrade_required", "Muse execution requires explicit format-9 maintenance.", exit_code=3)
         if spec.get("schema_version") == "2.8" and self.format_version < 8:
@@ -361,7 +365,10 @@ class Store:
                 raise TaskAlongError("task_revision_conflict", "Task revision is immutable; submit a new revision.", exit_code=4)
             db.execute("INSERT OR IGNORE INTO task_specs VALUES (?,?,?,?)", (spec["task_id"], spec["revision"], spec["digest"], encode(spec)))
             run = {"kind": "task_run", "schema_version": "1.0", "run_id": identifier(), "task_id": spec["task_id"], "task_revision": spec["revision"], "spec_digest": spec["digest"], "revision": 1, "state": "created", "blocked_from": None, "created_at": now(), "updated_at": now(), "repository_registration_id": spec["repository"]["registration_id"], "workspace_id": None, "lease_generation": 0, "active_attempt_id": None, "attempts": [], "candidate": None, "evidence_ids": [], "acceptance_id": None, "pending_effect_ids": [], "budget_consumed": {"attempts": 0, "active_seconds": 0, "output_bytes": 0, "input_tokens": None, "output_tokens": None, "cost_usd": None}, "blockers": [], "publication": None, "qualification": spec["qualification"], "extensions": {}}
-            validate("task-run", run)
+            if spec["schema_version"] == "2.7":
+                from .steps import initialize
+                initialize(run, spec)
+            validate_versioned("task-run", run, expected_version=run["schema_version"])
             db.execute("INSERT INTO runs VALUES (?,?,?,?,?,?)", (run["run_id"], run["task_id"], run["task_revision"], 1, run["state"], encode(run)))
             self._event(db, run, "run.created", {"spec_digest": spec["digest"]}, operation_key=operation_key)
             db.execute("INSERT INTO operations VALUES (?,?,?,?,?)", ("submit", "", operation_key, request_digest, encode(run)))
@@ -382,7 +389,7 @@ class Store:
             change(run, db)
             run["revision"] += 1
             run["updated_at"] = now()
-            validate("task-run", run)
+            validate_versioned("task-run", run, expected_version=run["schema_version"])
             db.execute("UPDATE runs SET revision=?,state=?,document=? WHERE run_id=? AND revision=?", (run["revision"], run["state"], encode(run), run_id, run["revision"] - 1))
             for event_type, payload in events or [(command, {})]:
                 self._event(db, run, event_type, payload, actor=actor, operation_key=operation_key)

@@ -392,7 +392,7 @@ class RuntimePlanContractTests(unittest.TestCase):
                 "taskalong-0.1.0a1.dist-info/licenses/LICENSE"))
         self.assertEqual(hashlib.sha256(license_path.read_bytes()).hexdigest(), identities["license_sha256"])
         with self.assertRaises(TaskAlongError):
-            schema_names(version="2.7")
+            schema_names(version="2.10")
     def test_explicit_plan_is_immutable_data_without_process_or_network_effects(self):
         from taskalong.runtime_qualification import ExperimentPlan
 

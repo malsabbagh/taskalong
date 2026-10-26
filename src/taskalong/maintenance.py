@@ -171,7 +171,7 @@ def database_state(db):
         raise _failure("backup_integrity", "SQLite foreign-key verification failed.")
     metadata = dict(db.execute("SELECT key,value FROM metadata"))
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (1, 2, 3, 4, 5, 6, 7, 8, 9) or metadata.get("format_version") != str(version):
+    if version not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) or metadata.get("format_version") != str(version):
         raise _failure("store_integrity", "Store schema markers disagree.")
     schema = [list(row) for row in db.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")]
     tables = {}
@@ -404,7 +404,7 @@ def _migration_sql(number=2):
     name = {2: "002-document-history.sql", 3: "003-execution-projections.sql",
             4: "004-driver-compatibility.sql", 5: "005-ollama-compatibility.sql",
             6: "006-cursor-compatibility.sql", 7: "007-antigravity-compatibility.sql",
-            8: "008-e1-trial-compatibility.sql", 9: "009-muse-handoff-compatibility.sql"}[number]
+            8: "008-e1-trial-compatibility.sql", 9: "009-muse-handoff-compatibility.sql", 10: "010-ordered-tasks.sql"}[number]
     return files("taskalong.resources").joinpath("sql", name).read_text()
 
 
@@ -436,7 +436,7 @@ def validate_history_schema(store):
 def upgrade(store, *, operation_key, backup_dir, restore_dir, target_version=2):
     require_quiescent(store)
     key_check(operation_key)
-    if type(target_version) is not int or target_version not in (2, 3, 4, 5, 6, 7, 8, 9):
+    if type(target_version) is not int or target_version not in (2, 3, 4, 5, 6, 7, 8, 9, 10):
         raise _failure("unsupported_store_version", "Select an explicit supported numbered migration.")
     source_version = target_version - 1
     backup, restored = _path(backup_dir), _path(restore_dir)

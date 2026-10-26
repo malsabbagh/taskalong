@@ -156,6 +156,8 @@ def schema_names(*, version: str = "1.0") -> tuple[str, ...]:
         return ("driver-config", "task-spec", "worker-packet", "packet-projection", "worker-result")
     if version == "2.6":
         return ("driver-config", "task-spec", "worker-packet", "packet-projection")
+    if version == "2.7":
+        return ("task-spec", "task-run", "step-receipt", "result-view")
     if version == "2.9":
         return ("capture-config", "task-spec", "worker-packet", "packet-projection", "execution-handoff", "result-view", "capabilities-view")
     if version == "2.8":
@@ -168,7 +170,7 @@ def schema(name: str, *, version: str = "1.0") -> dict[str, Any]:
     name = name.removesuffix(".schema.json").replace("_", "-")
     if name not in schema_names(version=version):
         raise _invalid("The schema name is unsupported.", "unknown_schema")
-    directory = {"1.0": "v1", "2.0": "v2", "2.1": "v2.1", "2.2": "v2.2", "2.3": "v2.3", "2.4": "v2.4", "2.5": "v2.5", "2.6": "v2.6", "2.8": "v2.8", "2.9": "v2.9"}[version]
+    directory = {"1.0": "v1", "2.0": "v2", "2.1": "v2.1", "2.2": "v2.2", "2.3": "v2.3", "2.4": "v2.4", "2.5": "v2.5", "2.6": "v2.6", "2.7": "v2.7", "2.8": "v2.8", "2.9": "v2.9"}[version]
     return loads(resources.files("taskalong.resources").joinpath("schemas", directory, name + ".schema.json").read_bytes())
 
 
@@ -367,6 +369,12 @@ def validate_versioned(name: str, document: dict[str, Any], *, expected_version:
         from .bindings import _normalize, _semantics as binding_semantics
         _normalize(result)
         binding_semantics(result)
+    elif expected_version == "2.7":
+        from .steps import semantics
+        _sets(result, name)
+        if name == "task-spec":
+            _semantics(result, name)
+        semantics(result, name)
     elif expected_version == "2.1":
         from .qualification import _semantics as qualification_semantics
         qualification_semantics(result)
@@ -397,7 +405,7 @@ def seal_versioned(name: str, document: dict[str, Any], *, version: str) -> dict
     if version == "2.0":
         from .bindings import _normalize
         _normalize(result)
-    elif version in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.8", "2.9"}:
+    elif version in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9"}:
         _sets(result, name)
     if "digest" in selected["properties"]:
         result["digest"] = digest(result)

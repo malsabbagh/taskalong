@@ -29,7 +29,7 @@ def _refuse(code="execution_projection_unsupported"):
 
 
 def _require(store):
-    if store.format_version not in (3, 4, 5, 6, 7, 8, 9):
+    if store.format_version not in (3, 4, 5, 6, 7, 8, 9, 10):
         _refuse("store_upgrade_required")
 
 
@@ -140,7 +140,7 @@ def registered_profile(store, binding_digest):
 
 
 def registered_driver_config(store, binding_digest):
-    if store.format_version not in (4, 5, 6, 7, 8, 9):
+    if store.format_version not in (4, 5, 6, 7, 8, 9, 10):
         _refuse("store_upgrade_required")
     registration = _registration(store, binding_digest)
     version = registration.get("schema_version")
@@ -164,7 +164,7 @@ def worker_contract(store, spec, configuration):
         if retained != configuration:
             _refuse("execution_identity_mismatch")
         return contract_for(retained, task_version="2.9", projection=PROJECTION), None
-    if spec["schema_version"] == "1.0":
+    if spec["schema_version"] in {"1.0", "2.7"}:
         return contract_for(configuration), None
     getter = registered_driver_config if spec["schema_version"] in {"2.3", "2.4", "2.5", "2.6"} else registered_profile
     retained, registration = getter(store, spec["execution"]["binding_digest"])

@@ -68,11 +68,27 @@ class RunService:
     def submit(self, spec, *, operation_key):
         return self._workflow.submit(spec, operation_key=operation_key)
 
+    def validate_task(self, spec):
+        return self._workflow.validate_task(spec)
+
+    def advance(self, run_id, *, expected_step_id, predecessor_digest, operation_key, expected_revision):
+        return self._workflow.start(run_id, mode="advance", expected_step_id=expected_step_id,
+            predecessor_digest=predecessor_digest, operation_key=operation_key, expected_revision=expected_revision)
+
+    def retry(self, run_id, *, expected_step_id, operation_key, expected_revision):
+        return self._workflow.start(run_id, mode="retry", expected_step_id=expected_step_id,
+            operation_key=operation_key, expected_revision=expected_revision)
+
     def start(self, run_id, *, operation_key, expected_revision, authority_id=None):
         return self._workflow.start(run_id, operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id)
 
     def inspect(self, run_id):
-        return self._store.run(run_id)
+        run = self._store.run(run_id)
+        if run["schema_version"] == "2.7":
+            from .steps import view
+            summary = view(self._store, run)
+            return run | {"next_actions":summary["next_actions"], "stop_reason":summary["stop_reason"]}
+        return run
 
     def capabilities(self, run_id, *, mode="start"):
         """Current read-only scoped assessment, never dispatch authorization."""
@@ -105,6 +121,9 @@ class RunService:
         task/policy bodies, runtime paths, credentials and logs are excluded.
         """
         run = self._store.run(run_id)
+        if run["schema_version"] == "2.7":
+            from .steps import view
+            return view(self._store, run)
         if self._store.spec(run)["schema_version"] == "2.9":
             from .muse_handoff import result_view
             return result_view(self._store, run)

@@ -124,7 +124,10 @@ class Workflow:
         self.store.set_setting("publication_transport", value)
         return {"qualification": qualification}
 
-    def submit(self, spec, *, operation_key):
+    def validate_task(self, spec):
+        return self.submit(spec, operation_key=None, _validate_only=True)
+
+    def submit(self, spec, *, operation_key, _validate_only=False):
         if type(spec) is not dict:
             raise TaskAlongError("invalid_document", "A task specification must be a JSON object.")
         screen_sensitive(spec)
@@ -134,14 +137,25 @@ class Workflow:
             raise TaskAlongError("trial_runtime_unqualified", "The E1 trial runtime is not qualified or enabled.", exit_code=3)
         # Select only the newly supported version explicitly. All other input
         # retains the original v1 CLI admission/error boundary.
-        if spec.get("schema_version") not in ("2.2", "2.3", "2.4", "2.5", "2.6", "2.9"):
+        if spec.get("schema_version") == "2.7":
+            from .steps import OrderedTaskSpec, preflight
+            spec = OrderedTaskSpec.from_dict(spec).to_dict()
+            if not _validate_only:
+                prior = self.store.operation("submit", "", operation_key, spec)
+                if prior is not None:
+                    return prior
+            if self.store.format_version < 10:
+                raise TaskAlongError("store_upgrade_required", "Ordered tasks require explicit format-10 maintenance.", exit_code=3)
+            preflight(self, spec)
+        elif spec.get("schema_version") not in ("2.2", "2.3", "2.4", "2.5", "2.6", "2.9"):
             spec = seal("task-spec", spec)
         else:
             from .execution import read_task_spec
             spec = read_task_spec(spec).to_dict()
-            prior = self.store.operation("submit", "", operation_key, spec)
-            if prior is not None:
-                return prior
+            if not _validate_only:
+                prior = self.store.operation("submit", "", operation_key, spec)
+                if prior is not None:
+                    return prior
             from .admission import resolve
             resolve(self.store, spec)
         repository = self.store.repository(spec["repository"]["registration_id"])
@@ -163,6 +177,8 @@ class Workflow:
             resolved = resolved.decode()
         if resolved != spec["repository"]["base_commit"]:
             raise TaskAlongError("base_commit_mismatch", "Task base must be a full existing SHA-1 commit.")
+        if _validate_only:
+            return {"valid": True, "spec_digest": spec["digest"], "schema_version": spec["schema_version"], "step_count": len(spec.get("steps", []))}
         return self.store.create_run(spec, operation_key)
 
     def authorize(self, run_id, *, decision_digest, scope, qualification=None):
@@ -243,20 +259,26 @@ class Workflow:
             return self.store.retire_lease(run_id, operation_key=operation_key,
                                           expected_revision=expected_revision, workspace_subject=subject)
 
-    def start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start"):
+    def start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start", expected_step_id=None, predecessor_digest=None):
         self._refuse_trial_run(run_id)
         with self.store.guard(run_id, "dispatch"):
-            return self._start(run_id, operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id, mode=mode)
+            return self._start(run_id, operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id, mode=mode, expected_step_id=expected_step_id, predecessor_digest=predecessor_digest)
 
-    def _start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start"):
+    def _start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start", expected_step_id=None, predecessor_digest=None):
+        command = mode if mode in {"advance", "retry"} else "start" if mode == "start" else "resume"
         request = {"mode": mode, "authority_id": authority_id}
-        prior = self.store.operation("start" if mode == "start" else "resume", run_id, operation_key, request)
+        if mode in {"advance", "retry"}:
+            request.update(expected_step_id=expected_step_id, predecessor_digest=predecessor_digest)
+        prior = self.store.operation(command, run_id, operation_key, request)
         if prior:
             return prior
         run = self.store.run(run_id)
         if run["revision"] != expected_revision:
             raise TaskAlongError("revision_conflict", "Inspect the current revision before starting.", exit_code=4)
         spec = self.store.spec(run)
+        if spec["schema_version"] == "2.7":
+            from .steps import preflight
+            preflight(self, spec)
         authority = self.store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], authority_id)
         admission = None
         if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9"}:
@@ -270,7 +292,31 @@ class Workflow:
         executor.preflight(qualification=run["qualification"], budget=spec["budget"])
         if mode == "start" and run["state"] != "created":
             raise TaskAlongError("invalid_run_state", "Start requires a newly created run; reconcile interrupted work explicitly.", exit_code=3)
-        if mode != "start":
+        ordered = spec["schema_version"] == "2.7"
+        target_index = run.get("current_step_index", 0)
+        if ordered:
+            from .steps import validate_chain, inputs
+            validate_chain(self.store, run, live=bool(run["attempts"]))
+            if mode not in {"start", "advance", "retry"}:
+                raise TaskAlongError("ordered_mode_unsupported", "Use explicit advance or retry for ordered tasks.", exit_code=3)
+            if mode != "start":
+                if run["active_attempt_id"] or run["pending_effect_ids"] or run["candidate"] or run["state"] not in {"ready", "blocked"}:
+                    raise TaskAlongError("step_not_settled", "Continuation requires settled worker effects and an exact checkpoint.", exit_code=3)
+                last = self.store.detail("attempts", run["attempts"][-1]["attempt_id"])
+                if not last.get("termination_confirmed"):
+                    raise TaskAlongError("cancellation_unconfirmed", "Previous cessation remains uncertain.", exit_code=5)
+                if mode == "advance":
+                    if run["steps"][target_index]["status"] != "completed" or target_index+1 >= len(spec["steps"]):
+                        raise TaskAlongError("advance_not_ready", "Advance requires a completed predecessor and a pending next step.", exit_code=3)
+                    if predecessor_digest != run["steps"][target_index]["receipt_digest"]:
+                        raise TaskAlongError("predecessor_changed", "Advance must name the exact completed predecessor receipt.", exit_code=3)
+                    target_index += 1
+                elif run["steps"][target_index]["status"] != "failed":
+                    raise TaskAlongError("retry_not_ready", "Retry requires the current safely settled failed step.", exit_code=3)
+                if expected_step_id != spec["steps"][target_index]["step_id"]:
+                    raise TaskAlongError("step_identity_mismatch", "The requested step is not the valid next ordered step.", exit_code=3)
+                inputs(spec, self.store.lease(run)["workspace"]["path"], target_index)
+        if mode != "start" and not ordered:
             if mode not in {"native", "restart"} or run["state"] != "blocked" or run["active_attempt_id"] is not None or run["pending_effect_ids"]:
                 raise TaskAlongError("resume_not_reconciled", "Resume needs a stopped, reconciled nonterminal run and an explicit mode.", exit_code=3)
             last = self.store.detail("attempts", run["attempts"][-1]["attempt_id"])
@@ -302,6 +348,8 @@ class Workflow:
         attempt_id = identifier()
         attempt = {"attempt_id": attempt_id, "run_id": run_id, "ordinal": len(run["attempts"]) + 1, "mode": "start" if mode == "start" else ("native_resume" if mode == "native" else "restart"), "lease_generation": generation, "status": "prepared", "spawn_phase": "not_dispatched", "process_receipt": None, "created_at": now(), "deadline": (datetime.now(timezone.utc) + timedelta(seconds=budget["attempt_seconds"])).isoformat(timespec="seconds").replace("+00:00", "Z"), "thread_id": last.get("thread_id") if mode == "native" else None, "termination_confirmed": False, "packet": None, "workspace": workspace_intent}
         attempt[_worker_identity_key(spec)] = profile["digest"]
+        if ordered:
+            attempt.update(step_index=target_index, step_id=spec["steps"][target_index]["step_id"])
         def prepare(current, db):
             if current["state"] in TERMINAL:
                 raise TaskAlongError("terminal_run", "Terminal runs require a separately authorized successor.", exit_code=3)
@@ -313,6 +361,13 @@ class Workflow:
                 self.store.authority(current, {"execute", "verify", "commit_candidate"}, spec["digest"], authority["authority_id"])
                 fresh, _, _ = resolve(self.store, spec, mode=mode, authority_id=authority["authority_id"])
                 attempt["admission"] = fresh
+            if ordered:
+                from .steps import reserve
+                current["current_step_index"] = target_index
+                attempt["reservation"] = reserve(current, spec, reservation_id=identifier(), kind="worker", owner_id=attempt_id)
+                step = current["steps"][target_index]
+                step["status"] = "running"
+                step["attempt_ids"].append(attempt_id)
             self.store.acquire_lease(db, current, workspace_intent)
             current["state"] = "ready"
             current["blocked_from"] = None
@@ -326,7 +381,7 @@ class Workflow:
             effect = _effect(db, current, "workspace.create" if mode == "start" else "workspace.reacquire", operation_key, workspace_intent)
             attempt["workspace_effect_id"] = effect["effect_id"]
             db.execute("UPDATE attempts SET document=? WHERE attempt_id=?", (encode(attempt), attempt_id))
-        prepared = self.store.mutate(run_id, "start" if mode == "start" else "resume", operation_key, expected_revision, request, prepare, events=[("run.ready", {}), ("attempt.prepared" if mode == "start" else "attempt.resumed", {"attempt_id": attempt_id})])
+        prepared = self.store.mutate(run_id, command, operation_key, expected_revision, request, prepare, events=[("run.ready", {}), ("attempt.prepared" if mode == "start" else "attempt.resumed", {"attempt_id": attempt_id})])
         try:
             workspace = manager.create(workspace_intent) if mode == "start" else manager.advance_generation(workspace_intent, generation - 1, generation)
             self._workspace_ready(prepared, attempt, workspace)
@@ -334,7 +389,7 @@ class Workflow:
         except TaskAlongError as exc:
             _block(self.store, run_id, exc.code, phase="ready", uncertain=exc.effect_outcome == "uncertain")
             raise
-        return prepared if admission is not None else self.store.run(run_id)
+        return prepared if admission is not None or ordered else self.store.run(run_id)
 
     def _workspace_ready(self, run, attempt, workspace):
         def change(current, db):
@@ -496,6 +551,16 @@ class Workflow:
         attempt = self.store.detail("attempts", run["attempts"][-1]["attempt_id"])
         if not attempt.get("termination_confirmed") or attempt["status"] != "completed":
             raise TaskAlongError("worker_handoff_missing", "Verification requires the exact completed worker handoff.", exit_code=3)
+        if spec["schema_version"] == "2.7":
+            from .steps import validate_chain, reserve
+            validate_chain(self.store, run, live=True, complete=True)
+            def reserve_pass(current, db):
+                if current["state"] == "cancel_pending":
+                    raise TaskAlongError("cancel_pending", "Cancellation prevents final verification.", exit_code=6)
+                reserve(current, spec, reservation_id=identifier(), kind="verification", owner_id=operation_key)
+                current["final_verification_ids"].append(operation_key)
+            self.store.mutate(run_id, "verification.reserve", operation_key, run["revision"], {}, reserve_pass)
+            run = self.store.run(run_id)
         workspace = self.store.lease(run)["workspace"]
         manager = self._manager(run)
         manager.validate(workspace, run["lease_generation"])
@@ -562,12 +627,16 @@ class Workflow:
                 def before_dispatch(receipt):
                     if interruption.requested:
                         raise ProcessBoundaryError("Foreground verification stopped before dispatch.", code="verification_interrupted", effect_outcome="not_sent")
-                    if check_profile is not None:
+                    if check_profile is not None or spec["schema_version"] == "2.7":
                         current = self.store.run(run_id)
                         if current["state"] == "cancel_pending":
                             raise ProcessBoundaryError("Cancellation prevents verifier dispatch.", code="cancel_pending", effect_outcome="not_sent")
                         self.store.authority(current, {"verify", "commit_candidate"}, spec["digest"])
-                        resolve(self.store, spec)
+                        if spec["schema_version"] == "2.7":
+                            from .steps import validate_chain
+                            validate_chain(self.store, current, live=True, complete=True)
+                        else:
+                            resolve(self.store, spec)
                 try:
                     outcome = run_bounded(argv, cwd=check_cwd, timeout_seconds=check["timeout_seconds"], max_output_bytes=capture["request"]["reserved_output_bytes"], env=environment, on_spawn=before_dispatch, cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
                 except ProcessBoundaryError as exc:
@@ -623,8 +692,12 @@ class Workflow:
                     if current["state"] == "cancel_pending":
                         raise TaskAlongError("cancel_pending", "Cancellation prevents review dispatch.", exit_code=6)
                     self.store.authority(current, {"verify", "commit_candidate"}, spec["digest"])
-                    resolve(self.store, spec)
-                receipt = ReviewSenseiAdapter(review["executable"], python_executable=review["python_executable"], expected_executable_sha256=review["executable_sha256"], interrupt_requested=lambda: interruption.requested, pre_dispatch=review_gate if check_profile else None).review(diff_bytes, {"base_commit": candidate["base_commit"], "candidate_commit": candidate["commit"], "candidate_tree": candidate["tree"], "diff_sha256": candidate["diff_sha256"]}, config_path=review["config_path"], qualification=run["qualification"], invocation_dir=invocation_dir, expected_config_digest=spec["review"]["config_digest"], fixture_response=review["fixture_response"], max_output_bytes=capture["request"]["reserved_output_bytes"], cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
+                    if spec["schema_version"] == "2.7":
+                        from .steps import validate_chain
+                        validate_chain(self.store, current, live=True, complete=True)
+                    else:
+                        resolve(self.store, spec)
+                receipt = ReviewSenseiAdapter(review["executable"], python_executable=review["python_executable"], expected_executable_sha256=review["executable_sha256"], interrupt_requested=lambda: interruption.requested, pre_dispatch=review_gate if check_profile or spec["schema_version"] == "2.7" else None).review(diff_bytes, {"base_commit": candidate["base_commit"], "candidate_commit": candidate["commit"], "candidate_tree": candidate["tree"], "diff_sha256": candidate["diff_sha256"]}, config_path=review["config_path"], qualification=run["qualification"], invocation_dir=invocation_dir, expected_config_digest=spec["review"]["config_digest"], fixture_response=review["fixture_response"], max_output_bytes=capture["request"]["reserved_output_bytes"], cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
                 self._capture_finish(run_id, capture, receipt.output_bytes, confirmed=True)
                 if interruption.requested:
                     self._verification_interrupted(run_id, confirmed=True)
@@ -659,10 +732,16 @@ class Workflow:
         reasons = acceptance_reasons(spec, current, evidence_records, workspace_quiescent=True, current_subject=candidate, packet_digest=attempt["packet"]["digest"], lease_generation=run["lease_generation"], owned_invocation_ids={e["producer"]["invocation_id"] for e in evidence_records}, verification_profile_digest=check_profile["digest"] if check_profile else None)
         decision = "accepted" if not reasons else "blocked"
         acceptance = {"kind": "acceptance", "schema_version": "1.0", "acceptance_id": identifier(), "run_id": run_id, "spec_digest": spec["digest"], "candidate": candidate, "policy_digest": digest(spec["review"]), "evidence_ids": sorted(e["evidence_id"] for e in evidence_records), "evidence_set_digest": digest(sorted(e["evidence_id"] for e in evidence_records)), "verifier": {"version": "0.1.0a1", "identity": "owned-independent-verifier"}, "decision": decision, "reasons": reasons, "at": now(), "qualification": run["qualification"], "extensions": {}}
+        if spec["schema_version"] == "2.7":
+            from .steps import validate_chain
+            acceptance["extensions"]["taskalong:execution_chain_digest"] = validate_chain(self.store, current, live=True, complete=True)
         acceptance = seal("acceptance", acceptance)
         def accept(updated, db):
             self.store.require_fence(updated, run["lease_generation"], db=db)
             validate_completed_run(self.store, updated)
+            if spec["schema_version"] == "2.7":
+                if validate_chain(self.store, updated, live=True, complete=True) != acceptance["extensions"]["taskalong:execution_chain_digest"]:
+                    raise TaskAlongError("step_chain_changed", "The ordered results changed before final acceptance.", exit_code=3)
             if updated["state"] != "verifying":
                 raise TaskAlongError("verification_state_changed", "Cancellation or recovery changed the run before acceptance.", exit_code=6)
             db.execute("INSERT INTO acceptances VALUES (?,?,?)", (acceptance["acceptance_id"], run_id, encode(acceptance)))
@@ -686,6 +765,15 @@ class Workflow:
         run = self.store.run(run_id)
         spec = self.store.spec(run)
         remaining = spec["budget"]["max_output_bytes"] - run["budget_consumed"]["output_bytes"]
+        if spec["schema_version"] == "2.7":
+            # Each no-refund pass owns its own captured-output allowance.
+            consumed = 0
+            for row in self.store.db.execute("SELECT document FROM effects WHERE run_id=? AND kind='verifier.capture'", (run_id,)):
+                from .validation import loads
+                prior = loads(row[0])
+                if prior["request"].get("verification_key") == key:
+                    consumed += (prior.get("response") or {}).get("output_bytes", prior["request"]["reserved_output_bytes"])
+            remaining = spec["final_verification"]["max_output_bytes"] - consumed
         if remaining <= 0:
             raise TaskAlongError("output_budget_exhausted", "The persisted aggregate output budget is exhausted.", exit_code=3)
         selected = {}
@@ -693,6 +781,10 @@ class Workflow:
             if current["state"] != "verifying":
                 raise TaskAlongError("verification_state_changed", "Cancellation prevents a new verifier invocation.", exit_code=6)
             item = _effect(db, current, "verifier.capture", _internal_key(label, key), {"label": label, "reserved_output_bytes": remaining})
+            if spec["schema_version"] == "2.7":
+                item["request"]["verification_key"] = key
+                item["request_digest"] = digest(item["request"])
+                db.execute("UPDATE effects SET request_digest=?,document=? WHERE effect_id=?", (item["request_digest"], encode(item), item["effect_id"]))
             selected.update(item)
         self.store.mutate(run_id, "capture.prepare", _internal_key(label, key), None, {"label": label}, prepare, events=[("effect.prepared", {"kind": "verifier.capture", "label": label})], fence=run["lease_generation"])
         return selected
@@ -721,6 +813,8 @@ class Workflow:
 
     def publish_intent(self, run_id):
         self._refuse_trial_run(run_id)
+        if self.store.spec(self.store.run(run_id))["schema_version"] == "2.7":
+            raise TaskAlongError("ordered_publication_unsupported", "M10 cannot publish a branch or pull request.", exit_code=3)
         from .integrations.github import build_publish_intent
         run = self.store.run(run_id)
         from .executors.observed_capture import validate_completed_run
@@ -741,6 +835,8 @@ class Workflow:
 
     def publish(self, run_id, *, intent_digest, operation_key, expected_revision):
         self._refuse_trial_run(run_id)
+        if self.store.spec(self.store.run(run_id))["schema_version"] == "2.7":
+            raise TaskAlongError("ordered_publication_unsupported", "M10 cannot publish a branch or pull request.", exit_code=3)
         with self.store.guard(run_id, "publish"):
             request = {"intent_digest": intent_digest}
             prior = self.store.operation("publish", run_id, operation_key, request)
@@ -907,6 +1003,10 @@ def drive_run(state_dir, run_id, attempt_id):
                     "process": {"termination_confirmed": True, "duration_ms": 0, "output_bytes": 0}, "usage": {}}, None)
                 return
         snapshot = manager.snapshot(workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])
+        if spec["schema_version"] == "2.7":
+            from .steps import validate_chain, inputs
+            validate_chain(store, run)
+            inputs(spec, workspace["path"], attempt["step_index"])
         if attempt["mode"] in {"native_resume", "restart"}:
             previous = store.detail("attempts", run["attempts"][-2]["attempt_id"])
             if spec["schema_version"] in {"2.5", "2.6"} and previous["status"] == "completed":
@@ -939,6 +1039,14 @@ def drive_run(state_dir, run_id, attempt_id):
         if spec["schema_version"] not in {"2.3", "2.4", "2.5", "2.6", "2.9"}:
             packet_fields["bindings"]["runtime_profile_digest"] = profile["digest"]
             packet_fields["result_schema_id"] = "urn:taskalong:schema:v1:worker-result"
+        if spec["schema_version"] == "2.7":
+            step = spec["steps"][attempt["step_index"]]
+            packet_fields["goal"], packet_fields["scope"] = step["goal"], step["scope"]
+            packet_fields["remaining_budget"].pop("attempt_output_bytes", None)
+            packet_fields["remaining_budget"].update(max_attempts=1, max_output_bytes=spec["budget"]["attempt_output_bytes"])
+            packet_fields["extensions"]["taskalong:ordered_step"] = {"step_id": step["step_id"], "step_index":attempt["step_index"],
+                "step_digest":digest(step), "predecessor_digest":run["steps"][attempt["step_index"]-1]["receipt_digest"] if attempt["step_index"] else None,
+                "reservation_digest":digest(attempt["reservation"]), "inputs":step["inputs"]}
         from .admission import worker_contract
         contract, provider = worker_contract(store, spec, profile)
         canonical_packet, packet, projection = contract.compile_packet(packet_fields, attempt.get("dispatch_admission"))
@@ -954,6 +1062,10 @@ def drive_run(state_dir, run_id, attempt_id):
                 item.update(canonical_packet=canonical_packet, packet_projection=projection, dispatch_admission=attempt["dispatch_admission"])
                 if spec["schema_version"] in {"2.3", "2.4"}:
                     item["driver_session_id"] = packet["session_id"]
+            if spec["schema_version"] == "2.7":
+                if current["state"] == "cancel_pending":
+                    raise TaskAlongError("cancel_pending", "Cancellation prevents worker dispatch.", exit_code=6)
+                item.update(starting_snapshot_digest=snapshot["content_digest"], starting_manifest=snapshot["manifest"])
             item["packet"] = packet
             item["spawn_phase"] = "dispatching"
             db.execute("UPDATE attempts SET document=? WHERE attempt_id=?", (encode(item), attempt_id))
@@ -961,7 +1073,7 @@ def drive_run(state_dir, run_id, attempt_id):
         try:
             store.mutate(run_id, "executor.prepare", attempt_id, None, {"packet_digest": packet["digest"]}, prepared, events=[("effect.prepared", {"kind": "executor.start"})], fence=run["lease_generation"])
         except TaskAlongError as exc:
-            if (spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9"} and exc.code == "cancel_pending"
+            if (spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.9"} and exc.code == "cancel_pending"
                     and store.detail("attempts", attempt_id)["spawn_phase"] == "not_dispatched"):
                 # This supervisor has not created a worker gate or sent target
                 # code. The rolled-back preparation cannot leave a dispatch.
@@ -973,6 +1085,17 @@ def drive_run(state_dir, run_id, attempt_id):
             if hasattr(receipt, "to_dict"):
                 receipt = receipt.to_dict()
             def spawned(current, db):
+                if spec["schema_version"] == "2.7":
+                    if current["state"] == "cancel_pending":
+                        raise TaskAlongError("cancel_pending", "Cancellation prevents ordered worker dispatch.", exit_code=6)
+                    from .steps import preflight, validate_chain, inputs
+                    store.authority(current, {"execute", "verify", "commit_candidate"}, spec["digest"])
+                    store.require_fence(current, attempt["lease_generation"])
+                    preflight(workflow, spec)
+                    validate_chain(store, current)
+                    inputs(spec, workspace["path"], attempt["step_index"])
+                    if manager.snapshot(workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])["content_digest"] != snapshot["content_digest"]:
+                        raise TaskAlongError("checkpoint_stale", "Workspace changed before dispatch.", exit_code=3)
                 if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9"}:
                     # run_bounded invokes this callback while the owned gate is
                     # still closed. An exception prevents target execve.
@@ -1035,6 +1158,15 @@ def drive_run(state_dir, run_id, attempt_id):
                     result["checkpoint"]["thread_id"] = result.get("thread_id")
             except TaskAlongError:
                 result["checkpoint"] = None
+            if spec["schema_version"] == "2.7" and result["checkpoint"] is not None:
+                from .steps import delta
+                try:
+                    delta(snapshot["manifest"], stopped_snapshot["manifest"], spec["steps"][attempt["step_index"]]["scope"])
+                except TaskAlongError:
+                    # A settled failure cannot make an illegal partial edit a
+                    # reusable retry checkpoint.
+                    result["checkpoint"] = None
+                    raise
             if result["state"] == "completed":
                 if spec["schema_version"] in {"2.5", "2.6"}:
                     validate_versioned("worker-result", worker, expected_version="2.5")
@@ -1052,7 +1184,11 @@ def drive_run(state_dir, run_id, attempt_id):
                 if worker["packet_digest"] != packet["digest"] or worker["qualification"] != run["qualification"] or worker["status"] != "completed" or worker["blockers"] or worker["deviations"]:
                     raise TaskAlongError("worker_handoff_blocked", "Worker handoff is incomplete or disagrees with the packet.", exit_code=3)
                 actual = manager.snapshot(workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])
-                if sorted(worker["changed_files"], key=lambda x: x["path"]) != sorted(actual["changed_files"], key=lambda x: x["path"]):
+                actual_changes = actual["changed_files"]
+                if spec["schema_version"] == "2.7":
+                    from .steps import delta
+                    actual_changes = delta(snapshot["manifest"], actual["manifest"], spec["steps"][attempt["step_index"]]["scope"])
+                if sorted(worker["changed_files"], key=lambda x: x["path"]) != sorted(actual_changes, key=lambda x: x["path"]):
                     raise TaskAlongError("worker_scope_claim_mismatch", "Actual changed files disagree with the worker's claim.", exit_code=3)
             _finish_attempt(store, run_id, attempt_id, result, worker)
             finished = store.run(run_id)
@@ -1062,7 +1198,7 @@ def drive_run(state_dir, run_id, attempt_id):
             if "result" in locals() and store.run(run_id)["active_attempt_id"] == attempt_id:
                 result.update(state="failed", error=exc.code)
                 _finish_attempt(store, run_id, attempt_id, result, None)
-                if spec["schema_version"] in {"2.5", "2.6", "2.9"}:
+                if spec["schema_version"] in {"2.5", "2.6", "2.7", "2.9"}:
                     # The fenced finish already recorded the exact failure.
                     # A later generic blocker could overwrite a new restart
                     # admitted after that durable, settled state became visible.
@@ -1080,6 +1216,16 @@ def drive_run(state_dir, run_id, attempt_id):
 def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_handoff=None):
     run = store.run(run_id)
     process = result.get("process", {})
+    ordered = store.spec(run)["schema_version"] == "2.7"
+    receipt_digest = None
+    if ordered:
+        item = store.detail("attempts", attempt_id)
+        if run["active_attempt_id"] != attempt_id or item["lease_generation"] != run["lease_generation"]:
+            raise TaskAlongError("lease_fenced", "Only the active ordered attempt can finish.", exit_code=4)
+        if result["state"] == "completed" and process.get("termination_confirmed") and run["state"] != "cancel_pending":
+            from .steps import completed_receipt, validate_chain
+            validate_chain(store, run)
+            receipt_digest = completed_receipt(store, run, item, result, worker)
     artifact = store.put_blob(canonical_bytes(worker)) if worker else None
     capture = capture_for_version(store.spec(run)["schema_version"])
     association = result.get(capture.name + "_capture") if capture and result["state"] == "completed" else None
@@ -1093,6 +1239,8 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
     terminal_events = []
     def finish(current, db):
         item = store.detail("attempts", attempt_id)
+        if ordered and (current["active_attempt_id"] != attempt_id or item["lease_generation"] != current["lease_generation"]):
+            raise TaskAlongError("lease_fenced", "A stale ordered result cannot replace a newer step.", exit_code=4)
         if muse:
             if current["active_attempt_id"] != attempt_id or item["lease_generation"] != current["lease_generation"]:
                 raise TaskAlongError("lease_fenced", "Only the active fenced Muse attempt may finish.", exit_code=4)
@@ -1134,6 +1282,16 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
             current["state"] = "blocked"
             current["blocked_from"] = "running"
             current["blockers"] = [{"code": result.get("error") or "executor_incomplete", "effect_outcome": "known" if confirmed else "uncertain", "message": "Inspect the stopped attempt before continuation.", "recovery": [{"action": "reconcile"}]}]
+        if ordered:
+            state = current["steps"][item["step_index"]]
+            state["status"] = "cancelled" if current["state"] == "cancelled" else "completed" if receipt_digest else "failed"
+            state["receipt_digest"] = receipt_digest
+            if receipt_digest:
+                current["blockers"], current["blocked_from"] = [], None
+                if all(s["status"] == "completed" for s in current["steps"]):
+                    current["execution_chain_digest"] = digest({"spec_digest":current["spec_digest"], "step_receipts":[s["receipt_digest"] for s in current["steps"]]})
+                else:
+                    current["state"] = "ready"
         for effect_id in list(current["pending_effect_ids"]):
             effect = store.detail("effects", effect_id)
             if effect["kind"] == "executor.start":
