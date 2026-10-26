@@ -27,6 +27,18 @@ class ArtifactIOTests(unittest.TestCase):
         return read_regular(self.root, "value", max_bytes=len(self.payload),
                             expected_sha256=self.sha, expected_bytes=len(self.payload), **options)
 
+    def test_os_controlled_alias_prefixes_preserve_private_store_readback(self):
+        from taskalong.store import Store
+        selected = self.root
+        for alias, destination in ((Path("/tmp"),Path("/private/tmp")),(Path("/var"),Path("/private/var"))):
+            if alias.is_symlink() and self.root.is_relative_to(destination):
+                selected = alias / self.root.relative_to(destination)
+                break
+        self.assertEqual(read_regular(selected,"value",max_bytes=len(self.payload),expected_sha256=self.sha),self.payload)
+        with Store(selected/"state") as store:
+            reference=store.put_blob(self.payload,media_type="text/plain")
+            self.assertEqual(store.get_blob(reference["sha256"]),self.payload)
+
     def rejects(self, action, *, uncertain=False):
         with self.assertRaises(TaskAlongError) as failure:
             action()

@@ -84,6 +84,17 @@ class ArtifactImportTests(HandoffFixture, unittest.TestCase):
         self.assertEqual(len(self.invocations()),1)
         self.assertIsNone(stopped["acceptance_id"])
 
+    def test_overlapping_distinct_patch_outputs_refuse_before_any_import_write(self):
+        first,_ = self.first(self.patch_task(overlap=True))
+        self.advance(first)
+        stopped=self.wait(first["run_id"],states=("blocked",),timeout=20)
+        self.assertIn("artifact_patch_overlap",{b["code"] for b in stopped["blockers"]})
+        self.assertEqual(len(self.starts()),1)
+        workspace=Path(self.service._store.lease(stopped)["workspace"]["path"])
+        self.assertEqual((workspace/"second.py").read_bytes(),BEFORE)
+        attempt=self.service._store.detail("attempts",stopped["active_attempt_id"])
+        self.assertNotIn("import_journal_blob_sha256",attempt)
+
     def test_patch_payload_and_envelope_total_obeys_selector_limit(self):
         task = self.patch_task()
         envelope_bytes = canonical_bytes(loads(self.executables[self.direction[0]].with_suffix(".mode.json").read_bytes())["patch"])

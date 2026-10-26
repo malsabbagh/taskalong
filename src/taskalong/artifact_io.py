@@ -73,6 +73,15 @@ def _parent(root, relative, *, private, create=False, changes=None):
     try:
         literal = safe_relative(relative)
         absolute = Path(root).absolute()
+        # Preserve the Store's existing macOS OS-controlled aliases without
+        # resolving an arbitrary operator/worker-controlled path component.
+        for alias, destination in ((Path("/tmp"), Path("/private/tmp")), (Path("/var"), Path("/private/var"))):
+            if (absolute == alias or alias in absolute.parents) and alias.is_symlink():
+                info = alias.lstat()
+                link = os.readlink(alias)
+                if info.st_uid != 0 or link not in {str(destination), str(destination).lstrip("/")}:
+                    raise _invalid()
+                absolute = destination / absolute.relative_to(alias)
     except (TaskAlongError, TypeError, ValueError, UnicodeError):
         raise _invalid() from None
     if ".." in absolute.parts or len(absolute.parts) + len(literal.split("/")) > 128:
