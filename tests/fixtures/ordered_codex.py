@@ -31,8 +31,12 @@ def main():
     root = Path(__file__).resolve().parent
     controls = json.loads((root / "control.json").read_text())
     files = packet["scope"]["files"]
+    if len(files) != 1 or files[0] not in {"a.py", "b.py"}:
+        return 3
     selected = next((name for name in ("a.py", "b.py") if name in files), None)
     mode = controls.get(selected, "good")
+    if mode not in {"good", "failed", "hang", "barrier", "out-of-scope"}:
+        return 3
     with (root / "invocations.jsonl").open("a") as stream:
         stream.write(json.dumps({"run_id": packet["run_id"],
             "attempt_id": packet["attempt_id"], "packet_digest": packet["digest"],

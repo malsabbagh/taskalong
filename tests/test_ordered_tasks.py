@@ -50,6 +50,121 @@ class OrderedFixture(ServiceFixture):
 
 
 class OrderedTasksTests(OrderedFixture,unittest.TestCase):
+    def capture_stopped_second_step(self):
+        first,_=self.first()
+        with patch.object(self.service._workflow,'_launch_supervisor',lambda *a:None):
+            prepared=self.advance(first)
+        from taskalong import workflow
+        captured=[]
+        original=workflow._finish_attempt
+        def retain_actual_result(store,run_id,attempt_id,result,worker,**kwargs):
+            captured.append((result,worker))
+            return store.run(run_id)
+        with patch('taskalong.workflow._finish_attempt',retain_actual_result):
+            workflow.drive_run(self.state,first['run_id'],prepared['active_attempt_id'])
+        self.assertEqual(len(captured),1)
+        self.assertTrue(captured[0][0]['process']['termination_confirmed'])
+        return first,prepared['active_attempt_id'],captured[0],original
+
+    def test_finish_step_identity_faults_refuse_before_receipt_preparation(self):
+        first,attempt_id,(result,worker),finish=self.capture_stopped_second_step()
+        from taskalong.store import encode
+        current=self.service._store.run(first['run_id'])
+        item=self.service._store.detail('attempts',attempt_id)
+        try:
+            for field,value in [('step_index',-1),('step_index',True),('step_index',0),('step_id','A'),('attempt_id',first['steps'][0]['attempt_ids'][0])]:
+                with self.subTest(field=field,value=value):
+                    self.service._store.db.execute('UPDATE attempts SET document=? WHERE attempt_id=?',(encode(item|{field:value}),attempt_id))
+                    before=self.service._store.db.execute('SELECT count(*) FROM blobs').fetchone()[0]
+                    with patch('taskalong.steps.completed_receipt') as receipt:
+                        with self.assertRaises(TaskAlongError) as error:
+                            finish(self.service._store,first['run_id'],attempt_id,result,worker)
+                    self.assertEqual(error.exception.code,'step_identity_mismatch')
+                    receipt.assert_not_called()
+                    self.assertEqual(self.service._store.run(first['run_id']),current)
+                    self.assertEqual(self.service._store.db.execute('SELECT count(*) FROM blobs').fetchone()[0],before)
+            self.service._store.db.execute('UPDATE attempts SET document=? WHERE attempt_id=?',(encode(item),attempt_id))
+            altered=json.loads(json.dumps(current));altered['steps'][1]['attempt_ids']=[]
+            self.service._store.db.execute('UPDATE runs SET document=? WHERE run_id=?',(encode(altered),first['run_id']))
+            with self.assertRaises(TaskAlongError) as error:
+                finish(self.service._store,first['run_id'],attempt_id,result,worker)
+            self.assertEqual(error.exception.code,'step_identity_mismatch')
+            self.assertEqual(self.service._store.run(first['run_id']),altered)
+        finally:
+            self.service._store.db.execute('UPDATE attempts SET document=? WHERE attempt_id=?',(encode(item),attempt_id))
+            self.service._store.db.execute('UPDATE runs SET document=? WHERE run_id=?',(encode(current),first['run_id']))
+            finish(self.service._store,first['run_id'],attempt_id,result,worker)
+
+    def test_finish_step_identity_is_rechecked_inside_atomic_mutation(self):
+        first,attempt_id,(result,worker),finish=self.capture_stopped_second_step()
+        from taskalong.store import encode
+        from taskalong import steps
+        current=self.service._store.run(first['run_id'])
+        item=self.service._store.detail('attempts',attempt_id)
+        original=steps.completed_receipt
+        def corrupt_after_preparation(*args,**kwargs):
+            ref=original(*args,**kwargs)
+            self.service._store.db.execute('UPDATE attempts SET document=? WHERE attempt_id=?',(encode(item|{'step_index':0}),attempt_id))
+            return ref
+        try:
+            with patch('taskalong.steps.completed_receipt',corrupt_after_preparation):
+                with self.assertRaises(TaskAlongError) as error:
+                    finish(self.service._store,first['run_id'],attempt_id,result,worker)
+            self.assertEqual(error.exception.code,'step_identity_mismatch')
+            self.assertEqual(self.service._store.run(first['run_id']),current)
+            self.assertEqual(current['steps'][0],first['steps'][0])
+            self.assertEqual(current['reservation_totals']['attempts'],2)
+        finally:
+            self.service._store.db.execute('UPDATE attempts SET document=? WHERE attempt_id=?',(encode(item),attempt_id))
+            finish(self.service._store,first['run_id'],attempt_id,result,worker)
+
+    def test_invalid_continuation_requests_keep_launches_and_reservations(self):
+        first,_=self.first()
+        before=self.service._store.run(first['run_id'])
+        for predecessor in (None,'f'*64):
+            with self.subTest(predecessor=predecessor):
+                with self.assertRaises(TaskAlongError) as error:
+                    self.service.advance(first['run_id'],expected_step_id='B',predecessor_digest=predecessor,
+                        operation_key='invalid-predecessor-'+str(predecessor),expected_revision=first['revision'])
+                self.assertEqual(error.exception.code,'predecessor_changed')
+        with self.assertRaises(TaskAlongError) as error:
+            self.service.retry(first['run_id'],expected_step_id='A',operation_key='retry-completed',expected_revision=first['revision'])
+        self.assertEqual(error.exception.code,'retry_not_ready')
+        self.assertEqual(self.service._store.run(first['run_id']),before)
+        self.assertEqual(len(self.invocations()),1)
+        self.set_mode('failed');self.advance(first)
+        failed=self.wait(first['run_id'])
+        before=self.service._store.run(first['run_id'])
+        with self.assertRaises(TaskAlongError) as error:
+            self.service.retry(first['run_id'],expected_step_id='unknown',operation_key='retry-unknown',expected_revision=failed['revision'])
+        self.assertEqual(error.exception.code,'step_identity_mismatch')
+        self.assertEqual(self.service._store.run(first['run_id']),before)
+        self.assertEqual(len(self.invocations()),2)
+
+    def test_advance_past_final_step_refuses_without_reservation(self):
+        task=self.ordered()
+        task['scope']={'files':['unused/'],'operations':['modify']}
+        task['steps']=task['steps'][:1];task['steps'][0]['scope']=task['scope']
+        task=seal_versioned('task-spec',task,version='2.7')
+        final,_=self.first(task)
+        self.assertEqual(final['steps'][0]['status'],'completed',final)
+        before=self.service._store.run(final['run_id'])
+        with self.assertRaises(TaskAlongError) as error:
+            self.service.advance(final['run_id'],expected_step_id='B',predecessor_digest=final['steps'][0]['receipt_digest'],
+                operation_key='advance-past-final',expected_revision=final['revision'])
+        self.assertEqual(error.exception.code,'advance_not_ready')
+        self.assertEqual(self.service._store.run(final['run_id']),before)
+        self.assertEqual(len(self.invocations()),1)
+
+    def test_task_and_step_traversal_and_sibling_prefix_refuse(self):
+        for task_scope,step_scope,expected in [('safe/','safe/../escape','invalid_path'),('../escape/','safe/file.py','invalid_path'),('safe/','safely/file.py','step_scope_expansion')]:
+            with self.subTest(task_scope=task_scope,step_scope=step_scope):
+                task=self.ordered();task['scope']['files']=[task_scope]
+                task['steps'][0]['scope']['files']=[step_scope]
+                with self.assertRaises(TaskAlongError) as error:seal_versioned('task-spec',task,version='2.7')
+                self.assertEqual(error.exception.code,expected)
+        self.assertEqual(self.invocations(),[])
+
     def cancel_during_finish(self, *, final):
         task=self.ordered()
         if final:

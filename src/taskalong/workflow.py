@@ -1223,13 +1223,18 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
     ordered = store.spec(run)["schema_version"] == "2.7"
     receipt_digest = None
     if ordered:
+        worker_bytes = canonical_bytes(worker) if worker else None
+        replay_artifact = ({"sha256":hashlib.sha256(worker_bytes).hexdigest(), "bytes":len(worker_bytes),
+            "media_type":"application/json", "redaction_version":"1"} if worker_bytes is not None else None)
         retained = store.operation("executor.finish", run_id, attempt_id, {"state":result["state"],
-            "artifact":store.put_blob(canonical_bytes(worker)) if worker else None})
+            "artifact":replay_artifact})
         if retained is not None:
             return retained
         item = store.detail("attempts", attempt_id)
         if run["active_attempt_id"] != attempt_id or item["lease_generation"] != run["lease_generation"]:
             raise TaskAlongError("lease_fenced", "Only the active ordered attempt can finish.", exit_code=4)
+        from .steps import require_finish_identity
+        require_finish_identity(run, store.spec(run), item)
         if result["state"] == "completed" and process.get("termination_confirmed") and run["state"] != "cancel_pending":
             from .steps import completed_receipt, validate_chain
             validate_chain(store, run)
@@ -1249,6 +1254,8 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
         item = store.detail("attempts", attempt_id)
         if ordered and (current["active_attempt_id"] != attempt_id or item["lease_generation"] != current["lease_generation"]):
             raise TaskAlongError("lease_fenced", "A stale ordered result cannot replace a newer step.", exit_code=4)
+        if ordered:
+            require_finish_identity(current, store.spec(current), item)
         if muse:
             if current["active_attempt_id"] != attempt_id or item["lease_generation"] != current["lease_generation"]:
                 raise TaskAlongError("lease_fenced", "Only the active fenced Muse attempt may finish.", exit_code=4)

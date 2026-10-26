@@ -232,6 +232,17 @@ def completed_receipt(store, run, item, result, worker):
     return store.put_blob(canonical_bytes(seal_versioned("step-receipt", fields, version="2.7")))["sha256"]
 
 
+def require_finish_identity(run, spec, item):
+    """A live attempt may finish only its current immutable ordered step."""
+    index = item.get("step_index")
+    if (type(index) is not int or not 0 <= index < len(spec["steps"])
+            or index != run["current_step_index"] or index >= len(run["steps"])
+            or item.get("step_id") != spec["steps"][index]["step_id"]
+            or run["steps"][index]["step_id"] != spec["steps"][index]["step_id"]
+            or item["attempt_id"] not in run["steps"][index]["attempt_ids"]):
+        raise TaskAlongError("step_identity_mismatch", "The finishing attempt does not own the current ordered step.", exit_code=4)
+
+
 def view(store, run):
     validate_chain(store, run)
     acceptance = store.detail("acceptances", run["acceptance_id"]) if run["acceptance_id"] else None
