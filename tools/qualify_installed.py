@@ -4,6 +4,9 @@
 Only synthetic task data reaches external boundary fixtures. Dependency artifact
 downloads are permitted by this explicit qualification command; no model call,
 real GitHub mutation, auth lookup, or runtime installation is performed.
+
+Format 2 remains the default two-batch protocol. Explicit format 3 uses four
+whole-module batches; both protocols retain the same phase and total deadlines.
 """
 from __future__ import annotations
 
@@ -39,31 +42,59 @@ def json_digest(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def make_schedule(ids: list[str]) -> dict:
-    if not ids or len(ids) != len(set(ids)) or any('._FailedTest.' in i or not i.startswith('test_') for i in ids):
+def batch_count(format_version: int) -> int:
+    if type(format_version) is not int or format_version not in {2, 3}:
+        raise ValueError('unsupported qualification format')
+    return 2 if format_version == 2 else 4
+
+
+def test_phases(format_version: int) -> list[str]:
+    return [f'tests-{index}' for index in range(batch_count(format_version))]
+
+
+def make_schedule(ids: list[str], *, format_version: int = 2) -> dict:
+    count = batch_count(format_version)
+    if (not isinstance(ids, list) or not ids or any(not isinstance(i, str) for i in ids)
+            or len(ids) != len(set(ids)) or any('._FailedTest.' in i or not i.startswith('test_') for i in ids)):
         raise ValueError('invalid installed test inventory')
     modules: dict[str, list[str]] = {}
     for identifier in sorted(ids):
         modules.setdefault(identifier.split('.')[0], []).append(identifier)
-    assigned: list[list[str]] = [[], []]
-    loads = [0, 0]
+    assigned: list[list[str]] = [[] for _ in range(count)]
+    loads = [0] * count
     for module in sorted(modules, key=lambda name: (-len(modules[name]), name)):
-        index = min(range(2), key=lambda value: (loads[value], value))
+        index = min(range(count), key=lambda value: (loads[value], value))
         assigned[index].append(module)
         loads[index] += len(modules[module])
     batches = [[identifier for module in sorted(group) for identifier in modules[module]]
                for group in assigned]
-    return {'format_version': 2, 'rule': 'whole-modules-count-desc-greedy-two-v2',
+    rule = ('whole-modules-count-desc-greedy-two-v2' if format_version == 2
+            else 'whole-modules-count-desc-greedy-four-v3')
+    return {'format_version': format_version, 'rule': rule,
             'inventory_sha256': json_digest(sorted(ids)), 'batches': batches}
 
 
-def phase_receipt(identity: dict, payload: dict) -> dict:
-    return {'kind': 'installed_phase', 'format_version': 2, 'ok': True, 'identity': identity, 'payload': payload}
+def check_schedule(schedule: dict, *, format_version: int = 2):
+    count = batch_count(format_version)
+    if (not isinstance(schedule, dict)
+            or set(schedule) != {'format_version', 'rule', 'inventory_sha256', 'batches'}
+            or type(schedule['format_version']) is not int or schedule['format_version'] != format_version
+            or not isinstance(schedule['batches'], list) or len(schedule['batches']) != count
+            or any(not isinstance(batch, list) for batch in schedule['batches'])
+            or schedule != make_schedule(sum(schedule['batches'], []), format_version=format_version)):
+        raise ValueError('invalid qualification schedule')
 
 
-def validate_phase(value: dict, identity: dict) -> dict:
+def phase_receipt(identity: dict, payload: dict, *, format_version: int = 2) -> dict:
+    batch_count(format_version)
+    return {'kind': 'installed_phase', 'format_version': format_version, 'ok': True, 'identity': identity, 'payload': payload}
+
+
+def validate_phase(value: dict, identity: dict, *, format_version: int = 2) -> dict:
+    phases = test_phases(format_version)
     if (not isinstance(value, dict) or set(value) != {'kind', 'format_version', 'ok', 'identity', 'payload'}
-            or value['kind'] != 'installed_phase' or value['format_version'] != 2 or value['ok'] is not True
+            or value['kind'] != 'installed_phase' or type(value['format_version']) is not int
+            or value['format_version'] != format_version or value['ok'] is not True
             or value['identity'] != identity or not isinstance(value['payload'], dict)):
         raise ValueError('missing or mismatched terminal phase receipt')
     payload = value['payload']
@@ -71,16 +102,15 @@ def validate_phase(value: dict, identity: dict) -> dict:
     if phase == 'probe':  # Small wrapper regressions, never part of a real schedule.
         return payload
     fields = {'inventory': {'schedule', 'package_snapshot_sha256'},
-              'sample': {'journey', 'package_snapshot_sha256'},
-              'tests-0': {'test_ids', 'outcomes', 'skipped_platform_cases', 'package_snapshot_sha256'},
-              'tests-1': {'test_ids', 'outcomes', 'skipped_platform_cases', 'package_snapshot_sha256'}}
+              'sample': {'journey', 'package_snapshot_sha256'}}
+    fields.update({phase: {'test_ids', 'outcomes', 'skipped_platform_cases', 'package_snapshot_sha256'}
+                   for phase in phases})
     if phase not in fields or set(payload) != fields[phase] or not is_sha(payload['package_snapshot_sha256']):
         raise ValueError('invalid closed phase payload')
     try:
         if phase == 'inventory':
             schedule = payload['schedule']
-            if schedule != make_schedule(sum(schedule['batches'], [])):
-                raise ValueError('invalid schedule payload')
+            check_schedule(schedule, format_version=format_version)
         elif phase == 'sample':
             validate_journey(payload['journey'], core_only=identity.get('schedule_sha256') is None)
         else:
@@ -171,10 +201,10 @@ def error_code(stage: str, error: Exception) -> dict:
 
 
 def run_phase(argv: list[str], *, cwd: Path, env: dict, identity: dict, timeout: float,
-              stream_limit: int = STREAM_LIMIT) -> tuple[dict, dict]:
+              stream_limit: int = STREAM_LIMIT, format_version: int = 2) -> tuple[dict, dict]:
     """Own/reap only this child; retain bounded streams without trusting descendants."""
     phase = identity['phase']
-    if phase not in {'inventory', 'sample', 'tests-0', 'tests-1', 'probe'}:
+    if phase not in {'inventory', 'sample', 'probe', *test_phases(format_version)}:
         raise ValueError('unknown qualification phase')
     folder = cwd / 'diagnostics'
     files, data, secondary = {}, {}, []
@@ -273,7 +303,7 @@ def run_phase(argv: list[str], *, cwd: Path, env: dict, identity: dict, timeout:
     payload = None
     if failure is None:
         try:
-            payload = validate_phase(json.loads(data['stdout']), identity)
+            payload = validate_phase(json.loads(data['stdout']), identity, format_version=format_version)
         except (ValueError, UnicodeError, KeyError):
             receipt['failure'] = 'invalid_terminal_receipt'
     receipt['ok'] = receipt['failure'] is None
@@ -286,9 +316,10 @@ def run_phase(argv: list[str], *, cwd: Path, env: dict, identity: dict, timeout:
     return payload, receipt
 
 
-def finalize_export(work: Path, output: Path, schedule: dict | None, *, reservation, primary, completed):
+def finalize_export(work: Path, output: Path, schedule: dict | None, *, reservation, primary, completed,
+                    format_version: int = 2):
     try:
-        export_evidence(work, output, schedule, reservation=reservation)
+        export_evidence(work, output, schedule, reservation=reservation, format_version=format_version)
     except Exception as error:
         secondary = error_code('evidence_export', error)
         if isinstance(primary, PhaseFailure):
@@ -303,8 +334,9 @@ def finalize_export(work: Path, output: Path, schedule: dict | None, *, reservat
 
 
 def validate_test_accounting(schedule: dict, results: list[dict], system: str) -> tuple[int, list[dict]]:
+    check_schedule(schedule, format_version=schedule.get('format_version'))
     expected = sorted(sum(schedule['batches'], []))
-    if schedule != make_schedule(expected) or len(results) != 2:
+    if len(results) != batch_count(schedule['format_version']):
         raise ValueError('incomplete installed schedule')
     executed, skipped = [], []
     for batch, result in zip(schedule['batches'], results):
@@ -342,7 +374,7 @@ def validate_test_accounting(schedule: dict, results: list[dict], system: str) -
     return len(executed) - len(skipped), skipped
 
 
-def export_evidence(work: Path, output: Path, schedule: dict | None, *, reservation=None):
+def export_evidence(work: Path, output: Path, schedule: dict | None, *, reservation=None, format_version: int = 2):
     """Export only validated closed records; arbitrary diagnostics stay private."""
     if (work / 'diagnostics').is_symlink():
         raise ValueError('diagnostic directory cannot be a symlink')
@@ -354,7 +386,9 @@ def export_evidence(work: Path, output: Path, schedule: dict | None, *, reservat
     events = {'phase-start', 'phase-stop', 'inventory-retained', 'test-start', 'test-outcome', 'test-stop',
               'sample-baseline-start', 'sample-submit-start', 'sample-worker-start', 'sample-worker-terminal',
               'sample-publication-start', 'sample-publication-stop'}
-    for phase in ('inventory', 'sample', 'tests-0', 'tests-1'):
+    if schedule is not None:
+        check_schedule(schedule, format_version=format_version)
+    for phase in ['inventory', 'sample', *test_phases(format_version)]:
         path = work / 'diagnostics' / f'{phase}.progress.jsonl'
         parent_path = path.with_name(f'{phase}.parent.json')
         if not path.exists() and not parent_path.exists():
@@ -421,8 +455,7 @@ def export_evidence(work: Path, output: Path, schedule: dict | None, *, reservat
                 raise ValueError('invalid parent outcome evidence')
             write_json(output / parent_path.name, value)
     if schedule is not None:
-        if schedule != make_schedule(sum(schedule['batches'], [])):
-            raise ValueError('invalid export inventory')
+        check_schedule(schedule, format_version=format_version)
         write_json(output / 'discovered-inventory.json', schedule)
         for index, batch in enumerate(schedule['batches']):
             write_json(output / f'tests-{index}.expected.json', {'test_ids': batch, 'schedule_sha256': json_digest(schedule)})
@@ -807,6 +840,8 @@ def discovered_tests(cwd: Path) -> list:
 
 
 def child_phase(args: argparse.Namespace) -> dict:
+    format_version = getattr(args, 'format_version', 2)
+    phases = test_phases(format_version)
     cwd = Path.cwd()
     value = json.loads(Path(args.phase_input).read_text())
     if set(value) != {'identity', 'schedule'}:
@@ -815,7 +850,7 @@ def child_phase(args: argparse.Namespace) -> dict:
     if set(identity) != {'phase', 'artifact_sha256', 'harness_sha256', 'lock_sha256', 'schedule_sha256'}:
         raise ValueError('invalid phase identity')
     phase = identity['phase']
-    if phase not in {'inventory', 'sample', 'tests-0', 'tests-1'}:
+    if phase not in {'inventory', 'sample', *phases}:
         raise ValueError('unknown child phase')
     if identity['schedule_sha256'] != (None if schedule is None else json_digest(schedule)):
         raise ValueError('phase schedule identity mismatch')
@@ -832,7 +867,7 @@ def child_phase(args: argparse.Namespace) -> dict:
         payload['journey'] = child_journey(args, progress)
     else:
         tests = discovered_tests(cwd)
-        actual = make_schedule([test.id() for test in tests])
+        actual = make_schedule([test.id() for test in tests], format_version=format_version)
         if phase == 'inventory':
             if schedule is not None:
                 raise ValueError('inventory must precede schedule')
@@ -858,7 +893,7 @@ def child_phase(args: argparse.Namespace) -> dict:
     verify_harness(cwd, identity['harness_sha256'])
     payload['package_snapshot_sha256'] = baseline_sha
     progress.emit('phase-stop', outcome='passed')
-    return phase_receipt(identity, payload)
+    return phase_receipt(identity, payload, format_version=format_version)
 
 
 def acquire_review(path: Path | None, target: Path, *, timeout: float = 30) -> Path:
@@ -881,6 +916,8 @@ def acquire_review(path: Path | None, target: Path, *, timeout: float = 30) -> P
 
 
 def qualify(args: argparse.Namespace) -> dict:
+    format_version = getattr(args, 'format_version', 2)
+    behavior_phases = test_phases(format_version)
     started = time.monotonic()
     def budget(limit: float = 60) -> float:
         remaining = QUALIFICATION_SECONDS - (time.monotonic() - started)
@@ -941,14 +978,15 @@ def qualify(args: argparse.Namespace) -> dict:
             review = acquire_review(args.review_wheel, base / "review_sensei-0.8.8-py3-none-any.whl", timeout=budget(30))
             command(install + ["--no-deps", str(review)], cwd=work, env=env, timeout=budget())
         copied = work / "qualify_installed.py"
-        child_args = [python, str(copied), "--child", "--source-root", str(root)]
+        child_args = [python, str(copied), "--child", "--source-root", str(root),
+                      '--format-version', str(format_version)]
         if extracted:
             child_args.extend(["--build-source-root", str(extracted)])
         if args.core_only:
             child_args.append("--core-only")
         lock_sha = hashlib.sha256((work / 'requirements-dev.lock').read_bytes()).hexdigest()
         phases, phase_receipts, schedule, package_sha = {}, [], None, None
-        order = ['sample'] if args.core_only else ['inventory', 'sample', 'tests-0', 'tests-1']
+        order = ['sample'] if args.core_only else ['inventory', 'sample', *behavior_phases]
         primary = None
         try:
             for phase in order:
@@ -961,7 +999,8 @@ def qualify(args: argparse.Namespace) -> dict:
                 if hashlib.sha256((work / 'runtime-artifact-inventory.json').read_bytes()).hexdigest() != runtime_inventory_sha:
                     raise ValueError('runtime artifact inventory changed')
                 payload, receipt = run_phase(child_args + ['--phase-input', str(phase_input)], cwd=work,
-                    env=env, identity=identity, timeout=budget(60 if phase == 'inventory' else PHASE_SECONDS))
+                    env=env, identity=identity, timeout=budget(60 if phase == 'inventory' else PHASE_SECONDS),
+                    format_version=format_version)
                 verify_harness(work, harness_inputs_sha256)
                 if hashlib.sha256((work / 'runtime-artifact-inventory.json').read_bytes()).hexdigest() != runtime_inventory_sha:
                     raise ValueError('runtime artifact inventory changed')
@@ -973,8 +1012,7 @@ def qualify(args: argparse.Namespace) -> dict:
                 package_sha = current
                 if phase == 'inventory':
                     schedule = payload['schedule']
-                    if schedule != make_schedule(sum(schedule['batches'], [])):
-                        raise ValueError('invalid discovered installed schedule')
+                    check_schedule(schedule, format_version=format_version)
         except BaseException as error:
             primary = error
             raise
@@ -983,11 +1021,13 @@ def qualify(args: argparse.Namespace) -> dict:
             # Raw streams and synthetic state stay in the retained private root.
             if args.evidence_dir:
                 finalize_export(work, args.evidence_dir, schedule, reservation=reservation, primary=primary,
-                                completed=phase_receipts[-1] if phase_receipts else None)
+                                completed=phase_receipts[-1] if phase_receipts else None,
+                                format_version=format_version)
         result = phases['sample']['journey']
-        count, skipped = (0, []) if args.core_only else validate_test_accounting(schedule, [phases['tests-0'], phases['tests-1']], sys.platform)
+        count, skipped = (0, []) if args.core_only else validate_test_accounting(
+            schedule, [phases[phase] for phase in behavior_phases], sys.platform)
         budget()
-        result.update(format_version=2, installed_behavior_tests=count, skipped_platform_cases=skipped,
+        result.update(format_version=format_version, installed_behavior_tests=count, skipped_platform_cases=skipped,
                       schedule=schedule, phases=phase_receipts, package_snapshot_sha256=package_sha,
                       elapsed_seconds=round(time.monotonic() - started, 6), total_budget_seconds=QUALIFICATION_SECONDS,
                       behavior_test_ids=[] if args.core_only else sorted(sum(schedule['batches'], [])))
@@ -1012,6 +1052,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-root", help=argparse.SUPPRESS)
     parser.add_argument("--build-source-root", help=argparse.SUPPRESS)
     parser.add_argument('--phase-input', help=argparse.SUPPRESS)
+    parser.add_argument('--format-version', type=int, choices=(2, 3), default=2,
+                        help='2: unchanged two-batch protocol; 3: explicit four-batch protocol')
     args = parser.parse_args(argv)
     try:
         if args.child:
@@ -1031,7 +1073,7 @@ def main(argv: list[str] | None = None) -> int:
             traceback.print_exc(file=sys.stderr)
         else:
             cause = error.__cause__ or error
-            print(json.dumps({"kind": "installed_qualification", "format_version": 2, "ok": False,
+            print(json.dumps({"kind": "installed_qualification", "format_version": args.format_version, "ok": False,
                               "artifact": args.artifact, 'error': type(cause).__name__,
                               'failure': cause.receipt if isinstance(cause, PhaseFailure) else None,
                               'secondary_errors': getattr(cause, 'qualification_secondary_errors', []),
