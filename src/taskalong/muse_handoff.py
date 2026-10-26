@@ -41,7 +41,7 @@ def _refuse(code="muse_handoff_invalid"):
 
 
 def _require(store):
-    if store.format_version not in (9, 10):
+    if store.format_version not in (9, 10, 11):
         _refuse("store_upgrade_required")
 
 

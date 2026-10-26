@@ -1,5 +1,10 @@
 # Experimental alpha contracts
 
+M11's explicit 2.10 family adds closed immutable artifact selectors, producer
+manifests, resolved inputs and journaled imports between independently admitted
+synthetic routes. It preserves the earlier single-step and M10 2.7 meanings.
+See [artifact handoff](artifact-handoff.md) and [ADR0015](adr/0015-immutable-artifact-handoff.md).
+
 The original provisional contracts use schema version `1.0`; the package/API version is
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).

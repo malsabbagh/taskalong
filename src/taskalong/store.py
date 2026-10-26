@@ -139,10 +139,10 @@ class Store:
         self.db.execute("PRAGMA busy_timeout=5000")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10) or (version == 0 and tables):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) or (version == 0 and tables):
             self.db.close()
             raise TaskAlongError("unsupported_store_version", "Store format is unknown; preserve it and use a compatible runtime.", exit_code=70)
-        if version in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+        if version in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
             try:
                 current_metadata = dict(self.db.execute("SELECT key,value FROM metadata"))
                 if current_metadata.get("format_version") != str(version):
@@ -154,7 +154,7 @@ class Store:
             if current_metadata.get("application") != "taskalong":
                 self.db.close()
                 raise TaskAlongError("unsupported_store_application", "This is not a tagged TaskAlong store; preserve it and use its owning application.", exit_code=70)
-            if version in (2, 3, 4, 5, 6, 7, 8, 9, 10):
+            if version in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
                 self.store_uuid = str(uuid.UUID(current_metadata["store_uuid"]))
                 from .maintenance import validate_history_schema
                 validate_history_schema(self)
@@ -295,6 +295,8 @@ class Store:
         if digest(document) != document["digest"] or document["digest"] != run["spec_digest"]:
             raise TaskAlongError("store_integrity", "The immutable specification digest does not match.", exit_code=70)
         from .execution import read_task_spec
+        if document.get("schema_version") == "2.10" and self.format_version < 11:
+            raise TaskAlongError("store_upgrade_required", "Artifact handoffs require explicit format-11 maintenance.", exit_code=3)
         if document.get("schema_version") == "2.7" and self.format_version < 10:
             raise TaskAlongError("store_upgrade_required", "Ordered tasks require explicit format-10 maintenance.", exit_code=3)
         if document.get("schema_version") == "2.9" and self.format_version < 9:
@@ -338,6 +340,8 @@ class Store:
         return self._prior(self.db, command, run_id, operation_key, digest(request))
 
     def create_run(self, spec: dict, operation_key: str):
+        if spec.get("schema_version") == "2.10" and self.format_version < 11:
+            raise TaskAlongError("store_upgrade_required", "Artifact handoffs require explicit format-11 maintenance.", exit_code=3)
         if spec.get("schema_version") == "2.7" and self.format_version < 10:
             raise TaskAlongError("store_upgrade_required", "Ordered tasks require explicit format-10 maintenance.", exit_code=3)
         if spec.get("schema_version") == "2.9" and self.format_version < 9:
@@ -365,7 +369,7 @@ class Store:
                 raise TaskAlongError("task_revision_conflict", "Task revision is immutable; submit a new revision.", exit_code=4)
             db.execute("INSERT OR IGNORE INTO task_specs VALUES (?,?,?,?)", (spec["task_id"], spec["revision"], spec["digest"], encode(spec)))
             run = {"kind": "task_run", "schema_version": "1.0", "run_id": identifier(), "task_id": spec["task_id"], "task_revision": spec["revision"], "spec_digest": spec["digest"], "revision": 1, "state": "created", "blocked_from": None, "created_at": now(), "updated_at": now(), "repository_registration_id": spec["repository"]["registration_id"], "workspace_id": None, "lease_generation": 0, "active_attempt_id": None, "attempts": [], "candidate": None, "evidence_ids": [], "acceptance_id": None, "pending_effect_ids": [], "budget_consumed": {"attempts": 0, "active_seconds": 0, "output_bytes": 0, "input_tokens": None, "output_tokens": None, "cost_usd": None}, "blockers": [], "publication": None, "qualification": spec["qualification"], "extensions": {}}
-            if spec["schema_version"] == "2.7":
+            if spec["schema_version"] in {"2.7", "2.10"}:
                 from .steps import initialize
                 initialize(run, spec)
             validate_versioned("task-run", run, expected_version=run["schema_version"])
@@ -571,14 +575,19 @@ class Store:
             raise TaskAlongError("blob_integrity", "Invalid content address.", exit_code=70)
         target = self.blob_root / sha
         _private(target, directory=False)
-        try:
-            data = target.read_bytes()
-        except OSError as exc:
-            raise TaskAlongError("blob_missing", "A referenced artifact is missing; preserve the store.", exit_code=70) from exc
         row = self.db.execute("SELECT bytes FROM blobs WHERE sha256=?", (sha,)).fetchone() if registered else None
-        if hashlib.sha256(data).hexdigest() != sha or (registered and (not row or row[0] != len(data))):
-            raise TaskAlongError("blob_integrity", "A referenced artifact has changed; preserve the store.", exit_code=70)
-        return data
+        if registered and row is None:
+            raise TaskAlongError("blob_integrity", "A referenced artifact is unregistered; preserve the store.", exit_code=70)
+        try:
+            maximum = row[0] if registered else target.lstat().st_size
+            from .artifact_io import read_regular
+            return read_regular(self.blob_root, sha, max_bytes=maximum, expected_sha256=sha,
+                                expected_bytes=maximum, private=True)
+        except FileNotFoundError as exc:
+            raise TaskAlongError("blob_missing", "A referenced artifact is missing; preserve the store.", exit_code=70) from exc
+        except TaskAlongError as exc:
+            code = "blob_missing" if not target.exists() and not target.is_symlink() else "blob_integrity"
+            raise TaskAlongError(code, "A referenced artifact is unavailable or changed; preserve the store.", exit_code=70) from exc
 
     def upgrade(self, *, operation_key: str, backup_dir: str | Path, restore_dir: str | Path, target_version: int = 2):
         from .maintenance import upgrade

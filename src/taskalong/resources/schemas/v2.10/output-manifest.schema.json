@@ -1,0 +1,225 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "output_manifest"
+    },
+    "schema_version": {
+      "const": "2.10"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "spec_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "step_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+    },
+    "step_index": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 7
+    },
+    "attempt_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "lease_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "producer_receipt_blob_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "packet_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "admission_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "binding_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "configuration_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "base_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "checkpoint_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "content_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "output_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+          },
+          "declaration_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "artifact_kind": {
+            "enum": [
+              "utf8_text",
+              "file_set_patch"
+            ]
+          },
+          "classification": {
+            "const": "synthetic_fixture"
+          },
+          "artifact": {
+            "type": "object",
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1048576
+              },
+              "media_type": {
+                "enum": [
+                  "text/plain",
+                  "application/json"
+                ]
+              },
+              "redaction_version": {
+                "const": "1"
+              }
+            },
+            "required": [
+              "sha256",
+              "bytes",
+              "media_type",
+              "redaction_version"
+            ],
+            "additionalProperties": false
+          },
+          "payloads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "output_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+                },
+                "artifact": {
+                  "type": "object",
+                  "properties": {
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "bytes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1048576
+                    },
+                    "media_type": {
+                      "enum": [
+                        "text/plain",
+                        "application/json"
+                      ]
+                    },
+                    "redaction_version": {
+                      "const": "1"
+                    }
+                  },
+                  "required": [
+                    "sha256",
+                    "bytes",
+                    "media_type",
+                    "redaction_version"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "output_id",
+                "artifact"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0,
+            "maxItems": 8
+          }
+        },
+        "required": [
+          "output_id",
+          "declaration_digest",
+          "path",
+          "artifact_kind",
+          "classification",
+          "artifact",
+          "payloads"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 8
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "digest",
+    "run_id",
+    "spec_digest",
+    "step_id",
+    "step_index",
+    "attempt_id",
+    "lease_generation",
+    "producer_receipt_blob_sha256",
+    "packet_digest",
+    "admission_digest",
+    "binding_digest",
+    "configuration_digest",
+    "base_commit",
+    "checkpoint_digest",
+    "content_digest",
+    "outputs"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.10:output-manifest"
+}

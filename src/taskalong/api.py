@@ -84,7 +84,7 @@ class RunService:
 
     def inspect(self, run_id):
         run = self._store.run(run_id)
-        if run["schema_version"] == "2.7":
+        if run["schema_version"] in {"2.7", "2.10"}:
             from .steps import view
             summary = view(self._store, run)
             return run | {"next_actions":summary["next_actions"], "stop_reason":summary["stop_reason"]}
@@ -121,7 +121,7 @@ class RunService:
         task/policy bodies, runtime paths, credentials and logs are excluded.
         """
         run = self._store.run(run_id)
-        if run["schema_version"] == "2.7":
+        if run["schema_version"] in {"2.7", "2.10"}:
             from .steps import view
             return view(self._store, run)
         if self._store.spec(run)["schema_version"] == "2.9":

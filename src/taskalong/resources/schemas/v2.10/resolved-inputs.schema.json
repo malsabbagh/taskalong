@@ -1,0 +1,343 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "resolved_inputs"
+    },
+    "schema_version": {
+      "const": "2.10"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "spec_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "step_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+    },
+    "step_index": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 7
+    },
+    "attempt_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "lease_generation": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "workspace_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "binding_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "configuration_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "admission_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "disclosure_destination_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+    },
+    "authority_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "selectors_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "predecessor_receipt_blob_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "before_content_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "after_content_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "step_output"
+              },
+              "from_step_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+              },
+              "output_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+              },
+              "expected_kind": {
+                "enum": [
+                  "utf8_text",
+                  "file_set_patch"
+                ]
+              },
+              "max_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1048576
+              }
+            },
+            "required": [
+              "kind",
+              "from_step_id",
+              "output_id",
+              "expected_kind",
+              "max_bytes"
+            ],
+            "additionalProperties": false
+          },
+          "producer_receipt_blob_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "producer_output_manifest_blob_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "producer_step_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7
+          },
+          "producer_attempt_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "producer_checkpoint_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "producer_content_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "source_binding_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "output_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+              },
+              "declaration_digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "artifact_kind": {
+                "enum": [
+                  "utf8_text",
+                  "file_set_patch"
+                ]
+              },
+              "classification": {
+                "const": "synthetic_fixture"
+              },
+              "artifact": {
+                "type": "object",
+                "properties": {
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1048576
+                  },
+                  "media_type": {
+                    "enum": [
+                      "text/plain",
+                      "application/json"
+                    ]
+                  },
+                  "redaction_version": {
+                    "const": "1"
+                  }
+                },
+                "required": [
+                  "sha256",
+                  "bytes",
+                  "media_type",
+                  "redaction_version"
+                ],
+                "additionalProperties": false
+              },
+              "payloads": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "output_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+                    },
+                    "artifact": {
+                      "type": "object",
+                      "properties": {
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "bytes": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1048576
+                        },
+                        "media_type": {
+                          "enum": [
+                            "text/plain",
+                            "application/json"
+                          ]
+                        },
+                        "redaction_version": {
+                          "const": "1"
+                        }
+                      },
+                      "required": [
+                        "sha256",
+                        "bytes",
+                        "media_type",
+                        "redaction_version"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "output_id",
+                    "artifact"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 0,
+                "maxItems": 8
+              }
+            },
+            "required": [
+              "output_id",
+              "declaration_digest",
+              "path",
+              "artifact_kind",
+              "classification",
+              "artifact",
+              "payloads"
+            ],
+            "additionalProperties": false
+          },
+          "staged_relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "selector",
+          "producer_receipt_blob_sha256",
+          "producer_output_manifest_blob_sha256",
+          "producer_step_index",
+          "producer_attempt_id",
+          "producer_checkpoint_digest",
+          "producer_content_digest",
+          "source_binding_digest",
+          "output",
+          "staged_relative_path"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 8
+    },
+    "import_journal_blob_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "digest",
+    "run_id",
+    "spec_digest",
+    "step_id",
+    "step_index",
+    "attempt_id",
+    "lease_generation",
+    "workspace_id",
+    "binding_digest",
+    "configuration_digest",
+    "admission_digest",
+    "disclosure_destination_id",
+    "authority_id",
+    "selectors_digest",
+    "predecessor_receipt_blob_sha256",
+    "before_content_digest",
+    "after_content_digest",
+    "entries",
+    "import_journal_blob_sha256"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.10:resolved-inputs"
+}
