@@ -4,6 +4,16 @@ The original provisional contracts use schema version `1.0`; the package/API ver
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).
 
+## Ordered fixture tasks v2.7
+
+Four additive closed resources describe the full ordered task, mutable run,
+immutable step receipt and read-only result. A fixed synthetic Codex v1 wire
+projection carries exact step/predecessor/reservation identities without
+relabeling the whole task or changing existing schemas. Intermediate completion
+is a worker/checkpoint observation; independent acceptance requires all required
+steps and the unchanged final check/review path. Explicit format10/SQL010 is
+required. See the [CLI recipe](ordered-tasks.md) and [ADR](adr/0013-ordered-cli-tasks.md).
+
 ## Muse supervisor handoff v2.9
 
 Seven additive schemas use the closed `muse-plain-fixture/1` contract. A task

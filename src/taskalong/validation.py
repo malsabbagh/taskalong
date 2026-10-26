@@ -363,7 +363,13 @@ def validate_versioned(name: str, document: dict[str, Any], *, expected_version:
         from .trial import _precheck_utc_fields
         _precheck_utc_fields(name, result)
     validator = Draft202012Validator(selected, registry=schema_registry(version=expected_version), format_checker=_FORMAT_CHECKER)
-    if next(validator.iter_errors(result), None) is not None:
+    error = next(validator.iter_errors(result), None)
+    if error is not None:
+        if expected_version == "2.7":
+            # Schema paths contain only our fixed vocabulary and array indexes;
+            # neither rejected input values nor unknown private keys are echoed.
+            location = ".".join(str(p) for p in error.absolute_schema_path)
+            raise _invalid("Ordered document violates the supported contract at " + location + ".", "schema_validation")
         raise _invalid("The document does not match the selected schema.", "schema_validation")
     if expected_version == "2.0":
         from .bindings import _normalize, _semantics as binding_semantics

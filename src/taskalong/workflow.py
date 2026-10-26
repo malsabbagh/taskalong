@@ -266,6 +266,10 @@ class Workflow:
 
     def _start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start", expected_step_id=None, predecessor_digest=None):
         command = mode if mode in {"advance", "retry"} else "start" if mode == "start" else "resume"
+        if mode == "retry":
+            retained = self.store.run(run_id)
+            index = next((i for i,s in enumerate(retained.get("steps", [])) if s["step_id"] == expected_step_id), 0)
+            predecessor_digest = retained["steps"][index-1]["receipt_digest"] if index else None
         request = {"mode": mode, "authority_id": authority_id}
         if mode in {"advance", "retry"}:
             request.update(expected_step_id=expected_step_id, predecessor_digest=predecessor_digest)
@@ -1219,6 +1223,10 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
     ordered = store.spec(run)["schema_version"] == "2.7"
     receipt_digest = None
     if ordered:
+        retained = store.operation("executor.finish", run_id, attempt_id, {"state":result["state"],
+            "artifact":store.put_blob(canonical_bytes(worker)) if worker else None})
+        if retained is not None:
+            return retained
         item = store.detail("attempts", attempt_id)
         if run["active_attempt_id"] != attempt_id or item["lease_generation"] != run["lease_generation"]:
             raise TaskAlongError("lease_fenced", "Only the active ordered attempt can finish.", exit_code=4)

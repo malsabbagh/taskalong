@@ -6,6 +6,7 @@ immutable private blobs, and reservations never refund observed or lost work.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
 import hashlib
 from pathlib import Path
 from typing import ClassVar
@@ -51,6 +52,10 @@ def semantics(value, name):
         if name == "result-view" and (value["independently_accepted"] != (value["outcome"] == "accepted")
                 or value["independently_accepted"] != (value["state"] == "accepted")):
             refuse("ordered_result_invalid", "Accepted state, outcome and independent acceptance must agree.")
+        if name == "result-view" and value["independently_accepted"] and (
+                value["acceptance_digest"] is None or value["execution_chain_digest"] is None
+                or value["completed_steps"] != value["total_steps"] or value["final_verification"]["status"] != "passed"):
+            refuse("ordered_result_invalid", "Acceptance requires the complete result chain and successful final verification.")
         return
     steps = value["steps"]
     if len({step["step_id"] for step in steps}) != len(steps):
@@ -145,8 +150,15 @@ def validate_chain(store, run, *, live=False, complete=False):
     """Re-read every successful attempt and immutable receipt at each boundary."""
     spec = store.spec(run)
     validate_versioned("task-run", run, expected_version="2.7")
+    if len(run["steps"]) != len(spec["steps"]) or any(a["step_id"] != b["step_id"] for a,b in zip(run["steps"],spec["steps"])):
+        refuse("step_order_invalid", "The persisted step order differs from the immutable task.")
     totals = {key:sum(r[key] for r in run["reservations"]) for key in run["reservation_totals"]}
-    if totals != run["reservation_totals"] or len({r["reservation_id"] for r in run["reservations"]}) != len(run["reservations"]):
+    if (totals != run["reservation_totals"] or totals["attempts"] != len(run["attempts"])
+            or totals["attempts"] != run["budget_consumed"]["attempts"]
+            or len({r["reservation_id"] for r in run["reservations"]}) != len(run["reservations"])
+            or totals["attempts"] > spec["budget"]["max_attempts"]
+            or totals["active_seconds"] > spec["budget"]["total_active_seconds"]
+            or totals["output_bytes"] > spec["budget"]["max_output_bytes"]):
         refuse("reservation_changed", "The conserved reservation inventory is inconsistent.")
     prior = None
     count = 0
@@ -187,6 +199,9 @@ def validate_chain(store, run, *, live=False, complete=False):
         prior, count = ref, count+1
     if complete and count != len(spec["steps"]):
         refuse("steps_incomplete", "Final verification requires every required step to complete.")
+    allowed_index = {count, max(0,count-1)} if count < len(spec["steps"]) else {count-1}
+    if run["current_step_index"] not in allowed_index:
+        refuse("step_order_invalid", "The current step is inconsistent with its completed predecessors.")
     if live and run["attempts"]:
         item = store.detail("attempts", run["attempts"][-1]["attempt_id"])
         workspace = store.lease(run)["workspace"]
@@ -220,6 +235,39 @@ def view(store, run):
                 or acceptance["candidate"] != run["candidate"] or acceptance["spec_digest"] != run["spec_digest"]):
             refuse("ordered_acceptance_changed", "Final acceptance does not match the actual ordered results and candidate.")
     completed = sum(s["status"] == "completed" for s in run["steps"])
+    step_results = []
+    for state in run["steps"]:
+        attempts = []
+        for attempt_id in state["attempt_ids"]:
+            item = store.detail("attempts", attempt_id)
+            process = item.get("process") or {}
+            result_digest = (item.get("result_artifact") or {}).get("sha256")
+            if result_digest:
+                store.get_blob(result_digest)
+            attempts.append({"attempt_id":attempt_id,"status":item["status"],"error":item.get("error"),
+                "termination_confirmed":item.get("termination_confirmed") is True,"worker_result_digest":result_digest,
+                "checkpoint_digest":digest(item["checkpoint"]) if item.get("checkpoint") else None,
+                "output_bytes":process.get("output_bytes"),"duration_ms":process.get("duration_ms")})
+        step_results.append({"step_id":state["step_id"],"receipt_digest":state["receipt_digest"],"attempts":attempts})
+    checks, review_result = [], None
+    if acceptance:
+        for evidence_id in acceptance["evidence_ids"]:
+            record = validate("evidence", store.detail("evidence", evidence_id))
+            if record["type"] == "command":
+                check = next((c for c in store.spec(run)["checks"] if digest(c) == record["inputs"]["check_digest"]), None)
+                if check:
+                    checks.append({"id":check["id"],"result":record["result"],"evidence_digest":digest(record)})
+            elif record["type"] == "review":
+                review_result = record["result"]
+    else:
+        # No acceptance may yet exist after a stopped/failed final pass.
+        for evidence_id in run["evidence_ids"]:
+            record = validate("evidence", store.detail("evidence", evidence_id))
+            if record["type"] == "command":
+                check = next((c for c in store.spec(run)["checks"] if digest(c) == record["inputs"]["check_digest"]), None)
+                if check:
+                    checks = [c for c in checks if c["id"] != check["id"]]
+                    checks.append({"id":check["id"],"result":record["result"],"evidence_digest":digest(record)})
     reason = run["blockers"][0]["code"] if run["blockers"] else None
     if accepted: outcome, actions = "accepted", []
     elif run["state"] == "cancelled": outcome, actions = "cancelled", []
@@ -228,9 +276,26 @@ def view(store, run):
     elif run["steps"][run["current_step_index"]]["status"] == "failed": outcome, actions = "failed", ["retry"]
     elif completed: outcome, actions = "pending", ["advance"]
     else: outcome, actions = "pending", ["start"]
+    if actions and actions[0] in {"start","advance","retry","verify"}:
+        probe = copy.deepcopy(run)
+        if actions == ["advance"]:
+            probe["current_step_index"] += 1
+        try:
+            reserve(probe, store.spec(run), reservation_id="00000000-0000-4000-8000-000000000000",
+                kind="verification" if actions == ["verify"] else "worker", owner_id="inspection")
+        except TaskAlongError as exc:
+            if exc.code != "budget_exhausted":
+                raise
+            actions = ["inspect"]
+            reason = reason or "budget_exhausted"
+    verification_status = "passed" if accepted else "failed" if any(c["result"] != "passed" for c in checks) else "running" if run["state"] == "verifying" else "blocked" if completed == len(run["steps"]) and reason else "pending"
+    if reason == "required_review_missing":
+        review_result = "missing"
     return seal_versioned("result-view", {"run_id":run["run_id"],"revision":run["revision"],"state":run["state"],
         "outcome":outcome,"independently_accepted":accepted,"steps":run["steps"],"current_step_index":run["current_step_index"],
         "completed_steps":completed,"total_steps":len(run["steps"]),"reservation_totals":run["reservation_totals"],
         "observed_usage":run["budget_consumed"],"execution_chain_digest":run["execution_chain_digest"],
         "acceptance_digest":digest(acceptance) if acceptance else None,"stop_reason":reason,"next_actions":actions,
+        "step_results":step_results,"final_verification":{"passes_reserved":len(run["final_verification_ids"]),
+            "status":verification_status,"checks":checks,"review_result":review_result},
         "production_dispatch_allowed":False}, version="2.7")

@@ -9,7 +9,9 @@
     },
     "digest": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
     },
     "run_id": {
       "type": "string",
@@ -83,7 +85,9 @@
             "anyOf": [
               {
                 "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+                "minLength": 64,
+                "maxLength": 64
               },
               {
                 "type": "null"
@@ -211,7 +215,9 @@
       "anyOf": [
         {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
         },
         {
           "type": "null"
@@ -222,7 +228,9 @@
       "anyOf": [
         {
           "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
         },
         {
           "type": "null"
@@ -260,6 +268,212 @@
     },
     "production_dispatch_allowed": {
       "const": false
+    },
+    "step_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "receipt_digest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+                "minLength": 64,
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "attempt_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "status": {
+                  "enum": [
+                    "prepared",
+                    "running",
+                    "completed",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "termination_confirmed": {
+                  "type": "boolean"
+                },
+                "worker_result_digest": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+                      "minLength": 64,
+                      "maxLength": 64
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "checkpoint_digest": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+                      "minLength": 64,
+                      "maxLength": 64
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "output_bytes": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "duration_ms": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "attempt_id",
+                "status",
+                "error",
+                "termination_confirmed",
+                "worker_result_digest",
+                "checkpoint_digest",
+                "output_bytes",
+                "duration_ms"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "step_id",
+          "receipt_digest",
+          "attempts"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 8
+    },
+    "final_verification": {
+      "type": "object",
+      "properties": {
+        "passes_reserved": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "running",
+            "passed",
+            "failed",
+            "blocked"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "result": {
+                "enum": [
+                  "passed",
+                  "failed",
+                  "unknown",
+                  "blocked"
+                ]
+              },
+              "evidence_digest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+                "minLength": 64,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "id",
+              "result",
+              "evidence_digest"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 128
+        },
+        "review_result": {
+          "anyOf": [
+            {
+              "enum": [
+                "passed",
+                "failed",
+                "missing"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "passes_reserved",
+        "status",
+        "checks",
+        "review_result"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -281,7 +495,9 @@
     "acceptance_digest",
     "stop_reason",
     "next_actions",
-    "production_dispatch_allowed"
+    "production_dispatch_allowed",
+    "step_results",
+    "final_verification"
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",

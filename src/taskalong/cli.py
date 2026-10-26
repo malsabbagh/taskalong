@@ -22,7 +22,7 @@ def parser():
         p = sub.add_parser(name)
         p.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
         return p
-    p = command("guide"); p.add_argument("name", nargs="?", default="fixture", choices=("fixture", "operations", "contracts", "qualification"))
+    p = command("guide"); p.add_argument("name", nargs="?", default="fixture", choices=("fixture", "operations", "contracts", "qualification", "ordered"))
     p = command("register-repository"); p.add_argument("path"); p.add_argument("--workspace-root")
     p = command("register-profile"); p.add_argument("--profile", required=True)
     p = command("configure-review"); p.add_argument("--config", required=True); p.add_argument("--fixture-response"); p.add_argument("--executable"); p.add_argument("--python-executable")

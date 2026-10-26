@@ -15,7 +15,7 @@ from importlib.resources import files
 
 from .errors import TaskAlongError
 from .store import _private, initialization_guard, now, key_check, encode
-from .validation import canonical_bytes, digest, loads, validate
+from .validation import canonical_bytes, digest, loads, validate, validate_versioned
 
 _BACKUP = "backup-manifest.json"
 _RESTORE = "restore-receipt.json"
@@ -518,7 +518,8 @@ def require_quiescent(store):
         raise TaskAlongError("maintenance_required", "Complete maintenance requires exclusive trusted ownership.", exit_code=3)
     blocked = False
     for row in store.db.execute("SELECT run_id,revision,state,document FROM runs"):
-        run = validate("task-run", loads(row["document"]))
+        run = loads(row["document"])
+        run = validate_versioned("task-run", run, expected_version=run.get("schema_version"))
         blocked |= any(run[key] != row[key] for key in ("run_id","revision","state"))
         blocked |= bool(run["active_attempt_id"] or run["pending_effect_ids"] or run["state"] in {
             "starting", "running", "verifying", "reviewing", "publishing", "cancel_pending"})

@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 from helpers import ServiceFixture, git
 from taskalong.api import RunService
@@ -49,6 +50,46 @@ class OrderedFixture(ServiceFixture):
 
 
 class OrderedTasksTests(OrderedFixture,unittest.TestCase):
+    def test_preparation_interruption_recovers_the_same_reserved_attempt(self):
+        run,_=self.submit(self.ordered())
+        with patch.object(self.service._workflow,'_launch_supervisor',side_effect=RuntimeError('test interruption before supervisor launch')):
+            with self.assertRaises(RuntimeError):self.start(run)
+        prepared=self.service.inspect(run['run_id'])
+        self.assertEqual(self.invocations(),[])
+        self.service.close();self.service=RunService(self.state)
+        self.service.reconcile(run['run_id'],operation_key='recover-preparation',expected_revision=prepared['revision'])
+        first=self.wait(run['run_id'],predicate=lambda r:not r['active_attempt_id'] and r['state']=='ready')
+        self.assertEqual(first['steps'][0]['attempt_ids'],prepared['steps'][0]['attempt_ids'])
+        self.assertEqual(first['reservation_totals'],prepared['reservation_totals'])
+        self.assertEqual(len(self.invocations()),1)
+
+    def test_late_completed_result_cannot_overwrite_the_newer_step(self):
+        first,_=self.first();attempt_id=first['steps'][0]['attempt_ids'][0]
+        old=self.service._store.detail('attempts',attempt_id)
+        self.barrier_file.touch();self.advance(first)
+        second=self.wait(first['run_id'],predicate=lambda r:r['state']=='running')
+        before=self.service._store.run(first['run_id'])
+        from taskalong.workflow import _finish_attempt
+        worker=json.loads(self.service._store.get_blob(old['result_artifact']['sha256']))
+        _finish_attempt(self.service._store,first['run_id'],attempt_id,{'state':'completed','process':old['process'],
+            'checkpoint':old['checkpoint'],'thread_id':old['thread_id'],'usage':{}},worker)
+        self.assertEqual(self.service._store.run(first['run_id']),before)
+        self.assertNotEqual(second['active_attempt_id'],attempt_id)
+        self.release_file.touch()
+
+    def test_quiescent_ordered_store_can_be_backed_up_and_restored(self):
+        run,_=self.submit(self.ordered())
+        self.service.close()
+        from taskalong.maintenance import verify_backup, restore_backup, verify_restored
+        with Store.maintenance(self.state) as store:
+            manifest=store.backup(self.root/'ordered-backup',complete=True)
+            verified=verify_backup(self.root/'ordered-backup',expected_digest=manifest['digest'])
+            self.assertEqual(verified['database']['user_version'],10)
+            restore_backup(self.root/'ordered-backup',self.root/'ordered-restore',expected_digest=manifest['digest'])
+            self.assertTrue(verify_restored(self.root/'ordered-backup',self.root/'ordered-restore',expected_digest=manifest['digest'])['quarantined'])
+        self.service=RunService(self.state)
+        self.assertEqual(self.service.inspect(run['run_id'])['steps'],run['steps'])
+
     def test_public_cli_validation_and_intermediate_result(self):
         spec=self.ordered(); path=self.root/'task.json';path.write_text(json.dumps(spec))
         code,view=self.cli('validate','--spec',str(path));self.assertEqual(code,0,view)
