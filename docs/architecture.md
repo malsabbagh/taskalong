@@ -19,6 +19,12 @@ cannot be replaced by a worker's success claim. External effects have durable
 intent and observation; ambiguity keeps the worktree reserved. A heartbeat,
 signal, PID disappearance or empty group is not complete descendant proof.
 
+The separate [experimental Darwin foreground API](adr/0014-experimental-darwin-foreground.md)
+reuses the existing process owner but returns a distinct observation with
+descendant cessation always unknown. It records root exit, group cessation,
+forks and tracking errors separately and grants no production handoff,
+workspace reuse or acceptance. It does not register a worker or enable inference.
+
 The offline Claude wire component validates synthetic framing and structured
 results only. It does not launch, observe, cancel or resume a real CLI. Provider
 profiles and versioned semantic bindings now have offline v2 data contracts;

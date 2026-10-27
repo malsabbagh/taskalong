@@ -28,6 +28,7 @@ include src/taskalong/integrations/github.py
 include src/taskalong/integrations/reviewsensei.py
 include src/taskalong/paths.py
 include src/taskalong/process.py
+include src/taskalong/experimental_process.py
 include src/taskalong/resources/__init__.py
 include src/taskalong/resources/schemas/v1/acceptance.schema.json
 include src/taskalong/resources/schemas/v1/authority.schema.json
@@ -80,6 +81,8 @@ include tests/test_runtime_policy.py
 include tests/test_scope.py
 include tests/test_store.py
 include tests/test_supervisor.py
+include tests/test_foreground_experiment.py
+include docs/adr/0014-experimental-darwin-foreground.md
 include tests/test_workspaces.py
 include tools/check_dist.py
 include tools/normalize_sdist.py
