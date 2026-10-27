@@ -65,7 +65,9 @@ jobs:
           python tools/qualification_bundle.py write --os-profile '${{ matrix.os }}' --python-profile '${{ matrix.python }}'
           python tools/qualification_shards.py inventory --directory . --os-profile '${{ matrix.os }}' --python-profile '${{ matrix.python }}' > installed-inventory.json
       - name: Retain exact producer artifacts and identity
+        id: upload_producer
         if: ${{ always() && steps.audit.outcome == 'success' }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: producer-${{ matrix.os }}-py${{ matrix.python }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -75,6 +77,19 @@ jobs:
             producer-identity.json
             installed-inventory.json
           if-no-files-found: error
+          retention-days: 14
+      - name: Retry retaining exact producer artifacts on transient upload failure
+        if: ${{ always() && steps.audit.outcome == 'success' && steps.upload_producer.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: producer-${{ matrix.os }}-py${{ matrix.python }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            dist/
+            distribution-audit.json
+            producer-identity.json
+            installed-inventory.json
+          if-no-files-found: error
+          overwrite: true
           retention-days: 14
 
   installed-shards:
@@ -146,8 +161,21 @@ jobs:
           path: shard-result/
           if-no-files-found: error
           retention-days: 14
+        id: upload_shard
+        continue-on-error: true
+      - name: Retry retaining complete sealed shard result on transient upload failure
+        if: steps.upload_shard.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qualification-${{ matrix.os }}-py${{ matrix.python }}-${{ matrix.lane }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: shard-result/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
       - name: Retain artifact and qualification diagnostics
+        id: upload_diagnostics
         if: ${{ always() && steps.audit.outcome == 'success' }}
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: installed-diagnostics-${{ matrix.os }}-py${{ matrix.python }}-${{ matrix.lane }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -160,6 +188,22 @@ jobs:
             installed-core-only.json
             qualification-progress/
           if-no-files-found: error
+          retention-days: 14
+      - name: Retry retaining artifact and qualification diagnostics on transient upload failure
+        if: ${{ always() && steps.audit.outcome == 'success' && steps.upload_diagnostics.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installed-diagnostics-${{ matrix.os }}-py${{ matrix.python }}-${{ matrix.lane }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            dist/
+            producer-identity.json
+            installed-distribution-audit.json
+            installed-wheel.json
+            installed-sdist.json
+            installed-core-only.json
+            qualification-progress/
+          if-no-files-found: error
+          overwrite: true
           retention-days: 14
 
   # Keep the original installed check names: each now requires both artifact lanes.
@@ -200,6 +244,17 @@ jobs:
           path: installed-aggregate.json
           if-no-files-found: error
           retention-days: 14
+        id: upload_installed
+        continue-on-error: true
+      - name: Retry retaining installed aggregate on transient upload failure
+        if: steps.upload_installed.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installed-${{ matrix.os }}-py${{ matrix.python }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: installed-aggregate.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
 
   qualification-complete:
     name: Complete qualification
@@ -232,4 +287,15 @@ jobs:
           name: qualification-aggregate-${{ github.sha }}-${{ github.run_attempt }}
           path: qualification-aggregate.json
           if-no-files-found: error
+          retention-days: 14
+        id: upload_complete
+        continue-on-error: true
+      - name: Retry retaining qualification aggregate on transient upload failure
+        if: steps.upload_complete.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qualification-aggregate-${{ github.sha }}-${{ github.run_attempt }}
+          path: qualification-aggregate.json
+          if-no-files-found: error
+          overwrite: true
           retention-days: 14
