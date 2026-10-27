@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import functools
 import hashlib
 from typing import Any, ClassVar
 
@@ -25,11 +26,21 @@ def _invalid() -> TaskAlongError:
     return TaskAlongError("qualification_input_invalid", "The offline qualification input is invalid.")
 
 
+@functools.lru_cache(maxsize=None)
+def _part_validator(name: str) -> Draft202012Validator:
+    selected = {"$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/" + name}
+    return Draft202012Validator(selected, registry=schema_registry(version="2.1"), format_checker=_FORMAT_CHECKER)
+
+
+@functools.lru_cache(maxsize=None)
+def _timestamp_validator() -> Draft202012Validator:
+    return Draft202012Validator(schema("qualification-receipt", version="2.1")["$defs"]["timestamp"], format_checker=_FORMAT_CHECKER)
+
+
 def _part(name: str, document: dict[str, Any]) -> dict[str, Any]:
     value = loads(canonical_bytes(document))
     screen_sensitive(value)
-    selected = {"$ref": "urn:taskalong:schema:v2.1:qualification-receipt#/$defs/" + name}
-    validator = Draft202012Validator(selected, registry=schema_registry(version="2.1"), format_checker=_FORMAT_CHECKER)
+    validator = _part_validator(name)
     if next(validator.iter_errors(value), None) is not None:
         raise _invalid()
     return value
@@ -274,7 +285,7 @@ def evaluate(binding: ExecutionBinding, *, installation: HarnessInstallation, pr
             or len(receipts) > 64 or type(mode) is not str or mode not in _MODES
             or type(minimum_level) is not str or minimum_level not in _LEVELS):
         raise _invalid()
-    validator = Draft202012Validator(schema("qualification-receipt", version="2.1")["$defs"]["timestamp"], format_checker=_FORMAT_CHECKER)
+    validator = _timestamp_validator()
     if not validator.is_valid(now):
         raise _invalid()
     subject = _subject(binding, installation, provider, context, mode)

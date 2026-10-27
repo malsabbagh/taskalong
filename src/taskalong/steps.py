@@ -22,7 +22,7 @@ def refuse(code, message):
 
 
 def enabled(spec):
-    return spec["schema_version"] == "2.7"
+    return spec["schema_version"] in {"2.7", "2.10"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +99,9 @@ def semantics(value, name):
 
 def inputs(spec, root, step_index=None):
     """Check every declared repository-file input before any worker launch."""
+    if spec["schema_version"] == "2.10":
+        from .artifact_handoff import inputs as artifact_inputs
+        return artifact_inputs(spec, root, step_index)
     root = Path(root)
     for step in spec["steps"] if step_index is None else [spec["steps"][step_index]]:
         for item in step["inputs"]:
@@ -110,6 +113,9 @@ def inputs(spec, root, step_index=None):
 
 
 def preflight(workflow, spec):
+    if spec["schema_version"] == "2.10":
+        from .artifact_handoff import preflight as artifact_preflight
+        return artifact_preflight(workflow, spec)
     repository = workflow.store.repository(spec["repository"]["registration_id"])
     inputs(spec, repository["path"])
     from .workspace import git
@@ -126,10 +132,14 @@ def preflight(workflow, spec):
 
 
 def initialize(run, spec):
-    run.update(schema_version="2.7", current_step_index=0,
+    run.update(schema_version=spec["schema_version"], current_step_index=0,
         steps=[{"step_id":s["step_id"], "status":"pending", "attempt_ids":[], "receipt_digest":None} for s in spec["steps"]],
         reservations=[], reservation_totals={"attempts":0,"active_seconds":0,"output_bytes":0},
         final_verification_ids=[], execution_chain_digest=None)
+    if spec["schema_version"] == "2.10":
+        run["cancellation_requested"] = False
+        for step in run["steps"]:
+            step["output_manifest_blob_sha256"] = None
 
 
 def reserve(run, spec, *, reservation_id, kind, owner_id):
@@ -157,7 +167,7 @@ def reserve(run, spec, *, reservation_id, kind, owner_id):
 def validate_chain(store, run, *, live=False, complete=False):
     """Re-read every successful attempt and immutable receipt at each boundary."""
     spec = store.spec(run)
-    validate_versioned("task-run", run, expected_version="2.7")
+    validate_versioned("task-run", run, expected_version=spec["schema_version"])
     if len(run["steps"]) != len(spec["steps"]) or any(a["step_id"] != b["step_id"] for a,b in zip(run["steps"],spec["steps"])):
         refuse("step_order_invalid", "The persisted step order differs from the immutable task.")
     totals = {key:sum(r[key] for r in run["reservations"]) for key in run["reservation_totals"]}
@@ -178,10 +188,15 @@ def validate_chain(store, run, *, live=False, complete=False):
             continue
         if count != index or state["status"] != "completed":
             refuse("step_order_invalid", "Completed receipts must form an ordered prefix.")
-        receipt = validate_versioned("step-receipt", loads(store.get_blob(ref)), expected_version="2.7")
+        receipt = validate_versioned("step-receipt", loads(store.get_blob(ref)), expected_version=spec["schema_version"])
         item = store.detail("attempts", receipt["attempt_id"])
-        packet = validate("worker-packet", item["packet"])
-        worker = validate("worker-result", loads(store.get_blob(receipt["result_digest"])))
+        if spec["schema_version"] == "2.10":
+            from .artifact_handoff import validate_packet, validate_worker
+            packet = validate_packet(store, run, item)
+            worker = validate_worker(store, run, item, loads(store.get_blob(receipt["result_digest"])), packet=packet)
+        else:
+            packet = validate("worker-packet", item["packet"])
+            worker = validate("worker-result", loads(store.get_blob(receipt["result_digest"])))
         expected = {"run_id":run["run_id"],"spec_digest":spec["digest"],"step_id":spec["steps"][index]["step_id"],
             "step_index":index,"lease_generation":item["lease_generation"],"packet_digest":item["packet"]["digest"],
             "result_digest":(item.get("result_artifact") or {}).get("sha256"),"process_digest":digest(item["process"]),
@@ -197,7 +212,19 @@ def validate_chain(store, run, *, live=False, complete=False):
                     "step_index":index,"step_digest":digest(spec["steps"][index]), "predecessor_digest":prior,
                     "reservation_digest":digest(item["reservation"]),"inputs":spec["steps"][index]["inputs"]}):
             refuse("step_receipt_changed", "An ordered step result, checkpoint or reservation has changed.")
-        if index and item["starting_snapshot_digest"] != validate_versioned("step-receipt", loads(store.get_blob(prior)), expected_version="2.7")["final_snapshot_digest"]:
+        if spec["schema_version"] == "2.10":
+            from .artifact_handoff import validate_import, producer
+            resolution, journal = validate_import(store, run, item, staged=live)
+            first = store.detail("attempts", state["attempt_ids"][0])
+            if (first["starting_snapshot_digest"] != journal["after_content_digest"]
+                    or journal["predecessor_receipt_blob_sha256"] != prior
+                    or index and journal["before_content_digest"] != loads(store.get_blob(prior))["final_snapshot_digest"]
+                    or any(receipt[k] != item[k] for k in ("resolved_inputs_blob_sha256", "import_journal_blob_sha256"))
+                    or receipt["canonical_packet_digest"] != item["canonical_packet"]["digest"]
+                    or receipt["packet_projection_blob_sha256"] != hashlib.sha256(canonical_bytes(item["packet_projection"])).hexdigest()):
+                refuse("artifact_import_changed", "The ordered import transition or packet has changed.")
+            producer(store, run, index)
+        if spec["schema_version"] == "2.7" and index and item["starting_snapshot_digest"] != validate_versioned("step-receipt", loads(store.get_blob(prior)), expected_version="2.7")["final_snapshot_digest"]:
             # Retried work may retain partial edits: its first attempt, not its
             # eventual successful attempt, must start at the predecessor.
             first = store.detail("attempts", state["attempt_ids"][0])
@@ -229,7 +256,11 @@ def completed_receipt(store, run, item, result, worker):
         "process_digest":digest(result["process"]),"checkpoint_digest":digest(result["checkpoint"]),
         "starting_snapshot_digest":item["starting_snapshot_digest"],"final_snapshot_digest":result["checkpoint"]["content_digest"],
         "reservation_digest":digest(item["reservation"]),"predecessor_digest":run["steps"][item["step_index"]-1]["receipt_digest"] if item["step_index"] else None}
-    return store.put_blob(canonical_bytes(seal_versioned("step-receipt", fields, version="2.7")))["sha256"]
+    if store.spec(run)["schema_version"] == "2.10":
+        fields.update(resolved_inputs_blob_sha256=item["resolved_inputs_blob_sha256"],
+            import_journal_blob_sha256=item["import_journal_blob_sha256"],canonical_packet_digest=item["canonical_packet"]["digest"],
+            packet_projection_blob_sha256=hashlib.sha256(canonical_bytes(item["packet_projection"])).hexdigest())
+    return store.put_blob(canonical_bytes(seal_versioned("step-receipt", fields, version=store.spec(run)["schema_version"])))["sha256"]
 
 
 def require_finish_identity(run, spec, item):
@@ -313,6 +344,16 @@ def view(store, run):
     verification_status = "passed" if accepted else "failed" if any(c["result"] != "passed" for c in checks) else "running" if run["state"] == "verifying" else "blocked" if completed == len(run["steps"]) and reason else "pending"
     if reason == "required_review_missing":
         review_result = "missing"
+    extra = {}
+    if run["schema_version"] == "2.10":
+        extra["handoffs"] = []
+        for brief in run["attempts"]:
+            item = store.detail("attempts", brief["attempt_id"])
+            extra["handoffs"].append({"step_id":item["step_id"],"attempt_id":item["attempt_id"],
+                "resolved_inputs_blob_sha256":item.get("resolved_inputs_blob_sha256"),
+                "import_journal_blob_sha256":item.get("import_journal_blob_sha256"),
+                "canonical_packet_digest":(item.get("canonical_packet") or {}).get("digest"),
+                "wire_packet_digest":(item.get("packet") or {}).get("digest")})
     worker_processes = [store.detail("attempts", item["attempt_id"]).get("process") or {} for item in run["attempts"]]
     duration = sum(p["duration_ms"] for p in worker_processes) if all(p.get("termination_confirmed") is True and type(p.get("duration_ms")) is int for p in worker_processes) else None
     captured = sum(p["output_bytes"] for p in worker_processes) if all(p.get("termination_confirmed") is True and type(p.get("output_bytes")) is int for p in worker_processes) else None
@@ -325,11 +366,11 @@ def view(store, run):
             captured += response["output_bytes"]
     observed = {"worker_duration_ms":duration,"captured_output_bytes":captured,
         **{key:run["budget_consumed"][key] for key in ("input_tokens","output_tokens","cost_usd")}}
-    return seal_versioned("result-view", {"run_id":run["run_id"],"revision":run["revision"],"state":run["state"],
+    return seal_versioned("result-view", {**extra,"run_id":run["run_id"],"revision":run["revision"],"state":run["state"],
         "outcome":outcome,"independently_accepted":accepted,"steps":run["steps"],"current_step_index":run["current_step_index"],
         "completed_steps":completed,"total_steps":len(run["steps"]),"reservation_totals":run["reservation_totals"],
         "observed_usage":observed,"execution_chain_digest":run["execution_chain_digest"],
         "acceptance_digest":digest(acceptance) if acceptance else None,"stop_reason":reason,"next_actions":actions,
         "step_results":step_results,"final_verification":{"passes_reserved":len(run["final_verification_ids"]),
             "status":verification_status,"checks":checks,"review_result":review_result},
-        "production_dispatch_allowed":False}, version="2.7")
+        "production_dispatch_allowed":False}, version=run["schema_version"])

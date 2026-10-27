@@ -1,6 +1,7 @@
 """Private quiescent maintenance; no external-effect rollback or admission."""
 from __future__ import annotations
 
+import functools
 import hashlib
 import ctypes
 import errno
@@ -171,7 +172,7 @@ def database_state(db):
         raise _failure("backup_integrity", "SQLite foreign-key verification failed.")
     metadata = dict(db.execute("SELECT key,value FROM metadata"))
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) or metadata.get("format_version") != str(version):
+    if version not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) or metadata.get("format_version") != str(version):
         raise _failure("store_integrity", "Store schema markers disagree.")
     schema = [list(row) for row in db.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")]
     tables = {}
@@ -400,21 +401,32 @@ def verify_restored(directory, destination, *, expected_digest):
         raise _failure("restore_integrity", "The quarantined restoration cannot be verified.") from exc
 
 
+@functools.lru_cache(maxsize=None)
 def _migration_sql(number=2):
     name = {2: "002-document-history.sql", 3: "003-execution-projections.sql",
             4: "004-driver-compatibility.sql", 5: "005-ollama-compatibility.sql",
             6: "006-cursor-compatibility.sql", 7: "007-antigravity-compatibility.sql",
-            8: "008-e1-trial-compatibility.sql", 9: "009-muse-handoff-compatibility.sql", 10: "010-ordered-tasks.sql"}[number]
+            8: "008-e1-trial-compatibility.sql", 9: "009-muse-handoff-compatibility.sql", 10: "010-ordered-tasks.sql", 11: "011-artifact-handoff.sql"}[number]
     return files("taskalong.resources").joinpath("sql", name).read_text()
+
+
+@functools.lru_cache(maxsize=None)
+def _expected_history_definitions(version: int):
+    with closing(sqlite3.connect(":memory:")) as expected:
+        for number in range(2, version + 1):
+            expected.executescript(_migration_sql(number))
+        return {row[0]:tuple(row[1:]) for row in expected.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
+
+
+@functools.lru_cache(maxsize=None)
+def _migration_sql_sha256(number: int) -> str:
+    return hashlib.sha256(_migration_sql(number).encode()).hexdigest()
 
 
 def validate_history_schema(store):
     try:
         version = store.db.execute("PRAGMA user_version").fetchone()[0]
-        with closing(sqlite3.connect(":memory:")) as expected:
-            for number in range(2, version + 1):
-                expected.executescript(_migration_sql(number))
-            definitions = {row[0]:tuple(row[1:]) for row in expected.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
+        definitions = _expected_history_definitions(version)
         actual = {row[0]:tuple(row[1:]) for row in store.db.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
         if any(actual.get(name) != value for name,value in definitions.items()):
             raise ValueError("missing or altered immutable history")
@@ -424,7 +436,7 @@ def validate_history_schema(store):
             if (receipt["store_uuid"] != store.store_uuid or receipt["to_version"] != number or digest(receipt) != receipt["digest"]
                     or receipt["from_version"] != number - 1 or receipt["number"] != number or receipt["operation_key"] != row["operation_key"]
                     or receipt["request_digest"] != row["request_digest"]
-                    or receipt["migration_sql_sha256"] != hashlib.sha256(_migration_sql(number).encode()).hexdigest()):
+                    or receipt["migration_sql_sha256"] != _migration_sql_sha256(number)):
                 raise ValueError("invalid migration identity")
             operation = store.db.execute("SELECT request_digest,response FROM operations WHERE command='maintenance.upgrade' AND run_id='' AND operation_key=?", (row["operation_key"],)).fetchone()
             if operation is None or operation["request_digest"] != row["request_digest"] or loads(operation["response"]) != {"phase":"observed", "receipt":receipt}:
@@ -436,7 +448,7 @@ def validate_history_schema(store):
 def upgrade(store, *, operation_key, backup_dir, restore_dir, target_version=2):
     require_quiescent(store)
     key_check(operation_key)
-    if type(target_version) is not int or target_version not in (2, 3, 4, 5, 6, 7, 8, 9, 10):
+    if type(target_version) is not int or target_version not in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
         raise _failure("unsupported_store_version", "Select an explicit supported numbered migration.")
     source_version = target_version - 1
     backup, restored = _path(backup_dir), _path(restore_dir)
@@ -529,10 +541,27 @@ def require_quiescent(store):
         blocked |= any(attempt.get(key) != row[key] for key in ("attempt_id","run_id","ordinal"))
     known_effects = {"workspace.create","workspace.reacquire","candidate.freeze","workspace.retire",
                      "executor.start","verifier.capture","push_branch","create_draft_pr"}
+    if store.format_version >= 11:
+        known_effects.add("artifact.import")
     for row in store.db.execute("SELECT effect_id,run_id,kind,phase,document FROM effects"):
         effect = loads(row["document"])
         blocked |= row["phase"] != "observed" or effect.get("phase") != "observed"
         blocked |= row["kind"] not in known_effects or any(effect.get(key) != row[key] for key in ("effect_id","run_id","kind"))
+        if effect.get("kind") == "artifact.import":
+            response = effect.get("response")
+            if (not isinstance(response,dict) or response.get("journal_blob_sha256") != effect["request"].get("journal_blob_sha256")
+                    or store.operation("effect.observed",effect["run_id"],effect["effect_id"],{"effect_id":effect["effect_id"],"response":response}) is None):
+                blocked = True
+            else:
+                from .artifact_handoff import blob_document, validate_import
+                journal=blob_document(store,response["journal_blob_sha256"],"import-journal")
+                owner=store.run(effect["run_id"])
+                if response.get("cancelled") is True:
+                    blocked |= owner.get("cancellation_requested") is not True
+                else:
+                    attempt=store.detail("attempts",journal["attempt_id"])
+                    validate_import(store,owner,attempt)
+                    blocked |= response.get("resolved_inputs_blob_sha256") != attempt["resolved_inputs_blob_sha256"]
         if effect.get("kind") in {"executor.start", "verifier.capture"}:
             response = effect.get("response")
             if response is not None and type(response) is not dict:

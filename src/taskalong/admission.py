@@ -29,7 +29,7 @@ def _refuse(code="execution_projection_unsupported"):
 
 
 def _require(store):
-    if store.format_version not in (3, 4, 5, 6, 7, 8, 9, 10):
+    if store.format_version not in (3, 4, 5, 6, 7, 8, 9, 10, 11):
         _refuse("store_upgrade_required")
 
 
@@ -140,7 +140,7 @@ def registered_profile(store, binding_digest):
 
 
 def registered_driver_config(store, binding_digest):
-    if store.format_version not in (4, 5, 6, 7, 8, 9, 10):
+    if store.format_version not in (4, 5, 6, 7, 8, 9, 10, 11):
         _refuse("store_upgrade_required")
     registration = _registration(store, binding_digest)
     version = registration.get("schema_version")
@@ -158,6 +158,13 @@ def registered_driver_config(store, binding_digest):
 def worker_contract(store, spec, configuration):
     """Resolve an immutable driver selection; this does not grant dispatch."""
     from .executors.registry import contract_for
+    if spec["schema_version"] == "2.10":
+        from .artifact_handoff import admit, route
+        index = next(i for i in range(len(spec["steps"])) if route(spec, i)["configuration_digest"] == configuration["digest"])
+        snapshot, retained, _ = admit(store, spec, index)
+        if retained != configuration:
+            _refuse("execution_identity_mismatch")
+        return contract_for(retained, task_version=snapshot["schema_version"], projection=snapshot["projection"]["projection"]), snapshot["provider"]
     if spec["schema_version"] == "2.9":
         from .muse_handoff import configuration as muse_configuration, PROJECTION
         retained = muse_configuration(store, spec["execution"]["driver_config_digest"])

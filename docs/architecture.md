@@ -1,5 +1,12 @@
 # Architecture
 
+The explicit 2.10 artifact family reuses the ordered owner and adds exact
+producer-manifest, resolved-input and import-journal associations. A committed
+import forms a separate edge between predecessor and target checkpoints;
+M10's 2.7 equality rule remains unchanged. Existing Codex/Claude fixture routes
+retain independent admission, fresh sessions and separate final acceptance.
+See [ADR0015](adr/0015-immutable-artifact-handoff.md).
+
 RunService and its thin CLI own durable task lifecycle operations, SQLite
 state/events, explicit authority, fenced worktrees and independent acceptance.
 An internal closed registry selects the worker driver; independent commands have
