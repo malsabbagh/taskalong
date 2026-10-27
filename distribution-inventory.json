@@ -402,6 +402,7 @@
     "tools/check_dist.py",
     "tools/normalize_sdist.py",
     "tools/qualification_bundle.py",
+    "tools/qualification_shards.py",
     "tools/qualify_installed.py",
     "tools/qualify_runtime.py",
     "tools/sync_guides.py"

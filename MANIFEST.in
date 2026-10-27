@@ -198,6 +198,7 @@ include tests/fixtures/fake_cursor.py
 include tests/fixtures/legacy_store_v5.py
 include tests/fixtures/m6-contract-hashes.json
 include tools/qualification_bundle.py
+include tools/qualification_shards.py
 include docs/adr/0008-antigravity-fixture-driver.md
 include docs/antigravity-protocol.md
 include src/taskalong/executors/antigravity_cli.py
