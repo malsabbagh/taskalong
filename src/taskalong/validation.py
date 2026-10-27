@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import json
 import re
@@ -164,24 +165,51 @@ def schema_names(*, version: str = "1.0") -> tuple[str, ...]:
     raise _invalid("The schema version is unsupported.", "unknown_schema_version")
 
 
-def schema(name: str, *, version: str = "1.0") -> dict[str, Any]:
+@functools.lru_cache(maxsize=None)
+def _cached_schema(name: str, version: str) -> dict[str, Any]:
+    directory = {"1.0": "v1", "2.0": "v2", "2.1": "v2.1", "2.2": "v2.2", "2.3": "v2.3", "2.4": "v2.4", "2.5": "v2.5", "2.6": "v2.6", "2.8": "v2.8", "2.9": "v2.9"}[version]
+    return loads(resources.files("taskalong.resources").joinpath("schemas", directory, name + ".schema.json").read_bytes())
+
+
+def _schema_ref(name: str, *, version: str = "1.0") -> dict[str, Any]:
     name = name.removesuffix(".schema.json").replace("_", "-")
     if name not in schema_names(version=version):
         raise _invalid("The schema name is unsupported.", "unknown_schema")
-    directory = {"1.0": "v1", "2.0": "v2", "2.1": "v2.1", "2.2": "v2.2", "2.3": "v2.3", "2.4": "v2.4", "2.5": "v2.5", "2.6": "v2.6", "2.8": "v2.8", "2.9": "v2.9"}[version]
-    return loads(resources.files("taskalong.resources").joinpath("schemas", directory, name + ".schema.json").read_bytes())
+    return _cached_schema(name, version)
+
+
+def schema(name: str, *, version: str = "1.0") -> dict[str, Any]:
+    return copy.deepcopy(_schema_ref(name, version=version))
 
 
 def _no_remote(uri: str) -> Resource[Any]:
     raise NoSuchResource(ref=uri)
 
 
-def schema_registry(*, version: str = "1.0") -> Registry[Any]:
+@functools.lru_cache(maxsize=None)
+def _cached_registry(version: str) -> Registry[Any]:
     registry: Registry[Any] = Registry(retrieve=_no_remote)
     for name in schema_names(version=version):
-        resource = Resource.from_contents(schema(name, version=version))
+        resource = Resource.from_contents(_cached_schema(name, version))
         registry = registry.with_resource(resource.id(), resource)
     return registry
+
+
+def schema_registry(*, version: str = "1.0") -> Registry[Any]:
+    schema_names(version=version)
+    return _cached_registry(version)
+
+
+@functools.lru_cache(maxsize=None)
+def _cached_validator(name: str, version: str) -> Draft202012Validator:
+    return Draft202012Validator(_cached_schema(name, version), registry=_cached_registry(version), format_checker=_FORMAT_CHECKER)
+
+
+def _validator_for(name: str, *, version: str = "1.0") -> Draft202012Validator:
+    name = name.removesuffix(".schema.json").replace("_", "-")
+    if name not in schema_names(version=version):
+        raise _invalid("The schema name is unsupported.", "unknown_schema")
+    return _cached_validator(name, version)
 
 
 @contextmanager
@@ -316,7 +344,7 @@ def validate(name: str, document: dict[str, Any]) -> dict[str, Any]:
         raise _invalid("A schema document must have an object root.")
     result = copy.deepcopy(document)
     _sets(result, name)
-    validator = Draft202012Validator(schema(name), registry=schema_registry(), format_checker=_FORMAT_CHECKER)
+    validator = _validator_for(name)
     error = next(validator.iter_errors(result), None)
     if error is not None:
         # Error values may contain private task content. Return only a fixed code
@@ -338,7 +366,7 @@ def seal(name: str, document: dict[str, Any]) -> dict[str, Any]:
     result.setdefault("schema_version", "1.0")
     result.setdefault("extensions", {})
     _sets(result, name)
-    if "digest" in schema(name)["properties"]:
+    if "digest" in _schema_ref(name)["properties"]:
         result["digest"] = digest(result)
     return validate(name, result)
 
@@ -351,7 +379,7 @@ def validate_versioned(name: str, document: dict[str, Any], *, expected_version:
     """
     if expected_version == "1.0":
         return validate(name, document)
-    selected = schema(name, version=expected_version)
+    selected = _schema_ref(name, version=expected_version)
     canonical_bytes(document)
     if not isinstance(document, dict):
         raise _invalid("A schema document must have an object root.")
@@ -360,7 +388,7 @@ def validate_versioned(name: str, document: dict[str, Any], *, expected_version:
     if expected_version == "2.8":
         from .trial import _precheck_utc_fields
         _precheck_utc_fields(name, result)
-    validator = Draft202012Validator(selected, registry=schema_registry(version=expected_version), format_checker=_FORMAT_CHECKER)
+    validator = _validator_for(name, version=expected_version)
     if next(validator.iter_errors(result), None) is not None:
         raise _invalid("The document does not match the selected schema.", "schema_validation")
     if expected_version == "2.0":
@@ -386,7 +414,7 @@ def seal_versioned(name: str, document: dict[str, Any], *, version: str) -> dict
     """Seal semantic data for an explicit version; no registration or resolution."""
     if version == "1.0":
         return seal(name, document)
-    selected = schema(name, version=version)
+    selected = _schema_ref(name, version=version)
     canonical_bytes(document)
     if not isinstance(document, dict):
         raise _invalid("A schema document must have an object root.")
