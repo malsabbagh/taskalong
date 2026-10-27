@@ -94,16 +94,27 @@ class ServiceFixture:
     def tearDown(self):
         # Cancellation goes through the public control plane; test cleanup never
         # signals a numeric PID recovered from the store or removes a worktree.
+        from taskalong._supervisor import run_guard
         self.release_file.touch(exist_ok=True)
         for run_id in self.run_ids:
             observed = self.service.inspect(run_id)
-            if observed.get("active_attempt_id") and observed["state"] not in {"cancelled", "failed", "draft_published", "accepted", "cancel_pending"}:
+            if observed.get("active_attempt_id") and observed["state"] not in {"blocked", "cancelled", "failed", "draft_published", "accepted", "cancel_pending"}:
                 try:
                     self.service.cancel(run_id, operation_key="fixture-cleanup:" + str(uuid.uuid4()), expected_revision=observed["revision"])
                 except TaskAlongError:
                     pass
             deadline = time.monotonic() + 12
-            while self.service.inspect(run_id).get("active_attempt_id") and time.monotonic() < deadline:
+            while time.monotonic() < deadline:
+                current = self.service.inspect(run_id)
+                if not current.get("active_attempt_id"):
+                    break
+                attempt = self.service._store.detail("attempts", current["active_attempt_id"])
+                if current["state"] == "blocked" or not attempt.get("supervisor_launch"):
+                    try:
+                        with run_guard(self.state, run_id):
+                            break
+                    except TaskAlongError:
+                        pass
                 time.sleep(0.05)
         self.service.close()
         self.temporary.cleanup()

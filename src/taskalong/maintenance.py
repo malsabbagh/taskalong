@@ -1,6 +1,7 @@
 """Private quiescent maintenance; no external-effect rollback or admission."""
 from __future__ import annotations
 
+import functools
 import hashlib
 import ctypes
 import errno
@@ -400,6 +401,7 @@ def verify_restored(directory, destination, *, expected_digest):
         raise _failure("restore_integrity", "The quarantined restoration cannot be verified.") from exc
 
 
+@functools.lru_cache(maxsize=None)
 def _migration_sql(number=2):
     name = {2: "002-document-history.sql", 3: "003-execution-projections.sql",
             4: "004-driver-compatibility.sql", 5: "005-ollama-compatibility.sql",
@@ -408,13 +410,23 @@ def _migration_sql(number=2):
     return files("taskalong.resources").joinpath("sql", name).read_text()
 
 
+@functools.lru_cache(maxsize=None)
+def _expected_history_definitions(version: int):
+    with closing(sqlite3.connect(":memory:")) as expected:
+        for number in range(2, version + 1):
+            expected.executescript(_migration_sql(number))
+        return {row[0]:tuple(row[1:]) for row in expected.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
+
+
+@functools.lru_cache(maxsize=None)
+def _migration_sql_sha256(number: int) -> str:
+    return hashlib.sha256(_migration_sql(number).encode()).hexdigest()
+
+
 def validate_history_schema(store):
     try:
         version = store.db.execute("PRAGMA user_version").fetchone()[0]
-        with closing(sqlite3.connect(":memory:")) as expected:
-            for number in range(2, version + 1):
-                expected.executescript(_migration_sql(number))
-            definitions = {row[0]:tuple(row[1:]) for row in expected.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
+        definitions = _expected_history_definitions(version)
         actual = {row[0]:tuple(row[1:]) for row in store.db.execute("SELECT name,type,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
         if any(actual.get(name) != value for name,value in definitions.items()):
             raise ValueError("missing or altered immutable history")
@@ -424,7 +436,7 @@ def validate_history_schema(store):
             if (receipt["store_uuid"] != store.store_uuid or receipt["to_version"] != number or digest(receipt) != receipt["digest"]
                     or receipt["from_version"] != number - 1 or receipt["number"] != number or receipt["operation_key"] != row["operation_key"]
                     or receipt["request_digest"] != row["request_digest"]
-                    or receipt["migration_sql_sha256"] != hashlib.sha256(_migration_sql(number).encode()).hexdigest()):
+                    or receipt["migration_sql_sha256"] != _migration_sql_sha256(number)):
                 raise ValueError("invalid migration identity")
             operation = store.db.execute("SELECT request_digest,response FROM operations WHERE command='maintenance.upgrade' AND run_id='' AND operation_key=?", (row["operation_key"],)).fetchone()
             if operation is None or operation["request_digest"] != row["request_digest"] or loads(operation["response"]) != {"phase":"observed", "receipt":receipt}:
