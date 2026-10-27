@@ -90,7 +90,7 @@ class QualificationShardTests(unittest.TestCase):
             receipts[mode] = value
         return binding, producer, receipts
 
-    def write_lanes(self, root, binding, producer, receipts):
+    def write_lanes(self, root, binding, producer, receipts, *, format_version=2):
         q = self.shards
         system, python = producer['os_profile'], producer['python_profile']
         for lane, modes in q.LANES.items():
@@ -101,7 +101,91 @@ class QualificationShardTests(unittest.TestCase):
             (directory / 'installed-inventory.json').write_text(json.dumps(canonical))
             for mode in modes:
                 (directory / f'installed-{mode}.json').write_text(json.dumps(receipts[mode]))
-            q.validate_lane(directory, binding, system, python, lane, seal=True)
+            q.validate_lane(directory, binding, system, python, lane, seal=True, format_version=format_version)
+
+    def format3_fixture(self, system='ubuntu-24.04', python='3.11'):
+        binding, producer, receipts = self.fixture(system, python)
+        for mode, value in receipts.items():
+            value['format_version'] = 3
+            core = mode == 'core-only'
+            if not core:
+                value['schedule'] = qualifier.make_schedule(value['behavior_test_ids'], format_version=3)
+                template = value['phases'][2]
+                value['phases'] = value['phases'][:2] + [copy.deepcopy(template) for _ in range(4)]
+            for index, phase in enumerate(value['phases']):
+                name = 'sample' if core else ['inventory', 'sample', 'tests-0', 'tests-1', 'tests-2', 'tests-3'][index]
+                phase['identity'].update(phase=name, schedule_sha256=(None if core or name == 'inventory'
+                    else qualifier.json_digest(value['schedule'])))
+                for stream in ('stdout', 'stderr'):
+                    phase[stream]['file'] = f'diagnostics/{name}.{stream}'
+        return binding, producer, receipts
+
+    def test_format3_envelope2_requires_uniform_protocol_and_all_four_phases(self):
+        q = self.shards
+        binding, producer, receipts = self.format3_fixture()
+        profile = [('ubuntu-24.04', '3.11')]
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            self.write_lanes(root, binding, producer, receipts, format_version=3)
+            result = q.aggregate(root, binding, profile, format_version=3)
+            self.assertEqual(result['format_version'], 2)
+            self.assertEqual(result['qualification_format_version'], 3)
+            for lane in root.iterdir():
+                envelope = json.loads((lane / 'shard.json').read_text())
+                self.assertEqual(envelope['format_version'], 2)
+                self.assertEqual(envelope['qualification_format_version'], 3)
+            with self.assertRaises(ValueError):
+                q.aggregate(root, binding, profile)  # Legacy mode never accepts format3.
+            lane = root / q.result_name(binding, *profile[0], 'sdist')
+            envelope = json.loads((lane / 'shard.json').read_text())
+            envelope['format_version'] = 1
+            envelope.pop('qualification_format_version')
+            (lane / 'shard.json').write_text(json.dumps(envelope))
+            with self.assertRaises(ValueError):
+                q.aggregate(root, binding, profile, format_version=3)
+        for fault in ('missing', 'duplicate', 'mixed', 'boolean', 'skip'):
+            with self.subTest(fault=fault):
+                value = copy.deepcopy(receipts['wheel'])
+                if fault == 'missing':
+                    value['phases'].pop()
+                elif fault == 'duplicate':
+                    value['phases'][5] = copy.deepcopy(value['phases'][4])
+                elif fault == 'mixed':
+                    value['schedule'] = qualifier.make_schedule(value['behavior_test_ids'])
+                elif fault == 'boolean':
+                    value['format_version'] = True
+                else:
+                    value['skipped_platform_cases'] = [{'test': value['behavior_test_ids'][0],
+                        'reason': 'new skip', 'required_platform': 'Darwin'}]
+                with self.assertRaises(ValueError):
+                    q.validate_receipt(value, producer, 'wheel', format_version=3)
+
+    def test_format3_full_matrix_requires_sixteen_envelope2_results(self):
+        q = self.shards
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            for system, python in q.PROFILES:
+                binding, producer, receipts = self.format3_fixture(system, python)
+                self.write_lanes(root, binding, producer, receipts, format_version=3)
+            result = q.aggregate(root, binding, format_version=3)
+            self.assertEqual(result['shards'], 16)
+            self.assertEqual(len(result['profiles']), 8)
+            self.assertEqual(result['qualification_format_version'], 3)
+
+    def test_format3_rejects_mixed_lane_versions_even_with_valid_individual_envelopes(self):
+        q = self.shards
+        profile = [('ubuntu-24.04', '3.11')]
+        binding, producer, receipts = self.format3_fixture()
+        _, _, legacy = self.fixture()
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            self.write_lanes(root, binding, producer, receipts, format_version=3)
+            lane = root / q.result_name(binding, *profile[0], 'sdist')
+            (lane / 'installed-sdist.json').write_text(json.dumps(legacy['sdist']))
+            (lane / 'shard.json').unlink()
+            q.validate_lane(lane, binding, *profile[0], 'sdist', seal=True)
+            with self.assertRaises(ValueError):
+                q.aggregate(root, binding, profile, format_version=3)
 
     def test_complete_matrix_requires_all_sixteen_shards(self):
         q = self.shards
@@ -229,6 +313,123 @@ class QualificationShardTests(unittest.TestCase):
                 q.validate_lane(lane, binding, *profile[0], 'sdist', seal=True)
                 with self.assertRaises(ValueError):
                     q.aggregate(root, binding, profile)
+
+
+class QualificationFormat3Tests(unittest.TestCase):
+    def test_four_batch_golden_and_legacy_rule_remain_distinct(self):
+        groups = {name: [f'test_{name}.Cases.test_{i:02d}' for i in range(count)]
+                  for name, count in zip('abcdefgh', (8, 7, 6, 5, 4, 3, 2, 1))}
+        ids = sum(groups.values(), [])
+        expected = {'format_version': 3, 'rule': 'whole-modules-count-desc-greedy-four-v3',
+            'inventory_sha256': qualifier.json_digest(sorted(ids)),
+            'batches': [groups['a'] + groups['h'], groups['b'] + groups['g'],
+                        groups['c'] + groups['f'], groups['d'] + groups['e']]}
+        self.assertEqual(qualifier.make_schedule(ids, format_version=3), expected)
+        self.assertEqual(qualifier.make_schedule(list(reversed(ids)), format_version=3), expected)
+        self.assertEqual([len(batch) for batch in expected['batches']], [9] * 4)
+        qualifier.check_schedule(expected, format_version=3)
+        self.assertEqual(qualifier.make_schedule(ids)['format_version'], 2)
+        self.assertEqual(len(qualifier.make_schedule(ids)['batches']), 2)
+        with self.assertRaises(ValueError):
+            qualifier.check_schedule(expected)
+
+    def test_four_batch_closed_schedule_and_version_faults_fail(self):
+        ids = [f'test_{name}.C.test_x' for name in 'abcdefgh']
+        schedule = qualifier.make_schedule(ids, format_version=3)
+        for version in (True, False, 1, 4, 3.0, '3', None):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                qualifier.make_schedule(ids, format_version=version)
+        for fault in ('version', 'boolean', 'rule', 'missing', 'duplicate', 'order', 'digest', 'extra'):
+            value = copy.deepcopy(schedule)
+            if fault == 'version': value['format_version'] = 2
+            elif fault == 'boolean': value['format_version'] = True
+            elif fault == 'rule': value['rule'] = 'whole-modules-count-desc-greedy-two-v2'
+            elif fault == 'missing': value['batches'].pop()
+            elif fault == 'duplicate': value['batches'][1] = value['batches'][0]
+            elif fault == 'order': value['batches'][0].reverse()
+            elif fault == 'digest': value['inventory_sha256'] = '0' * 64
+            else: value['unreviewed'] = True
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                qualifier.check_schedule(value, format_version=3)
+
+    def test_four_phase_accounting_requires_every_disjoint_assignment(self):
+        ids = [f'test_{name}.C.test_x' for name in 'abcd']
+        schedule = qualifier.make_schedule(ids, format_version=3)
+        good = [{'test_ids': batch, 'outcomes': {i: 'passed' for i in batch},
+                 'skipped_platform_cases': []} for batch in schedule['batches']]
+        self.assertEqual(qualifier.validate_test_accounting(schedule, good, 'darwin'), (4, []))
+        for bad in (good[:3], good + [good[0]], [good[0], good[1], good[2], good[2]]):
+            with self.assertRaises(ValueError):
+                qualifier.validate_test_accounting(schedule, bad, 'darwin')
+
+    def test_actual_child_selection_runs_each_four_batch_test_exactly_once(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            work = Path(scratch)
+            (work / 'diagnostics').mkdir()
+            tests = work / 'installed-tests'
+            tests.mkdir()
+            for name in 'abcd':
+                (tests / f'test_format3_toy_{name}.py').write_text(
+                    'import unittest\nclass Cases(unittest.TestCase):\n def test_x(self): self.assertEqual(2+2,4)\n')
+            lock = work / 'requirements-dev.lock'
+            lock.write_text('synthetic locked input\n')
+            schedule = None
+            executed = []
+            original_path = sys.path[:]
+            try:
+                with mock.patch.object(Path, 'cwd', return_value=work), \
+                     mock.patch.object(qualifier, 'installed_context', return_value=lambda: {'package': 'frozen'}), \
+                     mock.patch.object(qualifier, 'verify_harness'), redirect_stderr(io.StringIO()):
+                    for phase in ['inventory', 'tests-0', 'tests-1', 'tests-2', 'tests-3']:
+                        identity = {'phase': phase, 'artifact_sha256': 'a' * 64, 'harness_sha256': 'b' * 64,
+                            'lock_sha256': hashlib.sha256(lock.read_bytes()).hexdigest(),
+                            'schedule_sha256': None if schedule is None else qualifier.json_digest(schedule)}
+                        phase_input = work / 'phase-input.json'
+                        phase_input.write_text(json.dumps({'identity': identity, 'schedule': schedule}))
+                        args = type('Args', (), {'phase_input': str(phase_input), 'format_version': 3})()
+                        receipt = qualifier.child_phase(args)
+                        payload = qualifier.validate_phase(receipt, identity, format_version=3)
+                        if phase == 'inventory': schedule = payload['schedule']
+                        else: executed.extend(payload['test_ids'])
+                        with self.assertRaises(ValueError): qualifier.validate_phase(receipt, identity)
+                self.assertEqual(len(executed), 4)
+                self.assertEqual(len(set(executed)), 4)
+                self.assertEqual(sorted(executed), sorted(sum(schedule['batches'], [])))
+            finally:
+                sys.path[:] = original_path
+                for name in 'abcd': sys.modules.pop(f'test_format3_toy_{name}', None)
+
+    def test_additional_phase_protocol_and_public_safe_export_are_version_bound(self):
+        ids = [f'test_{name}.C.test_x' for name in 'abcd']
+        schedule = qualifier.make_schedule(ids, format_version=3)
+        identity = {'phase': 'tests-3', 'artifact_sha256': 'a' * 64, 'harness_sha256': 'b' * 64,
+                    'lock_sha256': 'c' * 64, 'schedule_sha256': qualifier.json_digest(schedule)}
+        payload = {'test_ids': schedule['batches'][3],
+            'outcomes': {i: 'passed' for i in schedule['batches'][3]}, 'skipped_platform_cases': [],
+            'package_snapshot_sha256': 'd' * 64}
+        receipt = qualifier.phase_receipt(identity, payload, format_version=3)
+        with tempfile.TemporaryDirectory() as scratch:
+            work = Path(scratch)
+            (work / 'diagnostics').mkdir()
+            progress = qualifier.Progress(work / 'diagnostics/tests-3.progress.jsonl', 'tests-3')
+            progress.emit('phase-start')
+            for test in payload['test_ids']:
+                progress.emit('test-start', test=test)
+                progress.emit('test-outcome', test=test, outcome='passed')
+                progress.emit('test-stop', test=test)
+            progress.emit('phase-stop', outcome='passed')
+            command = [sys.executable, '-c', 'print(' + repr(json.dumps(receipt)) + ')']
+            with self.assertRaises(ValueError):
+                qualifier.run_phase(command, cwd=work, env=qualifier.clean_environment(), identity=identity, timeout=2)
+            actual, parent = qualifier.run_phase(command, cwd=work, env=qualifier.clean_environment(),
+                identity=identity, timeout=2, format_version=3)
+            self.assertEqual(actual, payload)
+            self.assertTrue(parent['direct_child_reaped'])
+            output = work / 'export'
+            qualifier.export_evidence(work, output, schedule, format_version=3)
+            self.assertTrue((output / 'tests-3.parent.json').is_file())
+            self.assertTrue((output / 'tests-3.expected.json').is_file())
+            self.assertEqual(json.loads((output / 'discovered-inventory.json').read_text()), schedule)
 
 
 class DistributionTests(unittest.TestCase):

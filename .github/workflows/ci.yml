@@ -139,11 +139,11 @@ jobs:
       - name: Qualify ordinary wheel and core-only sample
         if: matrix.lane == 'wheel-core'
         run: |
-          python tools/qualify_installed.py --dist-dir dist --artifact wheel --mode fixture --review-wheel "$RUNNER_TEMP/review_sensei-0.8.8-py3-none-any.whl" --evidence-dir qualification-progress/wheel > installed-wheel.json
-          python tools/qualify_installed.py --dist-dir dist --artifact wheel --mode fixture --core-only --evidence-dir qualification-progress/core-only > installed-core-only.json
+          python tools/qualify_installed.py --format-version 3 --dist-dir dist --artifact wheel --mode fixture --review-wheel "$RUNNER_TEMP/review_sensei-0.8.8-py3-none-any.whl" --evidence-dir qualification-progress/wheel > installed-wheel.json
+          python tools/qualify_installed.py --format-version 3 --dist-dir dist --artifact wheel --mode fixture --core-only --evidence-dir qualification-progress/core-only > installed-core-only.json
       - name: Qualify rebuilt sdist
         if: matrix.lane == 'sdist'
-        run: python tools/qualify_installed.py --dist-dir dist --artifact sdist --mode fixture --review-wheel "$RUNNER_TEMP/review_sensei-0.8.8-py3-none-any.whl" --evidence-dir qualification-progress/sdist > installed-sdist.json
+        run: python tools/qualify_installed.py --format-version 3 --dist-dir dist --artifact sdist --mode fixture --review-wheel "$RUNNER_TEMP/review_sensei-0.8.8-py3-none-any.whl" --evidence-dir qualification-progress/sdist > installed-sdist.json
       - name: Seal complete lane receipts against this producer and attempt
         run: |
           mkdir shard-result
@@ -153,7 +153,7 @@ jobs:
           else
             cp installed-sdist.json shard-result/
           fi
-          python tools/qualification_shards.py seal --directory shard-result --os-profile '${{ matrix.os }}' --python-profile '${{ matrix.python }}' --lane '${{ matrix.lane }}'
+          python tools/qualification_shards.py seal --format-version 3 --directory shard-result --os-profile '${{ matrix.os }}' --python-profile '${{ matrix.python }}' --lane '${{ matrix.lane }}'
       - name: Retain complete sealed shard result
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -237,7 +237,7 @@ jobs:
           pattern: qualification-${{ matrix.os }}-py${{ matrix.python }}-*-${{ github.sha }}-${{ github.run_attempt }}
           path: shard-results/
       - name: Require exact coverage and matching producer identities
-        run: python tools/qualification_shards.py aggregate --directory shard-results --os-profile '${{ matrix.os }}' --python-profile '${{ matrix.python }}' > installed-aggregate.json
+        run: python tools/qualification_shards.py aggregate --format-version 3 --directory shard-results --os-profile '${{ matrix.os }}' --python-profile '${{ matrix.python }}' > installed-aggregate.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: installed-${{ matrix.os }}-py${{ matrix.python }}-${{ github.sha }}-${{ github.run_attempt }}
@@ -281,7 +281,7 @@ jobs:
           pattern: qualification-*-${{ github.sha }}-${{ github.run_attempt }}
           path: shard-results/
       - name: Validate the entire required platform and artifact matrix
-        run: python tools/qualification_shards.py aggregate --directory shard-results > qualification-aggregate.json
+        run: python tools/qualification_shards.py aggregate --format-version 3 --directory shard-results > qualification-aggregate.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: qualification-aggregate-${{ github.sha }}-${{ github.run_attempt }}

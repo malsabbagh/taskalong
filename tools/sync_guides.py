@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GUIDES = {"fixture": "docs/fixture-walkthrough.md", "operations": "docs/operations.md",
-          "contracts": "docs/contracts.md", "qualification": "docs/qualification.md"}
+          "contracts": "docs/contracts.md", "qualification": "docs/qualification.md", "ordered": "docs/ordered-tasks.md"}
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -21,7 +21,7 @@ def main():
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
-    print("Packaged guides match four canonical documents.")
+    print("Packaged guides match five canonical documents.")
     return 0
 
 if __name__ == "__main__":

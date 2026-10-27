@@ -22,7 +22,7 @@ def parser():
         p = sub.add_parser(name)
         p.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
         return p
-    p = command("guide"); p.add_argument("name", nargs="?", default="fixture", choices=("fixture", "operations", "contracts", "qualification"))
+    p = command("guide"); p.add_argument("name", nargs="?", default="fixture", choices=("fixture", "operations", "contracts", "qualification", "ordered"))
     p = command("register-repository"); p.add_argument("path"); p.add_argument("--workspace-root")
     p = command("register-profile"); p.add_argument("--profile", required=True)
     p = command("configure-review"); p.add_argument("--config", required=True); p.add_argument("--fixture-response"); p.add_argument("--executable"); p.add_argument("--python-executable")
@@ -30,13 +30,18 @@ def parser():
     p = command("configure-publication"); p.add_argument("--gh", required=True); p.add_argument("--git-remote", required=True)
     p = command("authorize"); p.add_argument("run_id"); p.add_argument("--decision-digest", required=True); p.add_argument("--scope", nargs="+", required=True)
     p = command("submit"); p.add_argument("--spec", required=True); p.add_argument("--key", required=True)
+    p = command("validate"); p.add_argument("--spec", required=True)
+    for name in ("advance", "retry"):
+        p = command(name); p.add_argument("run_id"); p.add_argument("--step-id", required=True)
+        p.add_argument("--key", required=True); p.add_argument("--expected-revision", type=int, required=True)
+        if name == "advance": p.add_argument("--predecessor-digest", required=True)
     for name in ("start", "cancel", "retire-workspace", "resume", "reconcile", "verify", "publish"):
         p = command(name); p.add_argument("run_id"); p.add_argument("--key", required=True); p.add_argument("--expected-revision", type=int, required=True)
         if name == "resume": p.add_argument("--mode", choices=("native", "restart"), required=True)
         if name in {"start", "resume"}: p.add_argument("--authority-id")
         if name == "publish": p.add_argument("--intent-digest", required=True)
         if name == "cancel": p.add_argument("--wait", type=int, default=0)
-    for name in ("status", "publish-intent"):
+    for name in ("status", "result", "publish-intent"):
         p = command(name); p.add_argument("run_id")
     p = command("events"); p.add_argument("run_id"); p.add_argument("--after-seq", type=int, default=0); p.add_argument("--jsonl", action="store_true")
     p = command("export"); p.add_argument("run_id"); p.add_argument("--output", required=True)
@@ -84,6 +89,9 @@ def main(argv=None):
             elif cmd == "configure-publication": result = service.configure_publication(args.gh, args.git_remote)
             elif cmd == "authorize": result = service.authorize(args.run_id, decision_digest=args.decision_digest, scope=args.scope)
             elif cmd == "submit": result = service.submit(load_json(args.spec), operation_key=args.key)
+            elif cmd == "validate": result = service.validate_task(load_json(args.spec))
+            elif cmd == "advance": result = service.advance(args.run_id, expected_step_id=args.step_id, predecessor_digest=args.predecessor_digest, **mutation)
+            elif cmd == "retry": result = service.retry(args.run_id, expected_step_id=args.step_id, **mutation)
             elif cmd == "start": result = service.start(args.run_id, authority_id=args.authority_id, **mutation)
             elif cmd == "resume": result = service.resume(args.run_id, mode=args.mode, authority_id=args.authority_id, **mutation)
             elif cmd == "cancel":
@@ -96,6 +104,7 @@ def main(argv=None):
             elif cmd == "reconcile": result = service.reconcile(args.run_id, **mutation)
             elif cmd == "verify": result = service.verify(args.run_id, **mutation)
             elif cmd == "status": result = service.inspect(args.run_id)
+            elif cmd == "result": result = service.result(args.run_id)
             elif cmd == "publish-intent": result = service.publish_intent(args.run_id)
             elif cmd == "publish": result = service.publish(args.run_id, intent_digest=args.intent_digest, **mutation)
             elif cmd == "export": result = service.export(args.run_id, output=args.output)
@@ -116,7 +125,7 @@ def main(argv=None):
             for requirement in result.get("blocker_details", []):
                 print(requirement["code"] + ": " + requirement.get("requirement", requirement.get("limitation", "")))
         else: print(f"{cmd}: {result.get('state', 'completed')}" + (f" ({result['run_id']})" if "run_id" in result else ""))
-        if cmd in {"start", "resume", "cancel", "reconcile", "verify", "publish"}:
+        if cmd in {"start", "advance", "retry", "resume", "cancel", "reconcile", "verify", "publish"}:
             if result.get("state") == "cancel_pending": return 6
             if result.get("state") == "blocked":
                 return 5 if any(b.get("effect_outcome") == "uncertain" for b in result.get("blockers", [])) else 3

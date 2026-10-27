@@ -69,3 +69,6 @@ and permission notice is included in source and built distributions.
 See [provenance](PROVENANCE.md) and [dependency inventory](THIRD_PARTY.md).
 Dependencies retain their own licenses. Registry publication is a separate
 owner decision; this candidate does not imply an available registry release.
+
+The [ordered CLI fixture recipe](docs/ordered-tasks.md) demonstrates bounded two-step
+work with durable progress and explicit advance.

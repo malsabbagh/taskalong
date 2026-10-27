@@ -41,7 +41,7 @@ def main() -> int:
                 if not target.exists():
                     errors.append(f"{location}: missing link target: {url.path}")
     guides = {"fixture": "docs/fixture-walkthrough.md", "operations": "docs/operations.md",
-              "contracts": "docs/contracts.md", "qualification": "docs/qualification.md"}
+              "contracts": "docs/contracts.md", "qualification": "docs/qualification.md", "ordered": "docs/ordered-tasks.md"}
     bundled = json.loads((ROOT / "src/taskalong/resources/docs/guides.json").read_text())
     if set(bundled) != set(guides) or any(bundled[name] != (ROOT / source).read_text() for name, source in guides.items()):
         errors.append("Packaged guides are stale; run python tools/sync_guides.py.")

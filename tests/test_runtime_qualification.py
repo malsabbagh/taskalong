@@ -374,7 +374,7 @@ class RuntimeTestContextTests(unittest.TestCase):
 class RuntimePlanContractTests(unittest.TestCase):
     def test_existing_schema_bytes_names_sql_and_license_identity_are_preserved(self):
         from importlib import resources
-        from taskalong.validation import schema_names
+        from taskalong.validation import schema, schema_names, seal_versioned
 
         identities = json.loads((Path(__file__).parent / "fixtures/runtime-prior-contracts.json").read_bytes())
         self.assertEqual(len(identities["resources"]), 53)
@@ -391,8 +391,26 @@ class RuntimePlanContractTests(unittest.TestCase):
             license_path = Path(importlib.metadata.distribution("taskalong").locate_file(
                 "taskalong-0.1.0a1.dist-info/licenses/LICENSE"))
         self.assertEqual(hashlib.sha256(license_path.read_bytes()).hexdigest(), identities["license_sha256"])
-        with self.assertRaises(TaskAlongError):
-            schema_names(version="2.7")
+        self.assertEqual(set(schema_names(version="2.10")), {
+            "task-spec", "task-run", "step-receipt", "result-view", "output-manifest",
+            "resolved-inputs", "import-journal", "file-set-patch", "worker-packet", "packet-projection",
+        })
+        for name in schema_names(version="2.10"):
+            document = schema(name, version="2.10")
+            self.assertEqual(document["properties"]["schema_version"], {"const":"2.10"})
+            self.assertIs(document["additionalProperties"], False)
+        from taskalong.execution import read_task_spec
+        from test_artifact_store import artifact_task
+        artifact = artifact_task()
+        self.assertEqual(read_task_spec(artifact).to_bytes(), canonical_bytes(artifact))
+        artifact["steps"][0]["route_id"] = "unregistered-route"
+        with self.assertRaises(TaskAlongError) as route:
+            seal_versioned("task-spec", artifact, version="2.10")
+        self.assertEqual(route.exception.code, "artifact_route_invalid")
+        # An additive allocated family must not consume the unknown-version canary.
+        with self.assertRaises(TaskAlongError) as unknown:
+            schema_names(version="99.99")
+        self.assertEqual(unknown.exception.code, "unknown_schema_version")
     def test_explicit_plan_is_immutable_data_without_process_or_network_effects(self):
         from taskalong.runtime_qualification import ExperimentPlan
 

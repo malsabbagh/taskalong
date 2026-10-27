@@ -16,7 +16,7 @@ _HISTORICAL = (TrialDriverConfig, TrialTaskSpec, TrialWorkerPacket, TrialPacketP
 
 def register_trial_document(store, document, *, operation_key):
     """Store one exact immutable document; never register execution authority."""
-    if store.format_version not in (8, 9):
+    if store.format_version not in (8, 9, 10, 11):
         raise TaskAlongError("store_upgrade_required", "Trial history requires explicit format-8 maintenance.", exit_code=3)
     if type(document) not in _HISTORICAL:
         raise TaskAlongError("history_document_invalid", "Select an exact supported immutable trial document.")
@@ -144,7 +144,7 @@ def inspect_local_assessment(store, receipt, *, profile, schemas, assessment=Non
     """
     from .store import now
     from .trial_review import TrialReviewEvidence, observe_review
-    if store.format_version not in (8, 9) or type(receipt) is not TrialReviewReceipt:
+    if store.format_version not in (8, 9, 10, 11) or type(receipt) is not TrialReviewReceipt:
         raise TaskAlongError("trial_assessment_invalid", "Trial assessment requires its exact fenced history and receipt.")
     raw = receipt.to_dict()
     blobs = {ref["sha256"]: store.get_blob(ref["sha256"]) for ref in raw["originals"].values()}

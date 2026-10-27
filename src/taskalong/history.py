@@ -23,7 +23,7 @@ _TRIAL_TYPES = {cls.schema_name.replace("-", "_"): cls for cls in
 
 
 def _require(store):
-    if store.format_version not in (2, 3, 4, 5, 6, 7, 8, 9):
+    if store.format_version not in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
         raise TaskAlongError("store_upgrade_required", "Versioned history requires the explicit backed-up store upgrade.", exit_code=3)
 
 

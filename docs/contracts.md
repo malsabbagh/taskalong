@@ -1,8 +1,23 @@
 # Experimental alpha contracts
 
+M11's explicit 2.10 family adds closed immutable artifact selectors, producer
+manifests, resolved inputs and journaled imports between independently admitted
+synthetic routes. It preserves the earlier single-step and M10 2.7 meanings.
+See [artifact handoff](artifact-handoff.md) and [ADR0015](adr/0015-immutable-artifact-handoff.md).
+
 The original provisional contracts use schema version `1.0`; the package/API version is
 `0.1.0a1`/`1.0`. Implemented contracts do not establish supported live execution;
 see [qualification](qualification.md).
+
+## Ordered fixture tasks v2.7
+
+Four additive closed resources describe the full ordered task, mutable run,
+immutable step receipt and read-only result. A fixed synthetic Codex v1 wire
+projection carries exact step/predecessor/reservation identities without
+relabeling the whole task or changing existing schemas. Intermediate completion
+is a worker/checkpoint observation; independent acceptance requires all required
+steps and the unchanged final check/review path. Explicit format10/SQL010 is
+required. See the [CLI recipe](ordered-tasks.md) and [ADR](adr/0013-ordered-cli-tasks.md).
 
 ## Muse supervisor handoff v2.9
 

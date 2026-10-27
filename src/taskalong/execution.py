@@ -169,6 +169,12 @@ def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec | O
         return CursorTaskSpec.from_dict(document)
     if document.get("schema_version") == "2.6":
         return AntigravityTaskSpec.from_dict(document)
+    if document.get("schema_version") == "2.10":
+        from .artifact_handoff import ArtifactTaskSpec
+        return ArtifactTaskSpec.from_dict(document)
+    if document.get("schema_version") == "2.7":
+        from .steps import OrderedTaskSpec
+        return OrderedTaskSpec.from_dict(document)
     if document.get("schema_version") == "2.9":
         from .muse_handoff import MuseTaskSpec
         return MuseTaskSpec.from_dict(document)
