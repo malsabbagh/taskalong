@@ -44,6 +44,8 @@ class _DescendantTracker:
         self.queue = None
         self.active = {pid}
         self.failed = False
+        self.fork_observed = False
+        self.tracking_errors = []
         self.backend = "unsupported"
         self.root_exit_code = None
         self.root_pgid = None
@@ -56,9 +58,14 @@ class _DescendantTracker:
                 self.queue.control([event], 0, 0)
                 self.backend = "darwin-kqueue-no-fork"
             except OSError:
-                self.failed = True
+                self._tracking_error("registration")
         else:
-            self.failed = True
+            self._tracking_error("unsupported_platform")
+
+    def _tracking_error(self, code: str) -> None:
+        self.failed = True
+        if code not in self.tracking_errors:
+            self.tracking_errors.append(code)
 
     def poll(self) -> None:
         if self.queue is None:
@@ -67,16 +74,19 @@ class _DescendantTracker:
             for _ in range(8):
                 events = self.queue.control(None, 1024, 0)
                 for event in events:
-                    if event.flags & select.KQ_EV_ERROR or event.fflags & select.KQ_NOTE_FORK:
+                    if event.flags & select.KQ_EV_ERROR:
+                        self._tracking_error("kernel_event")
+                    if event.fflags & select.KQ_NOTE_FORK:
+                        self.fork_observed = True
                         self.failed = True
                     if event.fflags & select.KQ_NOTE_EXIT:
                         self.active.discard(event.ident)
                 if len(events) < 1024:
                     break
             else:
-                self.failed = True
+                self._tracking_error("event_overflow")
         except OSError:
-            self.failed = True
+            self._tracking_error("poll")
 
     def close(self) -> None:
         if self.queue is not None:
@@ -361,6 +371,7 @@ def run_bounded(
     _capture_private_output: Callable[[bytes, bytes], None] | None = None,
     secrets: Sequence[str | bytes] = (), max_line_bytes: int = 1024 * 1024,
     signal_grace_seconds: float = 0.5,
+    _lifetime_observations: dict | None = None,
 ) -> ProcessResult:
     """Drain both pipes concurrently with output/deadline/cancellation limits.
 
@@ -370,6 +381,10 @@ def run_bounded(
     """
     if os.name != "posix":
         raise ProcessBoundaryError("process supervision requires POSIX")
+    if _lifetime_observations is not None and (type(_lifetime_observations) is not dict
+                                             or _lifetime_observations):
+        raise ProcessBoundaryError("private lifetime observation sink must be an empty dict",
+                                   effect_outcome="not_sent")
     if isinstance(argv, (str, bytes)) or not argv or any(not isinstance(x, str) or not x or "\0" in x for x in argv):
         raise ProcessBoundaryError("argv must contain nonempty strings")
     if (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
@@ -697,6 +712,12 @@ def run_bounded(
                            redact(raw_stderr, secrets), timed_out, cancelled,
                            confirmed, group_confirmed, output_limited, receipt, int((time.monotonic()-started)*1000), total,
                            tracker.backend, unaccounted, protocol_error)
+    # Private observations for the separate experimental foreground API. They
+    # cannot change the existing result, tracker decision or production format.
+    if _lifetime_observations is not None:
+        _lifetime_observations.update(
+            fork_observed=getattr(tracker, "fork_observed", False),
+            tracking_errors=tuple(getattr(tracker, "tracking_errors", ())))
     failures = tuple(boundary_failures)
     if capture_error is not None:
         # Preserve the established private-capture failure precedence.
