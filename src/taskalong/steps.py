@@ -193,7 +193,7 @@ def validate_chain(store, run, *, live=False, complete=False):
         if spec["schema_version"] == "2.10":
             from .artifact_handoff import validate_packet, validate_worker
             packet = validate_packet(store, run, item)
-            worker = validate_worker(store, run, item, loads(store.get_blob(receipt["result_digest"])))
+            worker = validate_worker(store, run, item, loads(store.get_blob(receipt["result_digest"])), packet=packet)
         else:
             packet = validate("worker-packet", item["packet"])
             worker = validate("worker-result", loads(store.get_blob(receipt["result_digest"])))

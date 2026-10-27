@@ -632,8 +632,9 @@ def validate_packet(store,run,attempt,*,before_spawn=False):
     return packet
 
 
-def validate_worker(store,run,attempt,worker):
-    packet=validate_packet(store,run,attempt)
+def validate_worker(store,run,attempt,worker,*,packet=None):
+    if packet is None:
+        packet=validate_packet(store,run,attempt)
     version="2.3" if packet["schema_version"]=="2.3" else "1.0"
     worker=validate_versioned("worker-result",worker,expected_version=version)
     if version=="2.3" and (worker["session_id"]!=packet["session_id"] or any(worker[k]!=packet["bindings"][k] for k in ("driver_config_digest","provider_profile_digest"))):
