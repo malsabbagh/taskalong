@@ -337,6 +337,10 @@ The Windows job qualifies separately installed wheels and wheels rebuilt from th
 sdist, outside the source tree. Its eight explicit contracts cover CLI entrypoints,
 guides/resources, invalid CLI envelopes, canonical JSON, schemas, literal relative
 paths, installed import origins, and refusal of unsupported process supervision.
+The closed receipt records the input wheel/sdist and exact installed rebuilt-wheel
+digests, standard CPython identity, and isolated installed origins. The final gate
+audits all three retained Windows archives against the reviewed source and their
+receipt digests; independent OS builds need not have identical archive bytes.
 Unexpected skips or failures fail qualification. It does not qualify a Windows
 state store, migration, workspace lifecycle, task execution or live agents.
 Those features still require POSIX locking, ownership and process supervision;

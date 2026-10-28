@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import sysconfig
 import unittest
 from unittest.mock import patch
 
@@ -68,9 +69,10 @@ class PortableContracts(unittest.TestCase):
     def test_process_refusal(self):
         from taskalong.process import run_bounded, ProcessBoundaryError
         # Exercise the unsupported-platform contract on every host, without spawning.
+        cwd = str(Path.cwd())
         with patch('taskalong.process.os.name', 'nt'), patch('taskalong.process.subprocess.Popen') as spawn:
             with self.assertRaisesRegex(ProcessBoundaryError, 'requires POSIX'):
-                run_bounded([sys.executable, '-c', 'raise SystemExit(99)'], cwd=str(Path.cwd()))
+                run_bounded([sys.executable, '-c', 'raise SystemExit(99)'], cwd=cwd)
             spawn.assert_not_called()
 
     def test_schemas(self):
@@ -91,6 +93,8 @@ def main():
     import taskalong
     print(json.dumps({'test_ids': list(TEST_NAMES), 'passed': result.testsRun,
                       'skipped': [], 'python': sys.version.split()[0],
+                      'implementation': sys.implementation.name,
+                      'gil_disabled': bool(sysconfig.get_config_var('Py_GIL_DISABLED')),
                       'installed_origin': str(Path(taskalong.__file__).resolve()),
                       'prefix': str(Path(sys.prefix).resolve())}))
 

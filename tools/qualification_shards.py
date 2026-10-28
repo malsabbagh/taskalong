@@ -280,8 +280,14 @@ def main():
         if not args.os_profile:
             if args.portable_receipt is None:
                 parser.error('full qualification requires the Windows portable receipt')
-            from qualify_portable import validate_receipt
-            result['windows_portable'] = validate_receipt(read_json(args.portable_receipt), binding)
+            from qualify_portable import validate_receipt, verify_artifacts
+            portable_directory = args.portable_receipt.parent
+            if (portable_directory.is_symlink() or
+                    {p.name for p in portable_directory.iterdir()} != {'windows-portable.json', 'dist', 'portable-rebuilt'}):
+                raise ValueError('Windows result file inventory incomplete or unexpected')
+            value = read_json(args.portable_receipt)
+            result['windows_portable'] = validate_receipt(value, binding)
+            result['windows_portable'].update(verify_artifacts(value, portable_directory, Path(__file__).resolve().parents[1]))
     print(json.dumps(result, sort_keys=True))
 
 
