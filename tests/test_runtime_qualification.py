@@ -1462,6 +1462,79 @@ runpy.run_path(sys.argv[0],run_name="__main__")
             self.assertEqual(document["first_error"], {"case_id": None, "code": "runtime_inputs_changed"})
             self.assertFalse(document["inputs_rechecked"])
 
+    def test_locked_platform_markers_match_linux_macos_and_windows(self):
+        from packaging.markers import default_environment
+
+        tool = self.entrypoint()
+        lock = (Path(__file__).resolve().parent.parent / "requirements-dev.lock").read_bytes()
+        environment = default_environment()
+        for platform in ("linux", "darwin", "win32"):
+            with self.subTest(platform=platform), patch("packaging.markers.default_environment",
+                    return_value=environment | {"sys_platform": platform}):
+                requirements = dict(tool._locked_requirements(lock))
+                self.assertEqual(requirements.pop("colorama", None), "0.4.6" if platform == "win32" else None)
+                self.assertEqual(requirements["packaging"], "26.3")
+                self.assertEqual(len(requirements), 11)
+
+    def test_locked_requirement_parser_preserves_markers_and_refuses_invalid_pins(self):
+        from packaging.markers import default_environment
+
+        tool = self.entrypoint()
+        environment = default_environment() | {"sys_platform": "linux", "python_version": "3.14"}
+        lock = b"# locked fixture\nbase==1.0 \\\n    --hash=sha256:" + b"a" * 64 + b'\nconditional==2.0 ; sys_platform == "linux" and python_version >= "3.14"\nignored==3.0 ; sys_platform == "win32"\n'
+        with patch("packaging.markers.default_environment", return_value=environment):
+            self.assertEqual(tool._locked_requirements(lock), [("base", "1.0"), ("conditional", "2.0")])
+        for invalid in (b"", b"base>=1.0", b"base==1.*", b"base[extra]==1.0",
+                        b"base @ https://example.invalid/base.whl", b'base==1 ; unknown_marker == "x"',
+                        b"base==1\nBASE==2", b"not a requirement", b"\xff"):
+            with self.subTest(lock=invalid), self.assertRaises(tool._Blocked) as raised:
+                tool._locked_requirements(invalid)
+            self.assertEqual(raised.exception.code, "runtime_inventory_invalid")
+
+    def test_inactive_platform_dependency_is_not_looked_up_by_inventory(self):
+        from packaging.markers import default_environment
+
+        tool = self.entrypoint()
+        original = tool._distribution
+        def available(name):
+            if name == "colorama":
+                raise AssertionError("inactive Windows dependency must not be queried")
+            return original(name)
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "posix-inventory"
+            stdout = io.StringIO()
+            with patch("packaging.markers.default_environment", return_value=default_environment() | {"sys_platform": "darwin"}), \
+                    patch.object(tool, "_distribution", side_effect=available), \
+                    patch("taskalong.process.run_bounded", side_effect=AssertionError("inventory cannot launch")), \
+                    redirect_stdout(stdout):
+                code = tool.main(qualifier_context()[1] + ["--stage", "inventory", "--evidence-dir", str(destination)])
+            self.assertEqual(code, 0, stdout.getvalue())
+            document = json.loads((destination / "manifest.json").read_bytes())
+            facts = json.loads((destination / "blobs" / (document["inventory_ref"]["sha256"] + ".bin")).read_bytes())["measurements"]
+            self.assertNotIn("colorama", {item["name"] for item in facts["package"]["dependencies"]})
+
+    def test_active_platform_dependency_remains_required_before_helper_effects(self):
+        from packaging.markers import default_environment
+
+        tool = self.entrypoint()
+        original = tool._distribution
+        def missing(name):
+            if name == "colorama":
+                raise tool._Blocked("runtime_dependency_unavailable")
+            return original(name)
+        with tempfile.TemporaryDirectory() as temporary:
+            stdout = io.StringIO()
+            with patch("packaging.markers.default_environment", return_value=default_environment() | {"sys_platform": "win32"}), \
+                    patch.object(tool, "_distribution", side_effect=missing) as distributions, \
+                    patch("taskalong.process.run_bounded", side_effect=AssertionError("no dependency fallback")) as owner, \
+                    redirect_stdout(stdout):
+                code = tool.main(qualifier_context()[1] + ["--stage", "inventory",
+                    "--evidence-dir", str(Path(temporary) / "missing-active-dependency")])
+            self.assertEqual(code, 3)
+            self.assertIn(unittest.mock.call("colorama"), distributions.call_args_list)
+            self.assertEqual(owner.call_count, 0)
+            self.assertEqual(json.loads(stdout.getvalue())["code"], "runtime_dependency_unavailable")
+
     def test_missing_locked_distribution_metadata_is_blocked_before_helper_effects(self):
         import importlib.metadata
         tool = self.entrypoint()

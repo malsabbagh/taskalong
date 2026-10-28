@@ -294,6 +294,39 @@ def _distribution(name):
         raise _Blocked("runtime_dependency_unavailable") from None
 
 
+def _locked_requirements(raw):
+    """Select exact locked pins using the current interpreter's PEP 508 markers."""
+    import re
+
+    try:
+        from packaging.requirements import InvalidRequirement, Requirement
+        from packaging.utils import canonicalize_name
+    except ImportError:
+        raise _Blocked("runtime_dependency_unavailable") from None
+    try:
+        lines = re.sub(r"\\\r?\n", " ", raw.decode()).splitlines()
+        requirements = []
+        seen = set()
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            requirement = Requirement(line.split(" --hash=", 1)[0])
+            pins = list(requirement.specifier)
+            name = canonicalize_name(requirement.name)
+            if (requirement.url or requirement.extras or len(pins) != 1
+                    or pins[0].operator != "==" or "*" in pins[0].version or name in seen):
+                raise _Blocked("runtime_inventory_invalid")
+            seen.add(name)
+            if requirement.marker is None or requirement.marker.evaluate():
+                requirements.append((requirement.name, pins[0].version))
+        if not 1 <= len(seen) <= 32:
+            raise _Blocked("runtime_inventory_invalid")
+        return requirements
+    except (UnicodeError, InvalidRequirement):
+        raise _Blocked("runtime_inventory_invalid") from None
+
+
 def _inventory_measurements(deadline, origin, artifact_inventory=None):
     import hashlib
     import importlib
@@ -379,9 +412,7 @@ def _inventory_measurements(deadline, origin, artifact_inventory=None):
     lock_path = root / "requirements-dev.lock"
     lock_raw = _bounded_input(lock_path, deadline)
     lock = {"sha256": hashlib.sha256(lock_raw).hexdigest(), "size_bytes": len(lock_raw)}
-    requirements = re.findall(r"^([A-Za-z0-9_.-]+)==([^\s]+)", lock_raw.decode(), re.M)
-    if not 1 <= len(requirements) <= 32:
-        raise _Blocked("runtime_inventory_invalid")
+    requirements = _locked_requirements(lock_raw)
     dependencies = []
     for name, expected in requirements:
         if time.monotonic() >= deadline:
