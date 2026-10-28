@@ -25,6 +25,8 @@ def parser():
     p = command("guide"); p.add_argument("name", nargs="?", default="fixture", choices=("fixture", "operations", "contracts", "qualification", "ordered"))
     p = command("register-repository"); p.add_argument("path"); p.add_argument("--workspace-root")
     p = command("register-profile"); p.add_argument("--profile", required=True)
+    p = command("configure-muse"); p.add_argument("--config", required=True)
+    p = command("muse-readiness"); p.add_argument("--profile-id", required=True); p.add_argument("--configuration-digest", required=True)
     p = command("configure-review"); p.add_argument("--config", required=True); p.add_argument("--fixture-response"); p.add_argument("--executable"); p.add_argument("--python-executable")
     p = command("configure-sandbox"); p.add_argument("--executable", required=True)
     p = command("configure-publication"); p.add_argument("--gh", required=True); p.add_argument("--git-remote", required=True)
@@ -84,6 +86,8 @@ def main(argv=None):
             mutation = {"operation_key": getattr(args, "key", None), "expected_revision": getattr(args, "expected_revision", None)}
             if cmd == "register-repository": result = service.register_repository(args.path, args.workspace_root)
             elif cmd == "register-profile": result = service.register_profile(load_json(args.profile))
+            elif cmd == "configure-muse": result = service.configure_muse(load_json(args.config))
+            elif cmd == "muse-readiness": result = service.muse_readiness(args.profile_id, args.configuration_digest)
             elif cmd == "configure-review": result = service.configure_review(args.config, fixture_response=args.fixture_response, executable=args.executable, python_executable=args.python_executable)
             elif cmd == "configure-sandbox": result = service.configure_command_sandbox(args.executable)
             elif cmd == "configure-publication": result = service.configure_publication(args.gh, args.git_remote)

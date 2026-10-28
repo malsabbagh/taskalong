@@ -38,6 +38,15 @@ class RunService:
     def register_profile(self, profile):
         return self._workflow.register_profile(profile)
 
+    def configure_muse(self, configuration):
+        """Register production intent only; never qualify or launch Muse."""
+        from .muse_production import configure
+        return configure(self._store, configuration)
+
+    def muse_readiness(self, profile_id, configuration_digest):
+        from .muse_production import readiness
+        return readiness(self._store, profile_id, configuration_digest)
+
     def configure_muse_capture(self, configuration):
         """Trusted original synthetic Muse registration, not a live capability grant."""
         from .muse_handoff import configure

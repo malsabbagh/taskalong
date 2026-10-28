@@ -315,6 +315,10 @@ include tests/test_artifact_import.py
 include tests/test_artifact_io.py
 include tests/test_artifact_store.py
 include tests/test_steps.py
-
 include tools/portable_smoke.py
 include tools/qualify_portable.py
+include src/taskalong/muse_production.py
+include src/taskalong/resources/schemas/v2.11/task-spec.schema.json
+include src/taskalong/resources/schemas/v2.11/driver-config.schema.json
+include src/taskalong/resources/schemas/v2.11/runtime-profile.schema.json
+include tests/test_muse_production.py

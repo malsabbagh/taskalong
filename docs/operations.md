@@ -444,3 +444,80 @@ and consumed budget; new verification output remains charged. It does not
 resume an interrupted verification claim or repeat the worker. Pending effects,
 unknown worker cessation or changed subjects still refuse. No new stop/restart
 API, scheduler or native-session continuation is introduced.
+
+## Production Muse intent (v2.11, execution blocked)
+
+The additive v2.11 profile, task and driver-configuration contracts describe a
+future production Muse route. They do not install or qualify a driver. V1 Codex
+and v2.9 synthetic Muse retain their existing contracts. SOL can orchestrate the
+public commands below; Muse coding remains unavailable in this slice.
+
+Use `register-profile --profile profile.json` with a v2.11 `runtime_profile`:
+start from the v1 profile fields, set `schema_version` to `2.11`, `adapter` to
+`muse`, `qualification` to `production`, `runtime_version` to
+`1.4.10-R6427.1`, `model` to `wonder-full`, `reasoning_effort` to `high`, and
+`qualification_receipt_ids` to `[]`. Bind a direct, absolute executable path and
+its SHA-256. Symlink paths, missing/nonexecutable files and changed bytes refuse.
+No help command, updater, login or provider is executed during registration.
+The build/model/effort remain requested identity, not runtime observation.
+
+`permission_policy` has exactly `permission_profile` (the intended named Muse
+profile), `policy_sha256`, `instructions_sha256` and `tools_sha256`. The last
+three are SHA-256 identities for reviewed local policy/instruction/tool inputs;
+registration does not discover or load skills, plugins or tools, expose source,
+or establish effective containment. Set `permission_policy_digest` to the
+canonical JSON digest of that object. Other v1 profile fields remain required.
+Use `taskalong.validation.seal_versioned(..., version="2.11")` to normalize and
+seal documents; use the installed schemas for the complete required vocabulary.
+
+Register a `driver_config` with `configure-muse --config configuration.json`.
+Its fields are `kind`, `schema_version`, `digest`, `profile_id`, `profile_digest`,
+`permission_policy_path` (absolute direct regular file) and
+`permission_policy_sha256`. It binds the exact registered profile and local
+policy bytes. Configuration documents are content addressed. A changed profile
+needs a new profile ID; changed configuration needs its newly sealed digest.
+Never put credentials in these documents.
+
+```sh
+taskalong --state-dir "$STATE" --json register-profile --profile profile.json
+taskalong --state-dir "$STATE" --json configure-muse --config configuration.json
+taskalong --state-dir "$STATE" --json muse-readiness --profile-id muse-wonder-high --configuration-digest "$CONFIG_DIGEST"
+taskalong --state-dir "$STATE" --json validate --spec task.json
+taskalong --state-dir "$STATE" --json submit --spec task.json --key muse-intent-1
+```
+
+A v2.11 task retains the v1 goal, scope, criteria, independent checks, registered
+repository/base, review and permission fields. Its execution adapter is `muse`
+and adds `configuration_digest` alongside `profile_id` and `profile_digest`.
+Qualification is production, publication is null, and effects are limited to
+execute/verify/commit_candidate. Budgets allow one attempt, at most 60 active
+seconds and 1 MiB output, with `max_model_steps: 1`. Hard cost/token requests are
+intent only and cannot be enforced by this slice. No run is created.
+
+`muse-readiness` exits zero when the registered identities match, with
+`production_dispatch_allowed: false` and `acceptance_allowed: false`. This is a
+successful observation of blocked readiness. `validate` exits zero for a valid,
+bound intent and embeds that readiness report. `submit` exits 3 with
+`muse_runtime_unqualified`, `not_sent`, before allocating a run, worktree,
+authority, lease or attempt. Unknown/malformed documents exit 2. Stale executable
+or policy identities exit 3. No run ID exists for start/status/recovery commands.
+
+The proposed closed argv projection fixes `wonder-full`, `--reasoning-effort
+high`, one model step, untrusted approval, proxy-only network and disabled
+request-user-input. It is pure data, not a launcher. Model steps do not bound
+judge, observer or subagent inference. Hash matching does not qualify executable
+closure, account/model routing, effective policy or process lifetime.
+
+Production intent is stored under separate immutable `muse-production-*`
+settings. The database remains format 11; no migration or new legacy history
+rows are required. Existing store migration tests remain applicable. Older
+readers ignore the new settings and reject v2.11 rather than treat it as v1 or a
+synthetic execution. No production registration enters the legacy profiles table.
+
+Remaining gates are effective instruction/tool/source isolation, actual runtime
+model/effort evidence, bounded inference, owned process/descendant cessation,
+durable worker output and interrupted-run recovery, and real independent review.
+On macOS the existing native-fork limitation and experimental foreground unknown
+cessation remain blockers. Local control tests are not Muse qualification. A
+separately authorized TaskAlong-owned real canary must precede the protected
+RED-to-GREEN defect journey. Track these under existing issues 12 and 30.
