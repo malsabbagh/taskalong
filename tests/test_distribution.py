@@ -64,7 +64,7 @@ class QualificationShardTests(unittest.TestCase):
                 'state': 'blocked' if core else 'draft_published', 'qualification': 'synthetic',
                 'review': 'missing-blocks' if core else 'released-fixture-full-diff',
                 'publication': 'review-blocked' if core else 'fixture-lost-response-reconciled-one-create',
-                'python': python + '.9', 'platform': 'Linux' if system.startswith('ubuntu') else 'Darwin',
+                'python': '3.14.10' if python == '3.14' else python + '.9', 'platform': 'Linux' if system.startswith('ubuntu') else 'Darwin',
                 'machine': 'synthetic', 'package_version': '0.1.0a1', 'attempts': 1, 'events': 2,
                 'source_import': False, 'real_sandbox_claim': False,
                 'installed_behavior_tests': 0 if core else len(ids), 'skipped_platform_cases': [],
@@ -120,6 +120,41 @@ class QualificationShardTests(unittest.TestCase):
                     phase[stream]['file'] = f'diagnostics/{name}.{stream}'
         return binding, producer, receipts
 
+    def test_full_cli_gate_requires_valid_windows_receipt_after_posix_results(self):
+        q = self.shards
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            for system, python in q.PROFILES:
+                binding, producer, receipts = self.format3_fixture(system, python)
+                self.write_lanes(root, binding, producer, receipts, format_version=3)
+            argv = ['qualification_shards', 'aggregate', '--format-version', '3', '--directory', str(root)]
+            with mock.patch.object(q, 'source_binding', return_value=binding), \
+                    mock.patch.object(sys, 'argv', argv), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    q.main()
+            PortableReceiptTests.setUpClass()
+            portable = PortableReceiptTests.portable
+            receipt = PortableReceiptTests().receipt()
+            receipt['binding'] = binding
+            receipt_path = root.parent / (root.name + '-windows.json')
+            try:
+                receipt_path.write_text(json.dumps(receipt))
+                output = io.StringIO()
+                with mock.patch.object(q, 'source_binding', return_value=binding), \
+                        mock.patch.dict(sys.modules, {'qualify_portable': portable}), \
+                        mock.patch.object(sys, 'argv', argv + ['--portable-receipt', str(receipt_path)]), redirect_stdout(output):
+                    q.main()
+                self.assertEqual(json.loads(output.getvalue())['windows_portable']['tests_per_artifact'], 8)
+                receipt['binding'] = dict(binding, run_attempt='999')
+                receipt_path.write_text(json.dumps(receipt))
+                with mock.patch.object(q, 'source_binding', return_value=binding), \
+                        mock.patch.dict(sys.modules, {'qualify_portable': portable}), \
+                        mock.patch.object(sys, 'argv', argv + ['--portable-receipt', str(receipt_path)]):
+                    with self.assertRaises(ValueError):
+                        q.main()
+            finally:
+                receipt_path.unlink(missing_ok=True)
+
     def test_format3_envelope2_requires_uniform_protocol_and_all_four_phases(self):
         q = self.shards
         binding, producer, receipts = self.format3_fixture()
@@ -160,7 +195,7 @@ class QualificationShardTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     q.validate_receipt(value, producer, 'wheel', format_version=3)
 
-    def test_format3_full_matrix_requires_sixteen_envelope2_results(self):
+    def test_format3_full_matrix_requires_four_envelope2_results(self):
         q = self.shards
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
@@ -168,8 +203,8 @@ class QualificationShardTests(unittest.TestCase):
                 binding, producer, receipts = self.format3_fixture(system, python)
                 self.write_lanes(root, binding, producer, receipts, format_version=3)
             result = q.aggregate(root, binding, format_version=3)
-            self.assertEqual(result['shards'], 16)
-            self.assertEqual(len(result['profiles']), 8)
+            self.assertEqual(result['shards'], 4)
+            self.assertEqual(len(result['profiles']), 2)
             self.assertEqual(result['qualification_format_version'], 3)
 
     def test_format3_rejects_mixed_lane_versions_even_with_valid_individual_envelopes(self):
@@ -187,7 +222,7 @@ class QualificationShardTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 q.aggregate(root, binding, profile, format_version=3)
 
-    def test_complete_matrix_requires_all_sixteen_shards(self):
+    def test_complete_matrix_requires_all_four_shards(self):
         q = self.shards
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
@@ -196,8 +231,8 @@ class QualificationShardTests(unittest.TestCase):
                 self.write_lanes(root, binding, producer, receipts)
             result = q.aggregate(root, binding)
             self.assertTrue(result['ok'])
-            self.assertEqual(result['shards'], 16)
-            self.assertEqual(len(result['profiles']), 8)
+            self.assertEqual(result['shards'], 4)
+            self.assertEqual(len(result['profiles']), 2)
             for directory in root.iterdir():
                 if directory.is_dir():
                     (directory / 'shard.json').unlink()
@@ -812,7 +847,10 @@ class DistributionTests(unittest.TestCase):
             (dist / 'taskalong-0.1.0a1.tar.gz').write_bytes(b'synthetic sdist bytes')
             profile = 'macos-15' if sys.platform == 'darwin' else 'ubuntu-24.04'
             def bundle(operation, local=None):
-                return subprocess.run([sys.executable, str(tool), operation, '--os-profile', profile,
+                return subprocess.run([sys.executable, '-c',
+                    "import platform,runpy,sys; platform.python_version=lambda: '3.14.10'; "
+                    "tool=sys.argv.pop(1); runpy.run_path(tool, run_name='__main__')",
+                    str(tool), operation, '--os-profile', profile,
                     '--python-profile', '.'.join(map(str, sys.version_info[:2]))], cwd=root, env=local or env,
                     capture_output=True, text=True, timeout=5)
             self.assertEqual(bundle('write').returncode, 0)
@@ -1075,3 +1113,73 @@ class DistributionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PortableReceiptTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with mock.patch.dict(sys.modules, {
+                'qualification_bundle': QualificationShardTests.load_tool('qualification_bundle'),
+                'portable_smoke': QualificationShardTests.load_tool('portable_smoke')}):
+            cls.portable = QualificationShardTests.load_tool('qualify_portable')
+
+    def receipt(self):
+        row = {'test_ids': list(self.portable.TEST_NAMES), 'passed': 8, 'skipped': [],
+               'python': '3.14.10', 'prefix': 'C:/scratch/venv',
+               'installed_origin': 'C:/scratch/venv/Lib/site-packages/taskalong/__init__.py'}
+        return {'kind': 'windows_portable', 'format_version': 1, 'ok': True,
+                'binding': {'run_attempt': '2', 'source_commit': 'a' * 40},
+                'python': '3.14.10', 'platform': 'Windows',
+                'scope': 'stateless-installed-contracts-only',
+                'artifacts': {'wheel': 'a' * 64, 'sdist': 'b' * 64},
+                'results': {'wheel': copy.deepcopy(row), 'sdist': copy.deepcopy(row)},
+                'elapsed_seconds': 20}
+
+    def test_portable_closed_receipt_rejects_identity_inventory_and_origin_faults(self):
+        good = self.receipt()
+        binding = copy.deepcopy(good['binding'])
+        self.assertEqual(self.portable.validate_receipt(good, binding)['tests_per_artifact'], 8)
+        mutations = [
+            lambda v: v.update(format_version=True),
+            lambda v: v.update(ok=False),
+            lambda v: v.update(platform='Linux'),
+            lambda v: v.update(python='3.14.6'),
+            lambda v: v.update(elapsed_seconds=float('nan')),
+            lambda v: v.update(elapsed_seconds=901),
+            lambda v: v.update(extra=True),
+            lambda v: v['binding'].update(run_attempt='1'),
+            lambda v: v['binding'].update(source_commit='b' * 40),
+            lambda v: v['artifacts'].pop('sdist'),
+            lambda v: v['artifacts'].update(wheel='bad'),
+            lambda v: v['results'].pop('sdist'),
+            lambda v: v['results']['wheel']['test_ids'].pop(),
+            lambda v: v['results']['wheel'].update(passed=True),
+            lambda v: v['results']['wheel'].update(skipped=['schemas']),
+            lambda v: v['results']['wheel'].update(installed_origin='C:/checkout/src/taskalong/__init__.py'),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutations.index(mutation)):
+                value = copy.deepcopy(good)
+                mutation(value)
+                with self.assertRaises(ValueError):
+                    self.portable.validate_receipt(value, binding)
+
+    def test_producer_refuses_wrong_patch_or_free_threaded_interpreter(self):
+        bundle = QualificationShardTests.load_tool('qualification_bundle')
+        for version, free_threaded in [('3.14.6', 0), ('3.14.10', 1)]:
+            with self.subTest(version=version, free_threaded=free_threaded), \
+                    mock.patch.dict(bundle.os.environ, {'GITHUB_SHA': 'a' * 40}), \
+                    mock.patch.object(bundle.subprocess, 'check_output', return_value='a' * 40), \
+                    mock.patch.object(bundle.platform, 'python_version_tuple', return_value=('3', '14', '10')), \
+                    mock.patch.object(bundle.platform, 'python_version', return_value=version), \
+                    mock.patch.object(bundle.sysconfig, 'get_config_var', return_value=free_threaded):
+                with self.assertRaisesRegex(ValueError, 'pinned standard CPython'):
+                    bundle.identity(Path('/unused'), 'ubuntu-24.04', '3.14')
+
+    def test_windows_driver_refuses_unqualified_native_interpreter_before_build(self):
+        with mock.patch.object(self.portable.platform, 'system', return_value='Linux'), \
+                mock.patch.object(sys, 'argv', ['qualify_portable', '--output', 'unused.json']), \
+                mock.patch.object(self.portable.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'pinned native Windows'):
+                self.portable.main()
+            run.assert_not_called()

@@ -10,13 +10,12 @@ from pathlib import Path
 import subprocess
 import unittest
 
-from qualification_bundle import hashes
+from qualification_bundle import hashes, CI_PYTHON_PROFILE, CI_PYTHON_VERSION
 from qualify_installed import (PHASE_SECONDS, QUALIFICATION_SECONDS, REVIEW_SHA256,
                                batch_count, is_sha, json_digest, make_schedule,
                                validate_journey, validate_test_accounting)
 
-PROFILES = [(system, python) for system in ('ubuntu-24.04', 'macos-15')
-            for python in ('3.11', '3.12', '3.13', '3.14')]
+PROFILES = [(system, CI_PYTHON_PROFILE) for system in ('ubuntu-24.04', 'macos-15')]
 LANES = {'wheel-core': ('wheel', 'core-only'), 'sdist': ('sdist',)}
 ARTIFACTS = {'wheel': 'dist/taskalong-0.1.0a1-py3-none-any.whl',
              'sdist': 'dist/taskalong-0.1.0a1.tar.gz'}
@@ -117,6 +116,7 @@ def validate_receipt(value: dict, producer: dict, mode: str, *, format_version: 
     if any(type(value[k]) is not type(v) or value[k] != v for k, v in fixed.items()):
         raise ValueError('installed receipt identity or limits mismatch')
     if (not value['python'].startswith(producer['python_profile'] + '.')
+            or (producer['python_profile'] == CI_PYTHON_PROFILE and value['python'] != CI_PYTHON_VERSION)
             or not seconds(value['elapsed_seconds'], QUALIFICATION_SECONDS)
             or value['qualification_inputs_sha256'] != harness_digest(producer)
             or not is_sha(value['package_snapshot_sha256'])):
@@ -254,6 +254,7 @@ def main():
     parser.add_argument('--directory', type=Path, required=True)
     parser.add_argument('--os-profile', choices=sorted({s for s, _ in PROFILES}))
     parser.add_argument('--python-profile', choices=sorted({p for _, p in PROFILES}))
+    parser.add_argument('--portable-receipt', type=Path)
     parser.add_argument('--lane', choices=LANES)
     parser.add_argument('--format-version', type=int, choices=(2, 3), default=2,
                         help='Explicit qualification format expected by seal/aggregate')
@@ -276,6 +277,11 @@ def main():
             parser.error('aggregate requires either both profile arguments or neither')
         profiles = [(args.os_profile, args.python_profile)] if args.os_profile else PROFILES
         result = aggregate(args.directory, binding, profiles, format_version=args.format_version)
+        if not args.os_profile:
+            if args.portable_receipt is None:
+                parser.error('full qualification requires the Windows portable receipt')
+            from qualify_portable import validate_receipt
+            result['windows_portable'] = validate_receipt(read_json(args.portable_receipt), binding)
     print(json.dumps(result, sort_keys=True))
 
 

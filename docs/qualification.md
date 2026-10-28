@@ -86,8 +86,8 @@ unchanged. The earlier combined-child 600-second timeout remains incomplete
 qualification with its precise inner position unknown. Partitioning does not
 establish its cause or repair a product defect.
 
-Hosted qualification has eight producer jobs and eight installed jobs per
-automatic push/PR event, each with its existing 30-minute job ceiling. Producers
+Hosted qualification has two producer jobs and four installed lanes on PRs,
+main pushes and tags, each with its existing 30-minute job ceiling. Producers
 build/audit artifacts and run the ordinary suite and documentation checks.
 Installed jobs start only after producer success and download the immutable
 matching OS/Python bundle from that same run and attempt. The bundle binds event,
@@ -95,8 +95,9 @@ commit/tree, logical producer job/profile, all tracked source hashes and exact
 wheel/sdist hashes; consumers verify those identities before fresh wheel, rebuilt
 sdist and core-only qualification. Retained workflow metadata supplies numeric
 job/artifact IDs for acceptance. A failed/skipped dependent lane is unqualified;
-all sixteen jobs in both events require actual success. No runner, billing,
-permission, credential or repository-rule change follows from this split.
+all six POSIX jobs and the Windows portable job require actual success before
+the final gate validates their receipts. Feature branch pushes do not duplicate
+PR qualification. Permissions and repository rules are unchanged.
 
 The existing Codex CLI target is 0.163.0. Prior controlled-responder probes did
 not establish complete descendant cessation or effective instruction/tool
@@ -123,7 +124,8 @@ transcripts. Its decoder is unregistered and reports untrusted protocol data;
 no provider identity, billing proof, native-resume or cessation receipt follows.
 
 The intended CI matrix is standard GitHub-hosted Ubuntu 24.04 x64 and macOS 15
-arm64, Python 3.11–3.14. A configured workflow is not evidence that those cells
+arm64 on CPython 3.14.10, plus Windows 2022 portable package contracts on that
+same interpreter. A configured workflow is not evidence that those cells
 passed; each requires its own exact-head results. Repository visibility does not
 override runtime preflight or qualify an execution mode.
 
@@ -317,3 +319,25 @@ it. The user is the final merge gate for that trial PR. Optional multi-provider
 features are not prerequisites for a narrower safe entry point. Milestone
 completion alone is not this acceptance evidence. The October 24–25, 2026
 America/Toronto target is a target, never permission to waive these gates.
+
+
+## CI coverage and Windows boundary
+
+Core qualification runs eight jobs on standard CPython 3.14.10: two Ubuntu/macOS
+source producers, four installed wheel/core-only/sdist lanes, one Windows portable
+package job, and one Complete qualification gate. Feature branch pushes do not run
+Core; PRs, main pushes and tags do. The final gate rejects missing or failed jobs
+and validates the complete same-run/attempt artifact receipts. Pip download caches
+never replace hash-locked installation or qualification evidence.
+
+Python 3.11–3.13 remain in the declared install range but no longer receive CI
+qualification on every change. No receipt for an untested version is implied.
+
+The Windows job qualifies separately installed wheels and wheels rebuilt from the
+sdist, outside the source tree. Its eight explicit contracts cover CLI entrypoints,
+guides/resources, invalid CLI envelopes, canonical JSON, schemas, literal relative
+paths, installed import origins, and refusal of unsupported process supervision.
+Unexpected skips or failures fail qualification. It does not qualify a Windows
+state store, migration, workspace lifecycle, task execution or live agents.
+Those features still require POSIX locking, ownership and process supervision;
+fixture or portable smoke results do not establish Windows production support.
