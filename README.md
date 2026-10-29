@@ -14,6 +14,8 @@ ReviewSensei results govern acceptance; worker output cannot grant authority.
 
 - Synthetic task, interruption/recovery, exact-session protocol, cancellation,
   verification and fixture publication journeys.
+- Offline production Muse input preparation with immutable measurements and
+  drift detection; live Muse dispatch remains blocked.
 - Installed read-only guides: `taskalong guide`, `taskalong guide operations`,
   `taskalong guide contracts` and `taskalong guide qualification`.
 - Explicit Codex, Claude, Cursor and Antigravity synthetic driver projections sharing one supervisor,

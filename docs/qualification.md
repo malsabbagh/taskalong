@@ -345,3 +345,21 @@ Unexpected skips or failures fail qualification. It does not qualify a Windows
 state store, migration, workspace lifecycle, task execution or live agents.
 Those features still require POSIX locking, ownership and process supervision;
 fixture or portable smoke results do not establish Windows production support.
+
+
+## Production Muse preparation evidence
+
+The preparation tests use original disposable inputs and a sentinel executable,
+never actual Muse. They exercise public CLI/API measurement, immutable retention,
+reopen/drift refusal, malformed inputs and a killed pre-commit transaction. These
+are local preparation consistency checks. They do not qualify the sentinel as
+Muse, measure effective instructions/tools/dependencies, establish account/endpoint
+or included allowance, bound combined observer/judge/subagent inference, or prove
+complete descendant cessation or remote settlement. No real execution is enabled.
+
+The wheel carries this module and canonical guides under the exact distribution
+inventory. The sdist and installed qualification harness also carry its regression
+tests. Existing eight CI
+lanes, full behavior tests and the separate Windows portable boundary remain
+required; local source results never substitute for fresh hosted/platform receipts.
+See [the proposed preparation ADR](adr/0016-muse-production-preparation.md).

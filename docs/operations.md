@@ -521,3 +521,45 @@ On macOS the existing native-fork limitation and experimental foreground unknown
 cessation remain blockers. Local control tests are not Muse qualification. A
 separately authorized TaskAlong-owned real canary must precede the protected
 RED-to-GREEN defect journey. Track these under existing issues 12 and 30.
+
+
+## Production Muse preparation
+
+After registering the v2.11 intent above, select reviewed local instruction and
+tool files and any declared dependencies in a bounded JSON input document:
+
+```json
+{
+  "instructions_path": "/reviewed/inputs/instructions.txt",
+  "tools_path": "/reviewed/inputs/tools.json",
+  "dependency_paths": []
+}
+```
+
+The paths must be canonical absolute direct files. The instruction/tool hashes
+must match the profile; preparation never discovers effective Muse inputs.
+Do not put credentials or credential paths in this document.
+
+```sh
+taskalong --state-dir "$STATE" --json prepare-muse --spec task.json --inputs inputs.json
+taskalong --state-dir "$STATE" --json muse-preparation "$PREPARATION_DIGEST"
+```
+
+The first command returns `preparation_digest`; use that exact digest for the
+second command. Both exit zero only for matching measured inputs and return
+`production_dispatch_allowed: false` and `acceptance_allowed: false`. No Muse,
+updater, account or provider command runs. Read-only local Git inspection does
+run to bind the clean registered repository and full immutable base tree.
+The argv template uses symbolic prospective workspace/prompt bindings; no prompt
+or executable attempt exists. The declared file list is not complete runtime
+closure, and requested budgets are not enforcement of total inference usage.
+
+A stale retained assessment exits 3 with `muse_preparation_stale`; changed bound
+executable/policy/instruction/tool bytes have their specific changed-identity
+codes. Unsafe/missing/oversized inputs, corrupt records and unknown digests also
+refuse before dispatch. No retained record is silently rewritten. Preserve the
+original, review changed inputs and prepare a distinct subject. A clean move of
+HEAD alone does not change a preparation pinned to an earlier existing base.
+The [contract](contracts.md#production-muse-preparation) lists measurement bounds.
+This is pre-dispatch preparation only; the production driver, durable execution
+and real interrupted-run recovery remain unimplemented and unqualified.

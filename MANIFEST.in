@@ -322,3 +322,7 @@ include src/taskalong/resources/schemas/v2.11/task-spec.schema.json
 include src/taskalong/resources/schemas/v2.11/driver-config.schema.json
 include src/taskalong/resources/schemas/v2.11/runtime-profile.schema.json
 include tests/test_muse_production.py
+
+include src/taskalong/muse_preparation.py
+include tests/test_muse_preparation.py
+include docs/adr/0016-muse-production-preparation.md

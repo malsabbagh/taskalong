@@ -25,7 +25,13 @@ def _error(code, message):
 
 
 def _fingerprint(value, *, executable=False):
+    return _observe_file(value, executable=executable)["sha256"]
+
+
+def _observe_file(value, *, executable=False, max_bytes=None):
     """Bounded local identity observation, not executable-closure qualification."""
+    if type(value) is not str or not 1 <= len(value) <= 4096 or "\x00" in value:
+        raise _error("muse_path_unsupported", "Use a canonical absolute local path.")
     path = Path(value)
     if not path.is_absolute() or str(path) != value or ".." in path.parts:
         raise _error("muse_path_unsupported", "Use a canonical absolute local path.")
@@ -37,7 +43,7 @@ def _fingerprint(value, *, executable=False):
             before = os.fstat(stream.fileno())
             if not stat.S_ISREG(before.st_mode) or (executable and not os.access(path, os.X_OK)):
                 raise _error("muse_file_unsupported", "A regular readable file with the required mode is needed.")
-            limit = 512 * 1024 * 1024 if executable else 1048576
+            limit = max_bytes if max_bytes is not None else (512 * 1024 * 1024 if executable else 1048576)
             if before.st_size > limit:
                 raise _error("muse_file_unsupported", "The identity input exceeds its bounded size.")
             sha = hashlib.sha256()
@@ -53,7 +59,8 @@ def _fingerprint(value, *, executable=False):
         identity = lambda st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
         if remaining == 0 or identity(before) != identity(after) or identity(after) != identity(current):
             raise _error("muse_file_changed", "The identity input changed during observation.")
-        return sha.hexdigest()
+        return {"path": value, "sha256": sha.hexdigest(), "bytes": after.st_size,
+                "mode": stat.S_IMODE(after.st_mode)}
     except OSError as exc:
         raise _error("muse_file_unavailable", "The bound local file cannot be observed.") from exc
 

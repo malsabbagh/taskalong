@@ -47,6 +47,15 @@ class RunService:
         from .muse_production import readiness
         return readiness(self._store, profile_id, configuration_digest)
 
+    def prepare_muse(self, spec, *, inputs):
+        """Retain measured production inputs without granting runtime authority."""
+        from .muse_preparation import prepare
+        return prepare(self._store, spec, inputs=inputs)
+
+    def muse_preparation(self, preparation_digest):
+        from .muse_preparation import observe
+        return observe(self._store, preparation_digest)
+
     def configure_muse_capture(self, configuration):
         """Trusted original synthetic Muse registration, not a live capability grant."""
         from .muse_handoff import configure
