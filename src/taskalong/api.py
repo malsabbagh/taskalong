@@ -104,6 +104,10 @@ class RunService:
     def start(self, run_id, *, operation_key, expected_revision, authority_id=None):
         return self._workflow.start(run_id, operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id)
 
+    def muse_exposure(self):
+        from .muse_exposure import view
+        return view(self._store)
+
     def inspect(self, run_id):
         run = self._store.run(run_id)
         if run["schema_version"] in {"2.7", "2.10"}:

@@ -342,3 +342,11 @@ include src/taskalong/resources/sql/012-muse-production-lifecycle.sql
 include tests/fixtures/legacy_store_v11.py
 include tests/fixtures/pre-muse-lifecycle-resources.json
 include tests/test_muse_lifecycle.py
+include src/taskalong/muse_exposure.py
+include src/taskalong/resources/sql/013-muse-exposure.sql
+include docs/adr/0018-muse-exposure-and-shutdown.md
+include docs/muse-shutdown.md
+include docs/proposals/taskalong-muse-model-free.service
+include tests/fixtures/legacy_store_v12.py
+include tests/fixtures/muse_owned_tree.py
+include tests/test_muse_exposure.py

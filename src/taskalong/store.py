@@ -139,10 +139,10 @@ class Store:
         self.db.execute("PRAGMA busy_timeout=5000")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         tables = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) or (version == 0 and tables):
+        if version not in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13) or (version == 0 and tables):
             self.db.close()
             raise TaskAlongError("unsupported_store_version", "Store format is unknown; preserve it and use a compatible runtime.", exit_code=70)
-        if version in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
+        if version in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
             try:
                 current_metadata = dict(self.db.execute("SELECT key,value FROM metadata"))
                 if current_metadata.get("format_version") != str(version):
@@ -154,7 +154,7 @@ class Store:
             if current_metadata.get("application") != "taskalong":
                 self.db.close()
                 raise TaskAlongError("unsupported_store_application", "This is not a tagged TaskAlong store; preserve it and use its owning application.", exit_code=70)
-            if version in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
+            if version in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
                 self.store_uuid = str(uuid.UUID(current_metadata["store_uuid"]))
                 from .maintenance import validate_history_schema
                 validate_history_schema(self)

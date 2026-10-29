@@ -414,6 +414,9 @@ class Workflow:
             current["budget_consumed"]["attempts"] += 1
             current["budget_consumed"]["active_seconds"] += budget["attempt_seconds"]
             db.execute("INSERT INTO attempts VALUES (?,?,?,?,?)", (attempt_id, run_id, attempt["ordinal"], 1, encode(attempt)))
+            if spec["schema_version"] == "2.12":
+                from .muse_exposure import reserve as reserve_exposure
+                reserve_exposure(self.store, db, attempt)
             effect = _effect(db, current, "workspace.create" if mode == "start" else "workspace.reacquire", operation_key, workspace_intent)
             attempt["workspace_effect_id"] = effect["effect_id"]
             db.execute("UPDATE attempts SET document=? WHERE attempt_id=?", (encode(attempt), attempt_id))
@@ -1218,6 +1221,9 @@ def drive_run(state_dir, run_id, attempt_id):
                 item = store.detail("attempts", attempt_id)
                 item.update(status="running", spawn_phase="spawned", process_receipt=receipt)
                 db.execute("UPDATE attempts SET document=? WHERE attempt_id=?", (encode(item), attempt_id))
+                if spec["schema_version"] == "2.12":
+                    from .muse_exposure import before_release
+                    before_release(store, db, store.detail("attempts", attempt_id), receipt)
                 if current["state"] != "cancel_pending":
                     current["state"] = "running"
                     current["blockers"] = []
@@ -1420,6 +1426,9 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
             item[capture.name + "_raw_capture"] = result.get(capture.name + "_raw_capture")
             item[capture.name + "_capture"] = association
         db.execute("UPDATE attempts SET active=?,document=? WHERE attempt_id=?", (0 if confirmed else 1, encode(item), attempt_id))
+        if store.spec(current)["schema_version"] == "2.12":
+            from .muse_exposure import finish as finish_exposure
+            finish_exposure(store, db, item, process, local_confirmed=confirmed, not_dispatched=not_dispatched)
         current["attempts"][-1]["status"] = result["state"]
         if confirmed:
             current["active_attempt_id"] = None

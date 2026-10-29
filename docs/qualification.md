@@ -381,3 +381,14 @@ retroactively prove complete descendant cessation. Never retry or settle those
 campaigns from a new qualification run. Source build tests need authorized write
 access to their checkout for setuptools metadata; a separate writable rerun does
 not relabel an earlier failed full-suite receipt.
+
+## Muse local shutdown and retained exposure
+
+Store13 adds a backed-up append-only local exposure ledger for production2.12.
+The read-only `muse-exposure` command separates local cessation from unknown
+remote usage and cannot authorize dispatch or settlement. A possible release
+holds later Muse attempts across destination aliases within that Store. This is
+not an account-wide spending cap. No absolute vendor cessation promise is
+required; actual whole-process containment and account/checker observations are
+still missing here. See the [execution plan](muse-shutdown.md) for exact controls,
+qualification limits and the Linux host/security action awaiting approval.

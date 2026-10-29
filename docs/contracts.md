@@ -699,3 +699,14 @@ original captures, exact owned process receipt and frozen workspace scope.
 Observed session/model/usage stay unknown. Shared mechanics do not grant trust.
 Current production admission always refuses at the closed native-runtime gate.
 See the [ADR](adr/0017-muse-production-lifecycle.md) for unsupported boundaries.
+
+## Muse local shutdown and retained exposure
+
+Store13 adds a backed-up append-only local exposure ledger for production2.12.
+The read-only `muse-exposure` command separates local cessation from unknown
+remote usage and cannot authorize dispatch or settlement. A possible release
+holds later Muse attempts across destination aliases within that Store. This is
+not an account-wide spending cap. No absolute vendor cessation promise is
+required; actual whole-process containment and account/checker observations are
+still missing here. See the [execution plan](muse-shutdown.md) for exact controls,
+qualification limits and the Linux host/security action awaiting approval.

@@ -1,0 +1,49 @@
+# PROPOSAL ONLY. Do not apply without explicit host/security approval.
+# Root-owned /opt/taskalong-canary/owned_tree.py; existing /usr/bin/python3.
+# Use a fresh unique unit name for every case; retain manager InvocationID.
+[Unit]
+Description=TaskAlong model-free owned process containment qualification
+
+[Service]
+Type=exec
+ExitType=cgroup
+ExecStart=/usr/bin/python3 -I -S /opt/taskalong-canary/owned_tree.py fork-detach
+Restart=no
+RemainAfterExit=no
+RuntimeMaxSec=5s
+RuntimeRandomizedExtraSec=0
+TimeoutStartSec=5s
+TimeoutStopSec=2s
+TimeoutStopFailureMode=kill
+KillMode=control-group
+KillSignal=SIGINT
+SendSIGKILL=yes
+FinalKillSignal=SIGKILL
+NotifyAccess=none
+Delegate=no
+DynamicUser=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+ProtectProc=invisible
+ProcSubset=pid
+InaccessiblePaths=/home /root /run /var/lib /var/log /sys/fs/cgroup
+WorkingDirectory=/tmp
+UMask=0077
+LimitCORE=0
+TasksMax=16
+MemoryMax=256M
+StandardOutput=journal
+StandardError=journal

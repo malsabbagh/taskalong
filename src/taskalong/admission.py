@@ -29,7 +29,7 @@ def _refuse(code="execution_projection_unsupported"):
 
 
 def _require(store):
-    if store.format_version not in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
+    if store.format_version not in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
         _refuse("store_upgrade_required")
 
 
@@ -140,7 +140,7 @@ def registered_profile(store, binding_digest):
 
 
 def registered_driver_config(store, binding_digest):
-    if store.format_version not in (4, 5, 6, 7, 8, 9, 10, 11, 12):
+    if store.format_version not in (4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
         _refuse("store_upgrade_required")
     registration = _registration(store, binding_digest)
     version = registration.get("schema_version")

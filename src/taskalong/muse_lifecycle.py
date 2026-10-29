@@ -46,7 +46,7 @@ def _refuse(code="muse_handoff_invalid"):
 
 
 def _require(store):
-    if store.format_version != 12:
+    if store.format_version not in (12, 13):
         _refuse("store_upgrade_required")
 
 
@@ -162,6 +162,8 @@ def resolve(store, spec, *, mode="start", authority_id=None):
     # No settings flag, supplied receipt, fixture or authority can skip this
     # closed authenticator. It currently refuses before lifecycle allocation.
     muse_runtime.require(subject)
+    if store.format_version != 13:
+        _refuse("store_upgrade_required")
     checker = _checker(store, config)
     sandbox, review = store.setting("command_sandbox"), store.setting("review")
     if (checker["qualification"] != "production" or not sandbox or sandbox.get("qualification") != "production"

@@ -78,7 +78,8 @@ class MuseLifecycleTests(ServiceFixture, unittest.TestCase):
         for _ in range(2):
             value=self.service.validate_task(self.task)
             self.assertTrue(value['valid']);self.assertFalse(value['readiness']['production_dispatch_allowed'])
-            self.assertIn('muse_aggregate_inference_unqualified',value['readiness']['reason_codes'])
+            self.assertFalse(value['readiness']['usage_containment']['aggregate_token_or_cost_cap_enforced'])
+            self.assertFalse(value['readiness']['usage_containment']['absolute_vendor_cessation_guarantee_required'])
             with self.assertRaises(TaskAlongError) as caught:self.service.submit(self.task,operation_key='never-dispatch')
             self.assertEqual(caught.exception.code,'muse_runtime_unqualified')
             self.assertEqual(caught.exception.effect_outcome,'not_sent')
