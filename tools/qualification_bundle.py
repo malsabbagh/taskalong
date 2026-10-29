@@ -9,6 +9,10 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import sysconfig
+
+CI_PYTHON_VERSION = '3.14.10'
+CI_PYTHON_PROFILE = '3.14'
 
 
 def hashes(root: Path, paths: list[str]) -> dict:
@@ -27,6 +31,9 @@ def identity(root: Path, os_profile: str, python_profile: str) -> dict:
         raise ValueError('bundle checkout differs from tested event commit')
     if '.'.join(platform.python_version_tuple()[:2]) != python_profile:
         raise ValueError('bundle interpreter profile mismatch')
+    if (python_profile == CI_PYTHON_PROFILE and
+            (platform.python_version() != CI_PYTHON_VERSION or sysconfig.get_config_var('Py_GIL_DISABLED'))):
+        raise ValueError('bundle interpreter differs from pinned standard CPython')
     if platform.system() != {'macos-15': 'Darwin', 'ubuntu-24.04': 'Linux'}[os_profile]:
         raise ValueError('bundle platform mismatch')
     tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().strip('\0').split('\0')
