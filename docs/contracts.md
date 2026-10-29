@@ -680,3 +680,22 @@ inputs or forged assessment fields refuse without refreshing the original.
 Repetition of unchanged inputs is idempotent. Dependency order is canonical.
 Preparation creates no task/run/attempt, authority, effect, lease, workspace,
 acceptance or migration, and cannot change the unconditional v2.11 submit refusal.
+
+
+## Production Muse lifecycle v2.12
+
+Seven new contracts define production driver configuration, task, canonical
+packet, projection, supervisor handoff and read-only capabilities/result views.
+Format12 is required. The exact driver binds wonder-full/high, one attempt and
+one model step, at most 60 active seconds, explicit policy inputs and an immutable
+non-fixture review provider. It reuses existing authority/effect/workspace ownership.
+All original schemas and v2.11 refusal/preparation remain unchanged.
+
+The canonical packet binds authority, task/run/attempt, configuration, runtime
+subject, base/start content, lease fence and requested budget. Projection binds
+the complete prompt-byte SHA256 separately from semantic packet digests. The
+supervisor handoff binds authoritative prepare/spawn/capture/finish operations,
+original captures, exact owned process receipt and frozen workspace scope.
+Observed session/model/usage stay unknown. Shared mechanics do not grant trust.
+Current production admission always refuses at the closed native-runtime gate.
+See the [ADR](adr/0017-muse-production-lifecycle.md) for unsupported boundaries.

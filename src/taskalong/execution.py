@@ -175,6 +175,9 @@ def read_task_spec(document: dict) -> TaskSpec | TaskSpecV2 | DriverTaskSpec | O
     if document.get("schema_version") == "2.7":
         from .steps import OrderedTaskSpec
         return OrderedTaskSpec.from_dict(document)
+    if document.get("schema_version") == "2.12":
+        from .muse_lifecycle import MuseProductionTask
+        return MuseProductionTask.from_dict(document)
     if document.get("schema_version") == "2.9":
         from .muse_handoff import MuseTaskSpec
         return MuseTaskSpec.from_dict(document)

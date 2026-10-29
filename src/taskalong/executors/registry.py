@@ -10,6 +10,7 @@ from functools import partial
 
 from ..errors import TaskAlongError
 from .base import HarnessDriver
+from .muse_production import MuseProductionDriver, compile_packet as compile_muse_production_packet
 from .muse_fixture import MuseFixtureDriver, compile_packet as compile_muse_packet
 from .codex_cli import CodexCLI
 from .cursor_cli import CursorCLI, compile_packet as compile_cursor_packet, represent as represent_cursor
@@ -90,6 +91,9 @@ def _agy_decoder(packet, config, attempt, limit):
 
 _CODEX = DriverContract(lambda configuration, provider: CodexCLI(configuration), _codex_packet, represent_codex)
 _CONTRACTS = MappingProxyType({
+    ("2.12", "muse-production-plain/1", "driver_config", "2.12"): DriverContract(
+        lambda config, provider: MuseProductionDriver(config, runtime_subject=provider), compile_muse_production_packet, None,
+        supervisor_handoff="muse-production-execution-handoff/1"),
     ("2.9", "muse-plain-fixture/1", "capture_config", "2.9"): DriverContract(
         lambda config, provider: MuseFixtureDriver(config), compile_muse_packet, None,
         supervisor_handoff="muse-execution-handoff/1"),

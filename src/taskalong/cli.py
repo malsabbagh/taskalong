@@ -25,6 +25,7 @@ def parser():
     p = command("guide"); p.add_argument("name", nargs="?", default="fixture", choices=("fixture", "operations", "contracts", "qualification", "ordered"))
     p = command("register-repository"); p.add_argument("path"); p.add_argument("--workspace-root")
     p = command("register-profile"); p.add_argument("--profile", required=True)
+    p = command("configure-muse-driver"); p.add_argument("--config", required=True)
     p = command("configure-muse"); p.add_argument("--config", required=True)
     p = command("muse-readiness"); p.add_argument("--profile-id", required=True); p.add_argument("--configuration-digest", required=True)
     p = command("prepare-muse"); p.add_argument("--spec", required=True); p.add_argument("--inputs", required=True)
@@ -88,6 +89,7 @@ def main(argv=None):
             mutation = {"operation_key": getattr(args, "key", None), "expected_revision": getattr(args, "expected_revision", None)}
             if cmd == "register-repository": result = service.register_repository(args.path, args.workspace_root)
             elif cmd == "register-profile": result = service.register_profile(load_json(args.profile))
+            elif cmd == "configure-muse-driver": result = service.configure_muse_driver(load_json(args.config))
             elif cmd == "configure-muse": result = service.configure_muse(load_json(args.config))
             elif cmd == "muse-readiness": result = service.muse_readiness(args.profile_id, args.configuration_digest)
             elif cmd == "prepare-muse": result = service.prepare_muse(load_json(args.spec), inputs=load_json(args.inputs))

@@ -363,3 +363,21 @@ tests. Existing eight CI
 lanes, full behavior tests and the separate Windows portable boundary remain
 required; local source results never substitute for fresh hosted/platform receipts.
 See [the proposed preparation ADR](adr/0016-muse-production-preparation.md).
+
+
+## Production lifecycle contract evidence
+
+The 2.12 tests use original disposable inputs, pure non-authoritative packet data
+and the closed runtime gate. They never enable a fixture as production or invoke
+Muse. They cover versioned schema/resource preservation, current-input drift,
+preallocation refusal, imported-state start refusal, exact runtime/prompt/authority
+bindings, immutable reviewer routing and the actual format 11 reader's refusal of 12.
+Original 2.9 completion/cancellation/no-replay tests also run on format 12 through
+the shared handoff mechanics. This is contract evidence, not runtime qualification.
+
+Timed-out installed campaigns retain their original uncertainty and synthetic
+state. A current process-list absence or an already settled fixture run cannot
+retroactively prove complete descendant cessation. Never retry or settle those
+campaigns from a new qualification run. Source build tests need authorized write
+access to their checkout for setuptools metadata; a separate writable rerun does
+not relabel an earlier failed full-suite receipt.

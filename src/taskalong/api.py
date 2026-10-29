@@ -56,6 +56,10 @@ class RunService:
         from .muse_preparation import observe
         return observe(self._store, preparation_digest)
 
+    def configure_muse_driver(self, configuration):
+        from .muse_lifecycle import configure
+        return configure(self._store, configuration)
+
     def configure_muse_capture(self, configuration):
         """Trusted original synthetic Muse registration, not a live capability grant."""
         from .muse_handoff import configure
@@ -114,6 +118,9 @@ class RunService:
             raise TaskAlongError("execution_mode_unsupported", "Select an explicit supported observation mode.")
         run = self._store.run(run_id)
         spec = self._store.spec(run)
+        if spec["schema_version"] == "2.12":
+            from .muse_lifecycle import capabilities_view
+            return capabilities_view(self._store, run, spec, mode)
         if spec["schema_version"] == "2.9":
             from .muse_handoff import capabilities_view
             return capabilities_view(self._store, run, spec, mode)
@@ -142,6 +149,9 @@ class RunService:
         if run["schema_version"] in {"2.7", "2.10"}:
             from .steps import view
             return view(self._store, run)
+        if self._store.spec(run)["schema_version"] == "2.12":
+            from .muse_lifecycle import result_view
+            return result_view(self._store, run)
         if self._store.spec(run)["schema_version"] == "2.9":
             from .muse_handoff import result_view
             return result_view(self._store, run)

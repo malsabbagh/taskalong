@@ -561,5 +561,30 @@ refuse before dispatch. No retained record is silently rewritten. Preserve the
 original, review changed inputs and prepare a distinct subject. A clean move of
 HEAD alone does not change a preparation pinned to an earlier existing base.
 The [contract](contracts.md#production-muse-preparation) lists measurement bounds.
-This is pre-dispatch preparation only; the production driver, durable execution
-and real interrupted-run recovery remain unimplemented and unqualified.
+These preparation commands create no executable attempt. The separate
+[production lifecycle](#production-muse-lifecycle-configuration) implements
+packet, capture, completion and recovery contracts behind a closed runtime gate.
+
+
+## Production Muse lifecycle configuration
+
+`RunService.configure_muse_driver(document)` and
+`configure-muse-driver --config FILE` register a 2.12 production configuration only
+after explicit backed-up format 12 maintenance. It binds the existing 2.11 profile
+and intent configuration, direct measured instruction/tool/dependency inputs,
+check/sandbox/review identities and an explicit non-fixture `review_provider`.
+Registration returns its immutable digest; no runtime authority is created.
+Use the installed2.12 driver/task schemas for the exact closed vocabulary.
+
+`validate --spec FILE` returns the exact runtime subject identity and current false
+readiness. `submit` refuses `muse_runtime_unqualified`/`not_sent` before creating a
+run/attempt/effect/workspace. Even an imported run rechecks the gate at start and
+inside the closed owned spawn boundary. No setting or caller-supplied receipt can
+open it. Native resume and automatic retries are unsupported.
+
+The blockers are concrete: the pinned 1.4.10 contract lacks a supported aggregate
+observer/judge/subagent bound; the Darwin owner cannot prove complete native-fork
+cessation; requested CLI flags and local hashes do not establish OS containment
+or authenticated account/allowance and independent-checker facts. Select a runtime
+host/build that supports those boundaries before qualification. No new credentials,
+access, terms, security settings or broader live canary are implied by these APIs.

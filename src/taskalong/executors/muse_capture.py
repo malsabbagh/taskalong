@@ -85,7 +85,8 @@ def _prompt_unchanged(path, expected):
         return False
 
 
-def capture_muse_turn(request, *, config, qualification, timeout_seconds, max_output_bytes,
+def _capture_owned_turn(request, *, config, qualification, timeout_seconds, max_output_bytes,
+                      _argv=None, _recheck=None,
                       cancel_requested=None, heartbeat=None, on_spawn=None, mode="start", thread_id=None):
     """Retain one bounded synthetic invocation; an existing directory forbids replay.
 
@@ -93,7 +94,7 @@ def capture_muse_turn(request, *, config, qualification, timeout_seconds, max_ou
     reconciliation. An intent without a receipt remains uncertain, not retryable.
     This helper neither reads existing captures nor starts a second invocation.
     """
-    if qualification != "synthetic":
+    if qualification not in {"synthetic", "production"} or (qualification == "production" and (_argv is None or _recheck is None)):
         _refuse("runtime_policy_unsupported")
     if mode != "start" or thread_id is not None:
         _refuse("muse_native_resume_unsupported")
@@ -118,7 +119,7 @@ def capture_muse_turn(request, *, config, qualification, timeout_seconds, max_ou
         _refuse("muse_capture_limits_invalid")
     output = Path(request.output_dir)
     directory = output / "muse-raw"
-    argv = project_plain_exec_argv(executable=config.executable, build=config.build,
+    argv = (_argv or project_plain_exec_argv)(executable=config.executable, build=config.build,
         workspace=str(request.workspace), prompt_file=str(directory / "prompt.txt"),
         model=config.requested_model, permission_profile=config.permission_profile,
         max_model_steps=config.max_model_steps)
@@ -133,6 +134,8 @@ def capture_muse_turn(request, *, config, qualification, timeout_seconds, max_ou
             _refuse("muse_executable_changed")
     except (OSError, ProcessBoundaryError):
         _refuse("muse_runtime_unavailable")
+    if _recheck is not None:
+        _recheck()
     binding = {"run_id": request.run_id, "attempt_id": request.attempt_id,
         "spec_digest": request.spec_digest, "profile_digest": request.profile_digest,
         "lease_generation": request.lease_generation,
@@ -156,6 +159,8 @@ def capture_muse_turn(request, *, config, qualification, timeout_seconds, max_ou
         _refuse("muse_capture_write_failed")
 
     def recheck_inputs():
+        if _recheck is not None:
+            _recheck()
         try:
             actual = fingerprint(config.executable)
         except (OSError, ProcessBoundaryError):
@@ -252,3 +257,13 @@ def capture_muse_turn(request, *, config, qualification, timeout_seconds, max_ou
             exit_code=5, effect_outcome="not_sent" if status == "not_sent" else "uncertain",
             recovery=[{"action": "inspect_capture", "primary_error": error}]) from None
     return MuseCaptureResult(directory, raw_receipt, process, original, error, status)
+
+
+def capture_muse_turn(request, *, config, qualification, timeout_seconds, max_output_bytes,
+                      cancel_requested=None, heartbeat=None, on_spawn=None, mode="start", thread_id=None):
+    """Original synthetic-only entry point; never a production bypass."""
+    if qualification != "synthetic":
+        _refuse("runtime_policy_unsupported")
+    return _capture_owned_turn(request, config=config, qualification=qualification,
+        timeout_seconds=timeout_seconds,max_output_bytes=max_output_bytes,cancel_requested=cancel_requested,
+        heartbeat=heartbeat,on_spawn=on_spawn,mode=mode,thread_id=thread_id)

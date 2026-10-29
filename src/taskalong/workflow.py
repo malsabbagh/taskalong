@@ -22,7 +22,7 @@ TERMINAL = {"cancelled", "failed", "draft_published"}
 def _worker_identity_key(spec):
     if spec["schema_version"] == "2.10":
         return "configuration_digest"
-    return "driver_config_digest" if spec["schema_version"] in {"2.3", "2.4", "2.5", "2.6", "2.9"} else "profile_digest"
+    return "driver_config_digest" if spec["schema_version"] in {"2.3", "2.4", "2.5", "2.6", "2.9", "2.12"} else "profile_digest"
 
 
 def _internal_key(prefix, value):
@@ -142,6 +142,9 @@ class Workflow:
             if _validate_only:
                 return result
             raise TaskAlongError("muse_runtime_unqualified", "Muse production execution is not qualified; inspect muse-readiness.", exit_code=3)
+        if spec.get("schema_version") == "2.12" and _validate_only:
+            from .muse_lifecycle import assess
+            return assess(self.store, spec)
         if spec.get("schema_version") == "2.8":
             from .trial import TrialTaskSpec
             TrialTaskSpec.from_dict(spec)
@@ -162,7 +165,7 @@ class Workflow:
             if self.store.format_version < (11 if spec["schema_version"] == "2.10" else 10):
                 raise TaskAlongError("store_upgrade_required", "Ordered tasks require explicit format-10 maintenance.", exit_code=3)
             preflight(self, spec)
-        elif spec.get("schema_version") not in ("2.2", "2.3", "2.4", "2.5", "2.6", "2.9"):
+        elif spec.get("schema_version") not in ("2.2", "2.3", "2.4", "2.5", "2.6", "2.9", "2.12"):
             spec = seal("task-spec", spec)
         else:
             from .execution import read_task_spec
@@ -219,6 +222,9 @@ class Workflow:
         if spec["schema_version"] == "2.10":
             from .artifact_handoff import admit
             return admit(self.store, spec, step_index)[1]
+        if spec["schema_version"] == "2.12":
+            from .muse_lifecycle import configuration
+            return configuration(self.store, spec["execution"]["driver_config_digest"])
         if spec["schema_version"] == "2.9":
             from .muse_handoff import configuration
             return configuration(self.store, spec["execution"]["driver_config_digest"])
@@ -305,7 +311,7 @@ class Workflow:
             preflight(self, spec)
         authority = self.store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], authority_id)
         admission = None
-        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9", "2.12"}:
             from .admission import resolve
             admission, _, _ = resolve(self.store, spec, mode=mode, authority_id=authority["authority_id"])
         if not spec["permissions"]["local_edit"] or not spec["permissions"]["local_commit"] or not {"execute", "verify", "commit_candidate"} <= set(spec["permissions"]["allowed_effects"]):
@@ -596,7 +602,7 @@ class Workflow:
         if spec["schema_version"] == "2.10":
             from .artifact_handoff import admit
             _, _, check_profile = admit(self.store, spec, check=True)
-        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9", "2.12"}:
             from .admission import resolve
             _, _, check_profile = resolve(self.store, spec)
         if run["active_attempt_id"] is not None or run["state"] not in {"verifying", "blocked", "accepted"}:
@@ -758,7 +764,11 @@ class Workflow:
                         validate_chain(self.store, current, live=True, complete=True)
                     else:
                         resolve(self.store, spec)
-                receipt = ReviewSenseiAdapter(review["executable"], python_executable=review["python_executable"], expected_executable_sha256=review["executable_sha256"], interrupt_requested=lambda: interruption.requested, pre_dispatch=review_gate if check_profile or spec["schema_version"] in {"2.7", "2.10"} else None).review(diff_bytes, {"base_commit": candidate["base_commit"], "candidate_commit": candidate["commit"], "candidate_tree": candidate["tree"], "diff_sha256": candidate["diff_sha256"]}, config_path=review["config_path"], qualification=run["qualification"], invocation_dir=invocation_dir, expected_config_digest=spec["review"]["config_digest"], fixture_response=review["fixture_response"], max_output_bytes=capture["request"]["reserved_output_bytes"], cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
+                review_options = {}
+                if spec["schema_version"] == "2.12":
+                    from .muse_lifecycle import review_options as production_review_options
+                    review_options = production_review_options(self.store, spec)
+                receipt = ReviewSenseiAdapter(review["executable"], python_executable=review["python_executable"], expected_executable_sha256=review["executable_sha256"], **review_options, interrupt_requested=lambda: interruption.requested, pre_dispatch=review_gate if check_profile or spec["schema_version"] in {"2.7", "2.10"} else None).review(diff_bytes, {"base_commit": candidate["base_commit"], "candidate_commit": candidate["commit"], "candidate_tree": candidate["tree"], "diff_sha256": candidate["diff_sha256"]}, config_path=review["config_path"], qualification=run["qualification"], invocation_dir=invocation_dir, expected_config_digest=spec["review"]["config_digest"], fixture_response=review["fixture_response"], max_output_bytes=capture["request"]["reserved_output_bytes"], cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
                 self._capture_finish(run_id, capture, receipt.output_bytes, confirmed=True)
                 if interruption.requested:
                     self._verification_interrupted(run_id, confirmed=True)
@@ -987,7 +997,7 @@ class Workflow:
         record = validate("evidence", record)
         canonical_ref = None
         attempt = self.store.detail("attempts", record["attempt_id"])
-        if attempt.get("canonical_packet") and attempt["canonical_packet"]["schema_version"] not in {"2.9", "2.10"}:
+        if attempt.get("canonical_packet") and attempt["canonical_packet"]["schema_version"] not in {"2.9", "2.10", "2.12"}:
             from .validation import seal_versioned
             canonical = seal_versioned("evidence", {"run_id":run_id, "attempt_id":record["attempt_id"],
                 "spec_digest":record["spec_digest"], "binding_digest":attempt["admission"]["binding"]["digest"],
@@ -1054,7 +1064,7 @@ def drive_run(state_dir, run_id, attempt_id):
         if seconds_remaining <= 0:
             _finish_attempt(store, run_id, attempt_id, {"state": "failed", "error": "attempt_deadline_exhausted", "thread_id": None, "process": {"termination_confirmed": True, "duration_ms": 0, "output_bytes": 0}, "usage": {}}, None)
             return
-        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9"}:
+        if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9", "2.12"}:
             try:
                 from .admission import resolve
                 authority = store.authority(run, {"execute", "verify", "commit_candidate"}, spec["digest"], attempt["admission"]["authority_id"])
@@ -1113,7 +1123,7 @@ def drive_run(state_dir, run_id, attempt_id):
                 "max_attempts":spec["budget"]["max_attempts"]-run["budget_consumed"]["attempts"]+1,
                 "max_output_bytes":spec["budget"]["max_output_bytes"]-run["budget_consumed"]["output_bytes"]},
             "qualification":run["qualification"], "extensions":{}}
-        if spec["schema_version"] not in {"2.3", "2.4", "2.5", "2.6", "2.9", "2.10"}:
+        if spec["schema_version"] not in {"2.3", "2.4", "2.5", "2.6", "2.9", "2.10", "2.12"}:
             packet_fields["bindings"]["runtime_profile_digest"] = profile["digest"]
             packet_fields["result_schema_id"] = "urn:taskalong:schema:v1:worker-result"
         if spec["schema_version"] in {"2.7", "2.10"}:
@@ -1144,7 +1154,7 @@ def drive_run(state_dir, run_id, attempt_id):
         store.put_blob(canonical_bytes(packet))
         def prepared(current, db):
             item = store.detail("attempts", attempt_id)
-            if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9"}:
+            if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9", "2.12"}:
                 if current["state"] == "cancel_pending":
                     raise TaskAlongError("cancel_pending", "Cancellation prevents worker dispatch.", exit_code=6)
                 item.update(canonical_packet=canonical_packet, packet_projection=projection, dispatch_admission=attempt["dispatch_admission"])
@@ -1163,7 +1173,7 @@ def drive_run(state_dir, run_id, attempt_id):
         try:
             store.mutate(run_id, "executor.prepare", attempt_id, None, {"packet_digest": packet["digest"]}, prepared, events=[("effect.prepared", {"kind": "executor.start"})], fence=run["lease_generation"])
         except TaskAlongError as exc:
-            if (spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.9", "2.10"} and exc.code == "cancel_pending"
+            if (spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.9", "2.10", "2.12"} and exc.code == "cancel_pending"
                     and store.detail("attempts", attempt_id)["spawn_phase"] == "not_dispatched"):
                 # This supervisor has not created a worker gate or sent target
                 # code. The rolled-back preparation cannot leave a dispatch.
@@ -1193,7 +1203,7 @@ def drive_run(state_dir, run_id, attempt_id):
                         validate_packet(store, current, store.detail("attempts", attempt_id), before_spawn=True)
                     if manager.snapshot(workspace, spec["scope"], expected_head=spec["repository"]["base_commit"])["content_digest"] != snapshot["content_digest"]:
                         raise TaskAlongError("checkpoint_stale", "Workspace changed before dispatch.", exit_code=3)
-                if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9"}:
+                if spec["schema_version"] in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.9", "2.12"}:
                     # run_bounded invokes this callback while the owned gate is
                     # still closed. An exception prevents target execve.
                     if current["state"] == "cancel_pending":
@@ -1222,9 +1232,14 @@ def drive_run(state_dir, run_id, attempt_id):
         from .executors.registry import executor_for
         try:
             result = contract.factory(profile, provider).run(packet, workspace=workspace["path"], output_dir=output, cancel_requested=lambda: store.run(run_id)["state"] == "cancel_pending", heartbeat=lambda: store.heartbeat(run_id, attempt_id), on_spawn=on_spawn, git_common_dir=store.repository(run["repository_registration_id"])["common_dir"], control_dir=str(store.root), mode="native_resume" if attempt["mode"] == "native_resume" else "start", thread_id=attempt.get("thread_id"))
-            if spec["schema_version"] == "2.9":
-                from .muse_handoff import retain_capture, create_handoff
-                if contract.supervisor_handoff != "muse-execution-handoff/1":
+            if spec["schema_version"] in {"2.9", "2.12"}:
+                if spec["schema_version"] == "2.12":
+                    from .muse_lifecycle import retain_capture, create_handoff
+                    expected_handoff = "muse-production-execution-handoff/1"
+                else:
+                    from .muse_handoff import retain_capture, create_handoff
+                    expected_handoff = "muse-execution-handoff/1"
+                if contract.supervisor_handoff != expected_handoff:
                     raise TaskAlongError("adapter_unavailable", "The selected contract cannot issue a supervisor handoff.", exit_code=3)
                 retain_capture(store, run_id, attempt_id, result)
                 handoff = None
@@ -1302,12 +1317,12 @@ def drive_run(state_dir, run_id, attempt_id):
             if "result" in locals() and store.run(run_id)["active_attempt_id"] == attempt_id:
                 result.update(state="failed", error=exc.code)
                 _finish_attempt(store, run_id, attempt_id, result, None)
-                if spec["schema_version"] in {"2.5", "2.6", "2.7", "2.9", "2.10"}:
+                if spec["schema_version"] in {"2.5", "2.6", "2.7", "2.9", "2.10", "2.12"}:
                     # The fenced finish already recorded the exact failure.
                     # A later generic blocker could overwrite a new restart
                     # admitted after that durable, settled state became visible.
                     return
-            if spec["schema_version"] in {"2.5", "2.6", "2.9"} and "result" in locals():
+            if spec["schema_version"] in {"2.5", "2.6", "2.9", "2.12"} and "result" in locals():
                 confirmed = (result.get("process") or {}).get("termination_confirmed") is True
                 _block(store, run_id, exc.code, phase="running", uncertain=not confirmed,
                        effect_outcome="known" if confirmed else "uncertain")
@@ -1352,7 +1367,7 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
     capture = capture_for_version(store.spec(run)["schema_version"])
     association = result.get(capture.name + "_capture") if capture and result["state"] == "completed" else None
     request = {"state": result["state"], "artifact": artifact}
-    muse = store.spec(run)["schema_version"] == "2.9"
+    muse = store.spec(run)["schema_version"] in {"2.9", "2.12"}
     muse_ref = store.put_blob(canonical_bytes(execution_handoff)) if execution_handoff is not None else None
     if muse:
         request["execution_handoff"] = muse_ref
@@ -1369,7 +1384,10 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
             if current["active_attempt_id"] != attempt_id or item["lease_generation"] != current["lease_generation"]:
                 raise TaskAlongError("lease_fenced", "Only the active fenced Muse attempt may finish.", exit_code=4)
             if result["state"] == "completed":
-                from .muse_handoff import validate_handoff
+                if store.spec(current)["schema_version"] == "2.12":
+                    from .muse_lifecycle import validate_handoff
+                else:
+                    from .muse_handoff import validate_handoff
                 validate_handoff(store, current, store.spec(current), item, Workflow(store)._manager(current),
                     store.lease(current)["workspace"], before_finish=True, handoff=execution_handoff)
             item["execution_handoff"] = muse_ref
@@ -1384,7 +1402,14 @@ def _finish_attempt(store, run_id, attempt_id, result, worker, *, execution_hand
                     previous = store.detail("attempts", prior["attempt_id"])
                     if (previous.get("checkpoint") or {}).get("observed_session_id") == session:
                         raise TaskAlongError(capture.error_prefix + "_session_reused", "A fresh attempt cannot reuse a known prior native session.", exit_code=3)
-        confirmed = bool(process.get("termination_confirmed"))
+        if store.spec(current)["schema_version"] == "2.12":
+            not_dispatched = (item.get("spawn_phase") == "not_dispatched" and not item.get("process_receipt")
+                and db.execute("SELECT 1 FROM operations WHERE command='executor.prepare' AND run_id=? AND operation_key=?",
+                    (run_id, attempt_id)).fetchone() is None)
+            confirmed = (process.get("termination_confirmed") is True and (not_dispatched or
+                (process.get("group_termination_confirmed") is True and process.get("unaccounted_descendants") is False)))
+        else:
+            confirmed = bool(process.get("termination_confirmed"))
         item.update(status=result["state"], termination_confirmed=confirmed, thread_id=result.get("thread_id"), finished_at=now(), result_artifact=artifact, process=process, checkpoint=result.get("checkpoint"), error=result.get("error"))
         if current["schema_version"] == "2.10":
             item["observed_session_id"] = result.get("session_id") or result.get("thread_id")
