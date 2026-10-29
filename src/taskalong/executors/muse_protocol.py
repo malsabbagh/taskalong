@@ -55,3 +55,11 @@ def project_exec_argv(*, executable, build, workspace, prompt_file, model,
             "--model", model, "--permission-profile", permission_profile,
             "--max-model-steps", str(max_model_steps), "--approval-mode", "untrusted",
             "--sandbox-network", "proxy-only", "--disable-request-user-input")
+
+
+def project_production_exec_argv(*, reasoning_effort, **options):
+    """Closed proposed production projection; never a launcher or admission."""
+    if reasoning_effort != "high" or options.get("model") != "wonder-full" or type(options.get("max_model_steps")) is not int or options["max_model_steps"] != 1:
+        _refuse()
+    argv = project_plain_exec_argv(**options)
+    return argv + ("--reasoning-effort", reasoning_effort)

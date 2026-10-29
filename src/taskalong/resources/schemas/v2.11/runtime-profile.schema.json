@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.11:runtime-profile",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "runtime_profile"
+    },
+    "schema_version": {
+      "const": "2.11"
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.-]*:[A-Za-z0-9_.-]+$"
+      }
+    },
+    "profile_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "qualification": {
+      "const": "production"
+    },
+    "adapter": {
+      "const": "muse"
+    },
+    "executable_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "executable_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "runtime_version": {
+      "const": "1.4.10-R6427.1"
+    },
+    "model": {
+      "const": "wonder-full"
+    },
+    "reasoning_effort": {
+      "const": "high"
+    },
+    "service_tier": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "inference_destination_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+    },
+    "permission_policy": {
+      "type": "object",
+      "properties": {
+        "permission_profile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "policy_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "instructions_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tools_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "permission_profile",
+        "policy_sha256",
+        "instructions_sha256",
+        "tools_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "permission_policy_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "toolchain_read_roots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "minItems": 0,
+      "maxItems": 64,
+      "uniqueItems": true
+    },
+    "credential_source_ref": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "qualification_receipt_ids": {
+      "const": []
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "extensions",
+    "profile_id",
+    "digest",
+    "qualification",
+    "adapter",
+    "executable_path",
+    "executable_sha256",
+    "runtime_version",
+    "model",
+    "reasoning_effort",
+    "service_tier",
+    "inference_destination_id",
+    "permission_policy",
+    "permission_policy_digest",
+    "toolchain_read_roots",
+    "credential_source_ref",
+    "qualification_receipt_ids"
+  ],
+  "additionalProperties": false
+}

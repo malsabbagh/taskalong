@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "driver_config"
+    },
+    "schema_version": {
+      "const": "2.11"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "profile_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "profile_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "permission_policy_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "permission_policy_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "digest",
+    "profile_id",
+    "profile_digest",
+    "permission_policy_path",
+    "permission_policy_sha256"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.11:driver-config"
+}

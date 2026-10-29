@@ -90,6 +90,9 @@ class Workflow:
             return self.store.register_repository({**info, "registration_id": identifier(), "store_uuid": self.store.store_uuid, "workspace_root": str(root)})
 
     def register_profile(self, profile):
+        if type(profile) is dict and profile.get("schema_version") == "2.11":
+            from .muse_production import register_profile
+            return register_profile(self.store, profile)
         profile = seal("runtime-profile", profile)
         return self.store.register_profile(profile)
 
@@ -133,6 +136,12 @@ class Workflow:
         if type(spec) is not dict:
             raise TaskAlongError("invalid_document", "A task specification must be a JSON object.")
         screen_sensitive(spec)
+        if spec.get("schema_version") == "2.11":
+            from .muse_production import assess_task
+            result = assess_task(self.store, spec)
+            if _validate_only:
+                return result
+            raise TaskAlongError("muse_runtime_unqualified", "Muse production execution is not qualified; inspect muse-readiness.", exit_code=3)
         if spec.get("schema_version") == "2.8":
             from .trial import TrialTaskSpec
             TrialTaskSpec.from_dict(spec)
