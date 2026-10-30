@@ -599,3 +599,14 @@ not an account-wide spending cap. No absolute vendor cessation promise is
 required; actual whole-process containment and account/checker observations are
 still missing here. See the [execution plan](muse-shutdown.md) for exact controls,
 qualification limits and the Linux host/security action awaiting approval.
+
+## Mac model-free Muse connection probe
+
+`taskalong --json muse-mac-probe --executable /absolute/pinned/Muse --evidence-dir /new/private/directory`
+performs one fixed native echo-host initialize request with zero capabilities.
+It creates no agent session or turn, opens no TaskAlong Store, changes no saved
+settings, and never retries or escalates. Only the exact measured1.4.10 Mac binary
+is supported. Evidence is retained even on protocol or lifecycle failure.
+The returned sandbox availability is a host report; file/shell/network enforcement
+and real-provider admission remain unqualified. Forked descendants stay unknown.
+See [ADR0019](adr/0019-mac-model-free-connection-probe.md).

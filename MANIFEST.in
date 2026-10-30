@@ -350,3 +350,6 @@ include docs/proposals/taskalong-muse-model-free.service
 include tests/fixtures/legacy_store_v12.py
 include tests/fixtures/muse_owned_tree.py
 include tests/test_muse_exposure.py
+include src/taskalong/muse_mac_probe.py
+include docs/adr/0019-mac-model-free-connection-probe.md
+include tests/test_muse_mac_probe.py

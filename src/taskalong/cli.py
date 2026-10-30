@@ -30,6 +30,7 @@ def parser():
     p = command("muse-readiness"); p.add_argument("--profile-id", required=True); p.add_argument("--configuration-digest", required=True)
     p = command("prepare-muse"); p.add_argument("--spec", required=True); p.add_argument("--inputs", required=True)
     command("muse-exposure")
+    p = command("muse-mac-probe"); p.add_argument("--executable", required=True); p.add_argument("--evidence-dir", required=True)
     p = command("muse-preparation"); p.add_argument("preparation_digest")
     p = command("configure-review"); p.add_argument("--config", required=True); p.add_argument("--fixture-response"); p.add_argument("--executable"); p.add_argument("--python-executable")
     p = command("configure-sandbox"); p.add_argument("--executable", required=True)
@@ -83,6 +84,11 @@ def main(argv=None):
                 print(canonical_bytes(envelope("guide", data={"name": args.name, "markdown": markdown})).decode())
             else:
                 print(markdown, end="" if markdown.endswith("\n") else "\n")
+            return 0
+        if args.command == "muse-mac-probe":
+            from .muse_mac_probe import probe
+            result = probe(executable=args.executable, evidence_dir=args.evidence_dir)
+            print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result,indent=2))
             return 0
         from .api import RunService
         with RunService(args.state_dir) as service:
