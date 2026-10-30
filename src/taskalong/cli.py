@@ -32,6 +32,9 @@ def parser():
     command("muse-exposure")
     p = command("muse-mac-probe"); p.add_argument("--executable", required=True); p.add_argument("--evidence-dir", required=True)
     p = command("muse-preparation"); p.add_argument("preparation_digest")
+    p = command("supervised-pilot-prepare"); p.add_argument("--request", required=True); p.add_argument("--output", required=True)
+    p = command("supervised-pilot-stage"); p.add_argument("--bundle", required=True); p.add_argument("--response", required=True); p.add_argument("--output", required=True)
+    p = command("supervised-pilot-run"); p.add_argument("--bundle", required=True)
     p = command("configure-review"); p.add_argument("--config", required=True); p.add_argument("--fixture-response"); p.add_argument("--executable"); p.add_argument("--python-executable")
     p = command("configure-sandbox"); p.add_argument("--executable", required=True)
     p = command("configure-publication"); p.add_argument("--gh", required=True); p.add_argument("--git-remote", required=True)
@@ -89,6 +92,16 @@ def main(argv=None):
             from .muse_mac_probe import probe
             result = probe(executable=args.executable, evidence_dir=args.evidence_dir)
             print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result,indent=2))
+            return 0
+        if args.command.startswith("supervised-pilot-"):
+            from . import supervised_pilot
+            if args.command == "supervised-pilot-prepare":
+                result = supervised_pilot.prepare(supervised_pilot.read_document(args.request), output=args.output)
+            elif args.command == "supervised-pilot-stage":
+                result = supervised_pilot.stage(bundle=args.bundle, response=supervised_pilot.read_document(args.response), output=args.output)
+            else:
+                supervised_pilot.refuse_live(bundle=args.bundle)
+            print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result, indent=2))
             return 0
         from .api import RunService
         with RunService(args.state_dir) as service:

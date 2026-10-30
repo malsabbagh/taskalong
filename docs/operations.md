@@ -610,3 +610,59 @@ is supported. Evidence is retained even on protocol or lifecycle failure.
 The returned sandbox availability is a host report; file/shell/network enforcement
 and real-provider admission remain unqualified. Forked descendants stay unknown.
 See [ADR0019](adr/0019-mac-model-free-connection-probe.md).
+
+
+## Supervised patch proposal development
+
+This separate POSIX workflow prepares and stages local text proposals. It does not
+call a provider, inspect a real repository, apply a patch, run tests or grant live
+admission. Source snapshots and the supplied base commit are operator claims.
+Provider/model fields are intent for future adapters, not observed account context.
+
+Create a strict JSON request, for example:
+
+```json
+{"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","task":"Change greeting.","provider":"muse","model":"wonder-full","reasoning_effort":"high","files":{"hello.txt":"hello\n","note.txt":null}}
+```
+
+`null` declares an absent file that may be added. Select only disposable/public
+content appropriate for the intended provider; preparation sends nothing.
+Use direct absolute paths and new output directories:
+
+```text
+taskalong --json supervised-pilot-prepare --request /private/request.json --output /private/new-bundle
+```
+
+The private bundle contains `bundle.json` and a digest-bound `prompt.txt`. For local
+development/testing, supply a synthetic response with the returned bundle digest:
+
+```json
+{"bundle_digest":"<digest returned by prepare>","changes":{"hello.txt":"hello world\n","note.txt":"note\n"}}
+```
+
+A change value is complete new file text, or `null` for deletion. Then stage it:
+
+```text
+taskalong --json supervised-pilot-stage --bundle /private/new-bundle --response /private/response.json --output /private/new-review
+taskalong --json supervised-pilot-run --bundle /private/new-bundle
+```
+
+Staging emits `proposed.patch`, the unverified `response.json`, and a final
+`review.json`. The run command always refuses with `supervised_pilot_live_disabled`;
+it cannot be enabled by supplying a receipt or profile. No live provider runner is
+implemented by this workflow. A live supervised trial still needs separate owner
+authorization and qualification of account/model exposure, tools/context, cancellation,
+child lifetime and uncertain usage. Existing Muse production safeguards remain closed.
+
+Review the exact patch and its snapshot binding. Independently verify the actual
+repository/base and run patch checks and tests in a disposable checkout before
+manually applying any proposal. Staging does not perform those checks. The original
+source is never an output target. One exclusive response claim is retained per bundle;
+a partial failure is uncertain and is not automatically replayed. Preserve artifacts
+for inspection; do not treat a fresh directory as permission to retry a provider.
+
+Supported input is at most 32 declared literal paths, 64 KiB per LF-terminated text
+file and 256 KiB total snapshot/replacement text. Protected, traversal, case-alias
+and ancestor-conflicting paths refuse. Binary/non-LF data, symlinks, renames, mode
+changes and empty-file creation/deletion are unsupported. These artifacts are not
+production execution, test, independent acceptance or remote-usage settlement receipts.

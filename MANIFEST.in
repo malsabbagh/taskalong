@@ -353,3 +353,6 @@ include tests/test_muse_exposure.py
 include src/taskalong/muse_mac_probe.py
 include docs/adr/0019-mac-model-free-connection-probe.md
 include tests/test_muse_mac_probe.py
+include src/taskalong/supervised_pilot.py
+include tests/test_supervised_pilot.py
+include docs/adr/0020-supervised-patch-proposals.md
