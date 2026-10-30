@@ -356,3 +356,6 @@ include tests/test_muse_mac_probe.py
 include src/taskalong/supervised_pilot.py
 include tests/test_supervised_pilot.py
 include docs/adr/0020-supervised-patch-proposals.md
+include src/taskalong/supervised_muse_runner.py
+include tests/test_supervised_muse_runner.py
+include docs/adr/0021-supervised-muse-protocol.md

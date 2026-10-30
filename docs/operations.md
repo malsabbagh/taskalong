@@ -666,3 +666,83 @@ file and 256 KiB total snapshot/replacement text. Protected, traversal, case-ali
 and ancestor-conflicting paths refuse. Binary/non-LF data, symlinks, renames, mode
 changes and empty-file creation/deletion are unsupported. These artifacts are not
 production execution, test, independent acceptance or remote-usage settlement receipts.
+
+
+## Supervised Muse runner component development
+
+`supervised-muse-plan --bundle <directory> --executable <direct pinned binary> --output <new directory>`
+measures the pinned binary and prepares an original native protocol/startup plan.
+It never starts the binary. The plan fixes Muse/meta `wonder-full`, reasoning `high`,
+zero client capabilities, the existing `:read-only` profile, disabled shell/write,
+contributor mode off, proxy-only sandbox network and no workspace trust. Fresh
+HOME/XDG paths and an empty workspace are allocated as intent; access to the
+existing account in that context is unresolved. No credential is copied or read.
+
+The plan intends one turn submission, zero provider retries, 20 seconds locally,
+a 2-second interrupt grace and 64 KiB captured output. No aggregate inference,
+token/cost or whole-process guarantee is claimed. This command creates data only;
+there is no live transport or wall-clock enforcement in planning/replay.
+
+`supervised-muse-replay --bundle <directory> --plan <runner-plan.json> --transcript <JSON> --output <new directory>`
+exercises runner components against unverified local frames. The transcript has
+`responses` (six JSON-RPC replies, IDs 1–6 for initialize, profile list, model list,
+usage/read, session/start, turn/start) and `notifications`. Any interrupt response
+uses ID 7. Saved `projected-requests.json` explicitly marks all requests unsent.
+The replay creates `response.json` only for a complete, unblocked final response
+that validates against the prepared snapshot; stage it through supervised-pilot-stage
+for human review/manual application. It never creates a production receipt.
+
+The reducer rejects auxiliary child/tool/workflow/hook activity and projects at
+most one supported `turn/interrupt` targeting the acknowledged session/turn.
+An interrupt acknowledgement is not a terminal. Final answer/foreground completion
+is not a terminal either. Cancellation/completion preserves unknown descendant
+and remote-usage state; missing usage is never zero. Rejection after a child event
+does not prove that the child was prevented or any prior request was cancelled.
+
+The pinned native echo canary produced three reminder-child sessions even with
+these restrictive switches and the read-only profile. No real model ran. It also
+returned empty bundled model metadata and no last-observed subscription usage.
+The native journal also reported workflow/web/memory/cron agent tools; zero client
+capabilities do not prove that agent tools are absent or blocked. Those observations
+cannot qualify the actual account/model/allowance or a finite
+aggregate inference bound. A supported suppression/cap control has not been
+established. A future live pilot requires the actual existing-account/context
+binding, qualified bounded ownership/transport and a separate owner decision on
+residual auxiliary/remote uncertainty. The public live run remains refused.
+
+
+The pinned experimental schema and a zero-turn native echo query establish
+read-only `account/read` and `settings/readSchema`/`settings/read` surfaces. Account
+projection reports a credential lane; it returns no key material, endpoint binding
+or enforced spending cap. The isolated HOME reported `loggedOut` with credentials
+required, so the real existing account remains unobserved in that context. Runner
+components project only these read methods and omit display identity values from
+the reduced result. No login/logout/settings-write method is projected.
+The served settings schema includes web-fetch/search controls, but no reminder
+suppression key in that key set. Those controls have not been changed or tested
+as enforced network denial. Existing-account access with a fresh context remains
+an integration boundary; no credential is copied to bridge it.
+
+
+`supervised-muse-exec-plan --bundle <directory> --executable <pinned binary> --model-id muse-wonder-full-1.0 --output <new directory>`
+prepares the shorter exec candidate using the explicitly selected canonical catalog
+model, requested High, empty preset, one model step, disabled reminders/web tools,
+no foreign personal context, read-only profile and disabled shell/write. It is
+still data only; no execution or wall-time enforcement occurs. The native echo
+check of this combination reported empty tool and reminder rosters, one session
+and a completed parent. Native fork lifetime remains unknown. Meta-only parallel
+flags are projected for Meta; they cannot be used in the Echo qualification case.
+Named profiles cannot be combined with legacy sandbox-network or approval-judge
+flags; the candidate uses the existing read-only/human-review profile.
+
+`--no-foreign-personal-context` did not exclude the public user-skill canary from
+native model context. Reusing the existing native data/config roots with fresh
+HOME still projected loggedOut, so those environment changes did not establish a
+credential-preserving isolated context. No credential copy or new login was tried.
+The normal existing HOME did project accountLogin and a providerCatalog containing
+muse-wonder-full-1.0; reasoning variants were unknown and usage/read was absent.
+Catalog availability is not account allowance, a High-effort receipt or an alias
+binding. The exec-plan model id is explicit operator intent, never a fallback.
+Native internal HTTP retry policy is not established by the one-model-step limit.
+These remaining context, retry, lifetime and usage boundaries keep live execution
+closed; owner acceptance/authorization must not be inferred from a model-free pass.

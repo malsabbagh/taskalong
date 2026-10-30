@@ -35,6 +35,9 @@ def parser():
     p = command("supervised-pilot-prepare"); p.add_argument("--request", required=True); p.add_argument("--output", required=True)
     p = command("supervised-pilot-stage"); p.add_argument("--bundle", required=True); p.add_argument("--response", required=True); p.add_argument("--output", required=True)
     p = command("supervised-pilot-run"); p.add_argument("--bundle", required=True)
+    p = command("supervised-muse-exec-plan"); p.add_argument("--bundle", required=True); p.add_argument("--executable", required=True); p.add_argument("--model-id", required=True); p.add_argument("--output", required=True)
+    p = command("supervised-muse-plan"); p.add_argument("--bundle", required=True); p.add_argument("--executable", required=True); p.add_argument("--output", required=True)
+    p = command("supervised-muse-replay"); p.add_argument("--bundle", required=True); p.add_argument("--plan", required=True); p.add_argument("--transcript", required=True); p.add_argument("--output", required=True)
     p = command("configure-review"); p.add_argument("--config", required=True); p.add_argument("--fixture-response"); p.add_argument("--executable"); p.add_argument("--python-executable")
     p = command("configure-sandbox"); p.add_argument("--executable", required=True)
     p = command("configure-publication"); p.add_argument("--gh", required=True); p.add_argument("--git-remote", required=True)
@@ -92,6 +95,17 @@ def main(argv=None):
             from .muse_mac_probe import probe
             result = probe(executable=args.executable, evidence_dir=args.evidence_dir)
             print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result,indent=2))
+            return 0
+        if args.command.startswith("supervised-muse-"):
+            from . import supervised_muse_runner
+            from .supervised_pilot import read_document
+            if args.command == "supervised-muse-exec-plan":
+                result = supervised_muse_runner.prepare_exec(bundle=args.bundle, executable=args.executable, model_id=args.model_id, output=args.output)
+            elif args.command == "supervised-muse-plan":
+                result = supervised_muse_runner.prepare(bundle=args.bundle, executable=args.executable, output=args.output)
+            else:
+                result = supervised_muse_runner.replay(plan_path=args.plan, bundle=args.bundle, transcript=read_document(args.transcript), output=args.output)
+            print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result, indent=2))
             return 0
         if args.command.startswith("supervised-pilot-"):
             from . import supervised_pilot
