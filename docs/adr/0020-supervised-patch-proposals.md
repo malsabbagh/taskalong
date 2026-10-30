@@ -1,6 +1,9 @@
 # Offline supervised patch proposal seam
 
-Status: proposed; development/testing only, no live model admission.
+
+Live-execution policy superseded by [ADR 0022](0022-configured-experimental-provider.md).
+Offline preparation/replay contracts below remain applicable.
+Status: accepted offline contracts; live policy superseded by ADR 0022.
 
 A separate POSIX CLI artifact workflow binds an explicitly supplied text snapshot,
 task, base-commit claim and provider/model intent to a canonical digest. It creates
@@ -25,7 +28,8 @@ The final review record is written last. Existing source, prompts and histories
 are never deleted. Same-user processes can still tamper with files; permissions
 and digest checks are not an isolation guarantee.
 
-The public run command unconditionally refuses before any provider action.
+The initial public run command refused before provider action. ADR 0022 replaces
+that initial refusal with the configured experimental provider route.
 Snapshots, prompt instructions and diagnostic receipts cannot open this gate.
 Tests use synthetic local responses; a disposable Git fixture verifies generated
 patch applicability and is never part of the production staging implementation.

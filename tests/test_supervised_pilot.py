@@ -141,7 +141,7 @@ class SupervisedPilotTests(unittest.TestCase):
         with self.assertRaises(TaskAlongError) as exc:pilot.stage(bundle=str(self.bundle),response=response,output=str(self.output))
         self.assertEqual(exc.exception.code,'pilot_empty_file_change_unsupported')
 
-    def test_cli_roundtrip_opens_no_store_and_live_run_always_refuses(self):
+    def test_offline_cli_roundtrip_and_run_requires_provider_configuration(self):
         from taskalong.cli import main
         req=self.root/'request.json';req.write_bytes(canonical_bytes(request()))
         def call(argv):
@@ -154,8 +154,11 @@ class SupervisedPilotTests(unittest.TestCase):
         response=self.root/'response.json';response.write_bytes(canonical_bytes({'bundle_digest':result['data']['bundle_digest'],'changes':{'hello.txt':'hello world\n'}}))
         code,result=call(['supervised-pilot-stage','--bundle',str(self.bundle),'--response',str(response),'--output',str(self.output)])
         self.assertEqual(code,0);self.assertFalse(result['data']['production_dispatch_allowed'])
-        code,result=call(['supervised-pilot-run','--bundle',str(self.bundle)])
-        self.assertEqual(code,3);self.assertEqual(result['errors'][0]['code'],'supervised_pilot_live_disabled')
+        stream=io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code=main(['--json','--state-dir',str(self.root/'unconfigured'),'supervised-pilot-run','--bundle',str(self.bundle)])
+        result=json.loads(stream.getvalue())
+        self.assertEqual(code,3);self.assertEqual(result['errors'][0]['code'],'provider_not_configured')
         self.assertEqual(result['errors'][0]['effect_outcome'],'not_sent')
 
     def test_cli_document_reader_refuses_symlink_and_duplicate_keys(self):

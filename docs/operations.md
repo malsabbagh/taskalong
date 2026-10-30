@@ -648,11 +648,10 @@ taskalong --json supervised-pilot-run --bundle /private/new-bundle
 ```
 
 Staging emits `proposed.patch`, the unverified `response.json`, and a final
-`review.json`. The run command always refuses with `supervised_pilot_live_disabled`;
-it cannot be enabled by supplying a receipt or profile. No live provider runner is
-implemented by this workflow. A live supervised trial still needs separate owner
-authorization and qualification of account/model exposure, tools/context, cancellation,
-child lifetime and uncertain usage. Existing Muse production safeguards remain closed.
+`review.json`. The run command uses the normally configured local Muse provider. There is no
+separate production activation gate for this experimental route. Provider context
+selection, local limits, retained one-use claims and manual review apply. Existing
+production-qualification contracts remain separate.
 
 Review the exact patch and its snapshot binding. Independently verify the actual
 repository/base and run patch checks and tests in a disposable checkout before
@@ -708,14 +707,14 @@ cannot qualify the actual account/model/allowance or a finite
 aggregate inference bound. A supported suppression/cap control has not been
 established. A future live pilot requires the actual existing-account/context
 binding, qualified bounded ownership/transport and a separate owner decision on
-residual auxiliary/remote uncertainty. The public live run remains refused.
+residual auxiliary/remote uncertainty. Configured experimental execution is described below; production qualification remains separate.
 
 
 The pinned experimental schema and a zero-turn native echo query establish
 read-only `account/read` and `settings/readSchema`/`settings/read` surfaces. Account
 projection reports a credential lane; it returns no key material, endpoint binding
-or enforced spending cap. The isolated HOME reported `loggedOut` with credentials
-required, so the real existing account remains unobserved in that context. Runner
+or enforced spending cap. A fresh HOME may lack the existing login; the configured account HOME controls
+which native account context is used. Runner
 components project only these read methods and omit display identity values from
 the reduced result. No login/logout/settings-write method is projected.
 The served settings schema includes web-fetch/search controls, but no reminder
@@ -739,10 +738,67 @@ flags; the candidate uses the existing read-only/human-review profile.
 native model context. Reusing the existing native data/config roots with fresh
 HOME still projected loggedOut, so those environment changes did not establish a
 credential-preserving isolated context. No credential copy or new login was tried.
-The normal existing HOME did project accountLogin and a providerCatalog containing
-muse-wonder-full-1.0; reasoning variants were unknown and usage/read was absent.
+A credential-state projection and catalog metadata do not by themselves bind
+effective reasoning, included allowance or remote settlement.
 Catalog availability is not account allowance, a High-effort receipt or an alias
 binding. The exec-plan model id is explicit operator intent, never a fallback.
 Native internal HTTP retry policy is not established by the one-model-step limit.
-These remaining context, retry, lifetime and usage boundaries keep live execution
-closed; owner acceptance/authorization must not be inferred from a model-free pass.
+Experimental runs record these uncertainties instead of claiming production guarantees.
+
+
+## Configured local Muse provider
+
+Local provider configuration enables ordinary experimental execution immediately:
+
+```text
+taskalong configure-provider muse --config /absolute/provider.json
+taskalong provider-context muse --output /absolute/private-context-review
+taskalong run --provider muse --request /absolute/task.json --output /absolute/new-run
+taskalong status RUN_ID
+taskalong result RUN_ID
+```
+
+The provider config requires `executable` (direct native binary). Optional fields
+are `account_home`, `muse_home`, `model`, `reasoning_effort`, `context`,
+`attempt_seconds`, `max_output_bytes`, `catalog_digest`, `context_hashes`,
+`public_context_hashes` and `native_roots`. `native_roots` preserves selected
+XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_CACHE_HOME directories;
+the data root agrees with muse_home. These are paths, never credential values. Default account HOME is the current user; default Muse
+data directory is its native local-data directory. No credential is copied or
+stored by TaskAlong. Existing Muse login/configuration remains native-owned.
+
+`context: include` is the default: no foreign-context exclusion flag is added.
+`context: native-only` explicitly excludes foreign personal context while retaining
+native context; it is not full isolation. `context: exclude` requests full
+exclusion and currently fails clearly before provider dispatch because this
+native client cannot honor it with the existing login. Never silently substitute
+include for exclude, or silently exclude preconfigured context from include.
+provider-context creates an optional private local-only snapshot with the selected
+context mode; it cannot submit to Meta or reserve a task. context_hashes can pin
+stable rules/catalog and vendor message text; session/workspace identities change
+per invocation. Optional catalog/template fingerprints let a caller bind a specifically reviewed
+context snapshot; they are data-scope checks, not production qualification or a
+required activation step. Recognizable credentials in task/startup context refuse
+before the real provider request; this secondary screen is not a complete DLP claim.
+
+The task request uses the same explicit `base_commit`, `task`, `provider`, `model`,
+`reasoning_effort` and `files` snapshot format as supervised-pilot-prepare. `run`
+also accepts an already prepared `--bundle`; supervised-pilot-run is an alias.
+The adapter uses an empty preset, no tools/reminders/web, read-only policy and
+existing account. A fixed native Echo check inspects local startup context without
+sending it to a model endpoint. It is labeled model-free and is not the provider
+result. The actual configured Meta invocation is separate and occurs once.
+
+The controller enforces the selected process timeout and capture bound. It retains
+an exclusive bundle/Store submission claim before releasing the native process;
+failed, interrupted or uncertain runs cannot automatically redispatch. Native
+HTTP retries, remote usage and all descendants may remain unknown. Root/group
+observations never stamp remote settlement. No model/provider fallback occurs.
+
+On a completed bound response, TaskAlong emits a validated proposed.patch and
+review record. It does not apply the patch, run its contents, claim independent
+acceptance or automatically publish it. Review manually and verify a disposable
+candidate. status/result read existing records without invoking the provider.
+Configuration/context/login/local paths and raw outputs belong in private local
+state, never in Git, PR descriptions or CI artifacts. Tests use synthetic fixtures;
+only sanitized validation summaries may be published.

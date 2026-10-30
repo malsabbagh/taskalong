@@ -13,7 +13,7 @@ from .validation import canonical_bytes, load_json
 
 
 def parser():
-    root = argparse.ArgumentParser(prog="taskalong", description="Experimental bounded development-task core. Live production dispatch is disabled.")
+    root = argparse.ArgumentParser(prog="taskalong", description="Local development tasks with configured experimental providers and manual patch review.")
     root.add_argument("--version", action="version", version=f"taskalong {__version__} (API/schema 1.0)")
     root.add_argument("--state-dir")
     root.add_argument("--json", action="store_true")
@@ -23,6 +23,11 @@ def parser():
         p.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
         return p
     p = command("guide"); p.add_argument("name", nargs="?", default="fixture", choices=("fixture", "operations", "contracts", "qualification", "ordered"))
+    p = command("configure-provider"); p.add_argument("provider"); p.add_argument("--config", required=True)
+    command("providers")
+    p = command("provider-context"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--output", required=True)
+    p = command("run"); p.add_argument("--provider", default="muse"); p.add_argument("--output")
+    task = p.add_mutually_exclusive_group(required=True); task.add_argument("--bundle"); task.add_argument("--request")
     p = command("register-repository"); p.add_argument("path"); p.add_argument("--workspace-root")
     p = command("register-profile"); p.add_argument("--profile", required=True)
     p = command("configure-muse-driver"); p.add_argument("--config", required=True)
@@ -34,7 +39,7 @@ def parser():
     p = command("muse-preparation"); p.add_argument("preparation_digest")
     p = command("supervised-pilot-prepare"); p.add_argument("--request", required=True); p.add_argument("--output", required=True)
     p = command("supervised-pilot-stage"); p.add_argument("--bundle", required=True); p.add_argument("--response", required=True); p.add_argument("--output", required=True)
-    p = command("supervised-pilot-run"); p.add_argument("--bundle", required=True)
+    p = command("supervised-pilot-run"); p.add_argument("--bundle", required=True); p.add_argument("--output")
     p = command("supervised-muse-exec-plan"); p.add_argument("--bundle", required=True); p.add_argument("--executable", required=True); p.add_argument("--model-id", required=True); p.add_argument("--output", required=True)
     p = command("supervised-muse-plan"); p.add_argument("--bundle", required=True); p.add_argument("--executable", required=True); p.add_argument("--output", required=True)
     p = command("supervised-muse-replay"); p.add_argument("--bundle", required=True); p.add_argument("--plan", required=True); p.add_argument("--transcript", required=True); p.add_argument("--output", required=True)
@@ -107,21 +112,25 @@ def main(argv=None):
                 result = supervised_muse_runner.replay(plan_path=args.plan, bundle=args.bundle, transcript=read_document(args.transcript), output=args.output)
             print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result, indent=2))
             return 0
-        if args.command.startswith("supervised-pilot-"):
+        if args.command in {"supervised-pilot-prepare", "supervised-pilot-stage"}:
             from . import supervised_pilot
             if args.command == "supervised-pilot-prepare":
                 result = supervised_pilot.prepare(supervised_pilot.read_document(args.request), output=args.output)
             elif args.command == "supervised-pilot-stage":
                 result = supervised_pilot.stage(bundle=args.bundle, response=supervised_pilot.read_document(args.response), output=args.output)
-            else:
-                supervised_pilot.refuse_live(bundle=args.bundle)
             print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result, indent=2))
             return 0
         from .api import RunService
         with RunService(args.state_dir) as service:
             cmd = args.command
             mutation = {"operation_key": getattr(args, "key", None), "expected_revision": getattr(args, "expected_revision", None)}
-            if cmd == "register-repository": result = service.register_repository(args.path, args.workspace_root)
+            if cmd == "configure-provider": result = service.configure_provider(args.provider, load_json(args.config))
+            elif cmd == "providers": result = service.providers()
+            elif cmd == "provider-context": result = service.provider_context(args.provider, output=args.output)
+            elif cmd in {"run", "supervised-pilot-run"}:
+                result = service.run_provider(getattr(args, "provider", "muse"), bundle=getattr(args, "bundle", None),
+                    request=load_json(args.request) if getattr(args, "request", None) else None, output=args.output)
+            elif cmd == "register-repository": result = service.register_repository(args.path, args.workspace_root)
             elif cmd == "register-profile": result = service.register_profile(load_json(args.profile))
             elif cmd == "configure-muse-driver": result = service.configure_muse_driver(load_json(args.config))
             elif cmd == "configure-muse": result = service.configure_muse(load_json(args.config))
@@ -170,7 +179,7 @@ def main(argv=None):
             for requirement in result.get("blocker_details", []):
                 print(requirement["code"] + ": " + requirement.get("requirement", requirement.get("limitation", "")))
         else: print(f"{cmd}: {result.get('state', 'completed')}" + (f" ({result['run_id']})" if "run_id" in result else ""))
-        if cmd in {"start", "advance", "retry", "resume", "cancel", "reconcile", "verify", "publish"}:
+        if cmd in {"run", "supervised-pilot-run", "start", "advance", "retry", "resume", "cancel", "reconcile", "verify", "publish"}:
             if result.get("state") == "cancel_pending": return 6
             if result.get("state") == "blocked":
                 return 5 if any(b.get("effect_outcome") == "uncertain" for b in result.get("blockers", [])) else 3

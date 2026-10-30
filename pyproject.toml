@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "taskalong"
 version = "0.1.0a1"
-description = "Experimental local development-task foundation; live execution disabled"
+description = "Experimental local development tasks with configured providers and manual patch review"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

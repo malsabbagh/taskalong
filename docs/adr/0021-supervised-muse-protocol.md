@@ -1,6 +1,9 @@
 # Supervised Muse protocol components and bounded trial intent
 
-Status: proposed; offline runner development, no live admission.
+
+Live-execution policy superseded by [ADR 0022](0022-configured-experimental-provider.md).
+Offline preparation/replay contracts below remain applicable.
+Status: accepted offline contracts; live policy superseded by ADR 0022.
 
 Extend the separate supervised proposal seam with a pinned native startup plan,
 strict preflight/session/turn bindings, untrusted event folding and one exact
@@ -47,7 +50,8 @@ Offline replay accepts six explicitly supplied RPC responses plus notifications;
 all saved requests are projections and none are sent. A bounded fold emits a local
 response only after an unblocked complete turn/final answer, then existing patch
 staging/manual review still applies. Inputs and report provenance remain unverified.
-The run command stays unconditionally closed. No subprocess/network transport,
+The initial run command was closed; ADR 0022 now supplies configured experimental
+execution separately. Planning/replay adds no subprocess/network transport,
 account bridge, credentials, grant or Store/schema mutation is added here.
 
 A future live route still needs the existing-account/context binding and a qualified

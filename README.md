@@ -1,8 +1,8 @@
 # TaskAlong
 
-Experimental local foundations for durable development tasks. **Live executor
-dispatch is disabled.** This candidate is not a supported live coding-agent
-service or a package-registry release.
+Experimental local CLI for durable development tasks and configured Muse coding
+runs on macOS. Provider output is staged for manual patch review. This candidate
+is not a package-registry release.
 
 TaskAlong exposes `taskalong.api.RunService` and the `taskalong` console command.
 It records immutable tasks, attempts, ordered events, effects and independent
@@ -14,14 +14,16 @@ ReviewSensei results govern acceptance; worker output cannot grant authority.
 
 - Synthetic task, interruption/recovery, exact-session protocol, cancellation,
   verification and fixture publication journeys.
-- Offline production Muse input preparation with immutable measurements and
-  drift detection; live Muse dispatch remains blocked.
+- Configured local Muse execution on macOS: `configure-provider` followed by
+  `run --provider muse`, with bounded capture and proposed patches for manual review.
+  It is experimental and requires no separate production activation.
+- Offline production Muse preparation/lifecycle contracts remain distinct from
+  the configured experimental provider route.
 - Installed read-only guides: `taskalong guide`, `taskalong guide operations`,
   `taskalong guide contracts` and `taskalong guide qualification`.
 - Explicit Codex, Claude, Cursor and Antigravity synthetic driver projections sharing one supervisor,
   with offline wire decoders and contract tests. Separate local/direct-cloud
-  Ollama profiles run through the same Claude fixture driver. Real CLI execution
-  and provider routing are unqualified.
+  Ollama profiles run through the same Claude fixture driver. These older fixture projections do not imply live execution support.
 
 The Codex production path returns `runtime_policy_unsupported` before dispatch.
 Instruction/tool isolation, complete real-worker descendant lifetime, remote
@@ -29,6 +31,38 @@ cancellation/accounting and live provider routing remain unqualified. Synthetic
 profiles are test boundaries for external fixtures, not a live-execution bypass.
 No other installed CLI is automatically admitted and no provider/model fallback
 is selected. macOS results do not qualify Linux or a real model/backend.
+
+## Run a configured Muse provider
+
+Create a local JSON config containing the direct native executable path. Muse keeps
+its existing login; TaskAlong does not take an API key or start a login flow.
+`context` defaults to `include`, preserving preconfigured local context.
+
+```json
+{"executable":"/absolute/native/muse","model":"muse-wonder-full-1.0","reasoning_effort":"high","context":"include","attempt_seconds":20,"max_output_bytes":65536}
+```
+
+```sh
+taskalong configure-provider muse --config provider.json
+taskalong providers
+taskalong provider-context muse --output /absolute/private-context-review
+taskalong run --provider muse --request task.json --output /absolute/new-run
+taskalong result RUN_ID
+```
+
+The task JSON explicitly selects a source snapshot and task; see the
+[operations guide](docs/operations.md#configured-local-muse-provider). A configured
+provider runs without a second activation/qualification gate. The result is a
+proposed patch: review and apply it manually, then run tests in a disposable copy.
+There is no automatic apply, retry, model/provider fallback or remote settlement.
+Native retries/remote usage/descendant lifetime may remain unknown.
+
+Set `context` to `exclude` to request full exclusion. The currently supported Muse
+client cannot guarantee that with its existing login, so TaskAlong fails clearly
+before provider dispatch. `native-only` is an explicit partial option that passes
+Muse's foreign-context exclusion flag while retaining native personal context.
+Private configuration, context and raw captures stay local; publish code and
+sanitized validation summaries only.
 
 ## Local artifact trial
 

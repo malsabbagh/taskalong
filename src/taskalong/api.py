@@ -38,6 +38,30 @@ class RunService:
     def register_profile(self, profile):
         return self._workflow.register_profile(profile)
 
+    def configure_provider(self, provider, configuration):
+        """Local configuration enables the provider's experimental task route."""
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_experimental import configure
+        return configure(self._store, configuration)
+
+    def providers(self):
+        from .muse_experimental import providers
+        return providers(self._store)
+
+    def provider_context(self, provider="muse", *, output):
+        """Private local-only startup snapshot, without a remote model request."""
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_experimental import context_snapshot
+        return context_snapshot(self._store, output=output)
+
+    def run_provider(self, provider="muse", *, bundle=None, request=None, output=None):
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_experimental import run
+        return run(self._store, bundle=bundle, request=request, output=output)
+
     def configure_muse(self, configuration):
         """Register production intent only; never qualify or launch Muse."""
         from .muse_production import configure
@@ -109,6 +133,10 @@ class RunService:
         return view(self._store)
 
     def inspect(self, run_id):
+        from .muse_experimental import inspect as provider_run
+        experimental = provider_run(self._store, run_id)
+        if experimental is not None:
+            return experimental
         run = self._store.run(run_id)
         if run["schema_version"] in {"2.7", "2.10"}:
             from .steps import view
@@ -147,8 +175,14 @@ class RunService:
         """Read persisted outcomes/immutable references; never reconcile or launch.
 
         A completed worker remains distinct from independent acceptance. Raw
-        task/policy bodies, runtime paths, credentials and logs are excluded.
+        Legacy worker views exclude raw bodies, runtime paths and logs. Configured
+        provider views include private capture paths for local review; do not publish
+        those records as public artifacts.
         """
+        from .muse_experimental import inspect as provider_run
+        experimental = provider_run(self._store, run_id)
+        if experimental is not None:
+            return experimental
         run = self._store.run(run_id)
         if run["schema_version"] in {"2.7", "2.10"}:
             from .steps import view
