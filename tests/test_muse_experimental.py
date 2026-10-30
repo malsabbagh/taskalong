@@ -83,14 +83,14 @@ class ExperimentalMuseTests(unittest.TestCase):
 
     def test_repeated_bundle_refuses_without_another_provider_or_preflight_call(self):
         self.configure();self.run_fixture()
-        with patch.object(muse,'_preflight') as preflight,patch.object(muse,'run_foreground_experiment') as owner,self.assertRaises(TaskAlongError) as exc:
+        with patch.object(muse.sys,'platform','darwin'),patch.object(muse,'_preflight') as preflight,patch.object(muse,'run_foreground_experiment') as owner,self.assertRaises(TaskAlongError) as exc:
             self.service.run_provider('muse',bundle=str(self.bundle),output=str(self.root/'second'))
         self.assertEqual(exc.exception.code,'provider_already_submitted');owner.assert_not_called();preflight.assert_not_called()
         self.assertFalse((self.root/'second').exists())
 
     def test_context_exclusion_is_honestly_unsupported_and_never_dispatches(self):
         self.configure(context='exclude')
-        with patch.object(muse,'run_foreground_experiment') as owner,self.assertRaises(TaskAlongError) as exc:
+        with patch.object(muse.sys,'platform','darwin'),patch.object(muse,'run_foreground_experiment') as owner,self.assertRaises(TaskAlongError) as exc:
             self.service.run_provider('muse',bundle=str(self.bundle),output=str(self.root/'output'))
         self.assertEqual(exc.exception.code,'provider_context_exclusion_unsupported');owner.assert_not_called()
         self.assertEqual(exc.exception.effect_outcome,'not_sent')
@@ -105,9 +105,17 @@ class ExperimentalMuseTests(unittest.TestCase):
         with self.assertRaises(TaskAlongError) as exc:self.service.configure_provider('other',{})
         self.assertEqual(exc.exception.code,'provider_unavailable')
 
+    def test_non_mac_host_refuses_without_owner_call_or_task_claim(self):
+        self.configure()
+        with patch.object(muse.sys,'platform','linux'),patch.object(muse,'run_foreground_experiment') as owner,self.assertRaises(TaskAlongError) as exc:
+            self.service.run_provider('muse',bundle=str(self.bundle),output=str(self.root/'output'))
+        self.assertEqual(exc.exception.code,'provider_platform_unsupported');owner.assert_not_called()
+        self.assertFalse((self.root/'output').exists());self.assertFalse((self.bundle/'provider-submission.json').exists())
+
     def test_binary_or_model_changes_are_normal_validation_not_fallback(self):
         self.configure(model='another-model')
-        with self.assertRaises(TaskAlongError) as exc:self.service.run_provider('muse',bundle=str(self.bundle))
+        with patch.object(muse.sys,'platform','darwin'),self.assertRaises(TaskAlongError) as exc:
+            self.service.run_provider('muse',bundle=str(self.bundle))
         self.assertEqual(exc.exception.code,'provider_task_model_mismatch')
         self.configure();self.binary.write_text('changed fixture\n')
         with self.assertRaises(TaskAlongError) as exc:self.service.run_provider('muse',bundle=str(self.bundle))

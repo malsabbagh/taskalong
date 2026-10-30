@@ -153,7 +153,10 @@ class OpaqueHandoff:
             ref = attempt.get("execution_handoff")
             if not ref or attempt["status"] != "completed" or attempt["termination_confirmed"] is not True:
                 self.refuse("muse_handoff_missing")
-            if attempt["process"] != attempt["muse_capture"]["process"]:
+            capture = attempt.get("muse_capture")
+            if type(capture) is not dict or type(capture.get("process")) is not dict:
+                self.refuse("muse_capture_invalid")
+            if attempt.get("process") != capture["process"]:
                 self.refuse("muse_process_mismatch")
             handoff = loads(store.get_blob(ref["sha256"]))
             row = store.db.execute("SELECT request_digest FROM operations WHERE command='executor.finish' AND run_id=? AND operation_key=?",

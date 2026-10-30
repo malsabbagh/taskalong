@@ -120,6 +120,28 @@ class MuseHandoffTests(ServiceFixture, unittest.TestCase):
             self.assertEqual(refused.exception.code, "muse_handoff_missing")
         self.assertEqual(self.service.inspect(run["run_id"])["state"], "cancel_pending")
 
+    def test_completed_missing_or_malformed_retained_capture_refuses_result_without_replay(self):
+        run = self.completed()
+        attempt_id = run["attempts"][-1]["attempt_id"]
+        absent = object()
+        for capture in (absent, None, [], {}, {"process": None}):
+            with self.subTest(capture="absent" if capture is absent else capture):
+                attempt = self.service._store.detail("attempts", attempt_id)
+                if capture is absent:
+                    attempt.pop("muse_capture")
+                else:
+                    attempt["muse_capture"] = capture
+                with self.service._store.transaction() as db:
+                    db.execute("UPDATE attempts SET document=? WHERE attempt_id=?",
+                        (canonical_bytes(attempt).decode(), attempt_id))
+                operations = self.service._store.db.execute("SELECT count(*) FROM operations").fetchone()[0]
+                with self.assertRaises(TaskAlongError) as refused:
+                    self.service.result(run["run_id"])
+                self.assertEqual(refused.exception.code, "muse_capture_invalid")
+                self.assertEqual(self.service._store.db.execute("SELECT count(*) FROM operations").fetchone()[0], operations)
+        self.assertEqual(len((self.root / "muse-invocations.jsonl").read_text().splitlines()), 1)
+        self.assertIsNone(self.service.inspect(run["run_id"])["acceptance_id"])
+
     def test_completed_tampered_handoff_still_refuses_cancel_reconciliation(self):
         run = self.completed()
         attempt = self.service._store.detail("attempts", run["attempts"][-1]["attempt_id"])
