@@ -4,12 +4,18 @@
 const { spawnSync } = require('node:child_process');
 const { constants } = require('node:os');
 
-const NPM_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc)\.(0|[1-9]\d*))?$/;
+const NPM_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc)\.([1-9]\d*))?$/;
+
+function badComponents(parts, mapped) {
+  return mapped.length > 64 || parts.some((p) => p !== undefined && BigInt(p) > 9007199254740991n);
+}
 
 function pythonVersionFromNpm(version) {
   const m = typeof version === 'string' && NPM_RE.exec(version);
   if (!m) throw new Error('unsupported npm package version');
-  return `${m[1]}.${m[2]}.${m[3]}${m[4] ? { alpha: 'a', beta: 'b', rc: 'rc' }[m[4]] + m[5] : ''}`;
+  const mapped = `${m[1]}.${m[2]}.${m[3]}${m[4] ? { alpha: 'a', beta: 'b', rc: 'rc' }[m[4]] + m[5] : ''}`;
+  if (badComponents([m[1], m[2], m[3], m[5]], mapped)) throw new Error('unsupported npm package version');
+  return mapped;
 }
 
 function expectedPythonVersion(pkg) {
@@ -25,7 +31,8 @@ function resolvePython(env = process.env, platform = process.platform) {
 }
 
 function buildPythonCode(expected) {
-  if (!/^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?$/.test(expected || '')) throw new Error('invalid Python version');
+  const m = typeof expected === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:(a|b|rc)([1-9]\d*))?$/.exec(expected);
+  if (!m || badComponents([m[1], m[2], m[3], m[5]], expected)) throw new Error('invalid Python version');
   return `import sys
 import importlib.metadata
 import importlib.util
@@ -48,10 +55,12 @@ try:
     spec = importlib.util.find_spec('taskalong')
     if spec is None or not spec.origin:
         fail('installed taskalong package not locatable')
+    if not dist.files:
+        fail('installed taskalong distribution has no file inventory')
     origin = Path(spec.origin).resolve()
-    root = Path(dist.locate_file('taskalong')).resolve()
-    files = {Path(dist.locate_file(f)).resolve() for f in dist.files or []}
-    if origin not in files and origin.parent != root:
+    wanted = Path(dist.locate_file('taskalong/__init__.py')).resolve()
+    recorded = {Path(dist.locate_file(f)).resolve() for f in dist.files if str(f).replace(chr(92), '/') == 'taskalong/__init__.py'}
+    if origin != wanted or recorded != {wanted}:
         fail('taskalong location does not match its installed distribution')
 except SystemExit:
     raise
