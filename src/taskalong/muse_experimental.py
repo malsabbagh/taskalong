@@ -62,7 +62,7 @@ def configure(store, value):
     if (type(model) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", model)
             or type(effort) is not str or effort not in _EFFORTS
             or type(context) is not str or context not in _CONTEXT
-            or type(seconds) is not int or not 1 <= seconds <= 60
+            or type(seconds) is not int or not 1 <= seconds <= 720
             or type(maximum) is not int or not 1024 <= maximum <= 1048576
             or type(proposal_maximum) is not int or not 1024 <= proposal_maximum <= 262144
             or catalog_digest is not None and (type(catalog_digest) is not str or not re.fullmatch(r"[a-f0-9]{64}", catalog_digest))):
@@ -80,7 +80,7 @@ def configure(store, value):
     with Path(binary["path"]).open("rb") as stream:
         if stream.read(2) == b"#!":
             _fail("provider_native_binary_required", "Select the installed direct native binary, not an updater or shell wrapper.")
-    config = {"format": "local-muse-provider/2", "provider": "muse", "experimental": True,
+    config = {"format": "local-muse-provider/3", "provider": "muse", "experimental": True,
               "binary": binary, "account_home": str(home), "muse_home": str(muse_home), "native_roots": native_roots, "model": model,
               "reasoning_effort": effort, "context": context, "catalog_digest": catalog_digest, "public_context_hashes": public_hashes, "context_hashes": context_hashes,
               "attempt_seconds": seconds, "max_output_bytes": maximum, "max_proposal_bytes": proposal_maximum}
@@ -102,9 +102,18 @@ def _configuration(store):
     config = store.setting(_CONFIG)
     if config is None:
         _fail("provider_not_configured", "Configure the local Muse provider before running a task.")
-    if config.get("format") not in ("local-muse-provider/1", "local-muse-provider/2") or config.get("digest") != digest(config):
+    return _checked_configuration(config)
+
+
+def _checked_configuration(config):
+    if type(config) is not dict or config.get("format") not in ("local-muse-provider/1", "local-muse-provider/2", "local-muse-provider/3") or config.get("digest") != digest(config):
         _fail("provider_configuration_changed", "The local provider configuration is inconsistent; configure it again.")
-    if config["format"] == "local-muse-provider/2" and (type(config.get("max_proposal_bytes")) is not int or not 1024 <= config["max_proposal_bytes"] <= 262144):
+    ceiling = 720 if config["format"] == "local-muse-provider/3" else 60
+    if type(config.get("attempt_seconds")) is not int or not 1 <= config["attempt_seconds"] <= ceiling:
+        _fail("provider_configuration_changed", "The provider deadline is invalid for its configuration format.")
+    if type(config.get("max_output_bytes")) is not int or not 1024 <= config["max_output_bytes"] <= 1048576:
+        _fail("provider_configuration_changed", "The whole-protocol capture limit is invalid.")
+    if config["format"] != "local-muse-provider/1" and (type(config.get("max_proposal_bytes")) is not int or not 1024 <= config["max_proposal_bytes"] <= 262144):
         _fail("provider_configuration_changed", "This provider configuration requires an explicit finite proposal limit; configure it again.")
     if _observe_file(config["binary"]["path"], executable=True) != config["binary"]:
         _fail("provider_executable_changed", "The configured binary changed; configure the installed provider again.")
@@ -133,16 +142,28 @@ def _native_json(raw):
     return json.loads(raw, object_pairs_hook=pairs, parse_float=str, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
 
 
-def _journal(config, session):
+def _journal_source(config, session, *, started_unix_ms=None):
     home = pilot._root(config["muse_home"])
     candidates = []
-    days = {datetime.datetime.now().astimezone().date(), datetime.datetime.now(datetime.timezone.utc).date()}
+    try:
+        if started_unix_ms is None:
+            instant = datetime.datetime.now(datetime.timezone.utc)
+        else:
+            if type(started_unix_ms) is not int or started_unix_ms <= 0: raise ValueError()
+            instant = datetime.datetime.fromtimestamp(started_unix_ms / 1000, datetime.timezone.utc)
+        days = {instant.astimezone().date(), instant.date()}
+    except (ValueError, OverflowError, OSError):
+        _fail("provider_journal_invalid", "The native session timestamp is invalid.", outcome="uncertain")
     for day in {d + datetime.timedelta(days=n) for d in days for n in (-1, 0, 1)}:
         relative = f"sessions/{day:%Y/%m/%d}/{session}/session.jsonl"
         if (home / relative).exists(): candidates.append(relative)
     if len(candidates) != 1:
         _fail("provider_journal_unavailable", "The newly created native session journal is unavailable; inspect retained captures.", outcome="uncertain")
     raw = read_regular(home, candidates[0], max_bytes=4*1048576)
+    return raw, candidates[0]
+
+
+def _journal_rows(raw):
     try: rows = [_native_json(line) for line in raw.splitlines() if line]
     except (ValueError, UnicodeError, RecursionError):
         _fail("provider_journal_invalid", "The new native session journal could not be interpreted.", outcome="uncertain")
@@ -153,6 +174,11 @@ def _journal(config, session):
     configured = [v.get("payload", {}).get("event", {}) for v in rows if v.get("payload", {}).get("event", {}).get("kind") == "model_request_configured"]
     metadata = [v.get("payload", {}).get("record", {}) for v in rows if v.get("payload", {}).get("kind") == "metadata"]
     return rows, configured, metadata[-1] if metadata else {}
+
+
+def _journal(config, session):
+    raw, _ = _journal_source(config, session)
+    return _journal_rows(raw)
 
 
 def _personal(messages):
@@ -284,21 +310,34 @@ def context_snapshot(store, *, output):
     return _preflight(config, root)
 
 
-def _decode(raw, session, *, max_proposal_bytes=65536):
+def _session_records(raw, session):
     try:
         rows = [_native_json(line) for line in raw.splitlines() if line]
         if not 1 <= len(rows) <= 2048: raise ValueError()
-        terminal = []; run = None; sequence = 0
+        run = None; sequence = 0
         for row in rows:
             if (type(row) is not dict or type(row.get("schema_version")) is not int or row["schema_version"] != 1
                     or row.get("stream") != {"kind":"session","id":session}
                     or type(row.get("sequence")) is not int or row["sequence"] <= sequence): raise ValueError()
             sequence = row["sequence"]; payload = row.get("payload", {})
+            if type(payload) is not dict or type(row.get("payload_type", "")) is not str: raise ValueError()
             reference = payload.get("run_stream")
             if reference is not None:
                 if type(reference) is not dict or reference.get("kind") != "run" or type(reference.get("id")) is not str: raise ValueError()
                 if run is None: run = reference["id"]
                 if reference["id"] != run: raise ValueError()
+        if run is None: raise ValueError()
+        return rows, run
+    except (ValueError, TypeError, AttributeError, KeyError, UnicodeError, RecursionError):
+        _fail("provider_response_unrecognized", "The captured native output has no unambiguous completed response; preserve it without redispatch.", outcome="uncertain")
+
+
+def _decode(raw, session, *, max_proposal_bytes=65536):
+    try:
+        rows, run = _session_records(raw, session)
+        terminal = []
+        for row in rows:
+            payload = row["payload"]
             if row.get("payload_type", "").startswith("run.terminal."):
                 if payload.get("kind") != "run_terminal" or payload.get("terminal") != "completed" or type(payload.get("text")) is not str: raise ValueError()
                 terminal.append(payload["text"])
@@ -331,7 +370,7 @@ def _claim(store, bundle_root, manifest, record):
         pilot._write(bundle_root, "provider-submission.json", canonical_bytes({"provider":"muse","run_id":record["run_id"],"bundle_digest":manifest["digest"]}))
 
 
-def run(store, *, bundle=None, request=None, output=None):
+def run(store, *, bundle=None, request=None, output=None, _successor=None):
     config = _configuration(store)
     if sys.platform != "darwin":
         _fail("provider_platform_unsupported", "The current native Muse owner supports macOS.")
@@ -339,7 +378,12 @@ def run(store, *, bundle=None, request=None, output=None):
         _fail("provider_task_invalid", "Select one prepared bundle or explicit task request.")
     if config["context"] == "exclude":
         _fail("provider_context_exclusion_unsupported", "This Muse version cannot fully exclude personal context with the existing login. Include is the default; native-only is partial exclusion. No provider request was sent.")
-    run_id = identifier()
+    if _successor is not None:
+        from .muse_successor import _check
+        _check(store, _successor, config)
+        if output != _successor["output"] or bundle is not None:
+            _fail("provider_successor_invalid", "Use the exact reserved successor output and original task.")
+    run_id = identifier() if _successor is None else _successor["run_id"]
     if output is None:
         parent = store.root / "provider-output"; parent.mkdir(mode=0o700, exist_ok=True); output = str(parent / run_id)
     root = pilot._destination(output)
@@ -350,7 +394,11 @@ def run(store, *, bundle=None, request=None, output=None):
     else:
         pilot._request(request); screen_sensitive(request)
         bundle_root = root / "bundle"; manifest, _ = pilot._manifest(request)
+        if _successor is None and store.setting("provider-claim:muse:" + manifest["digest"]):
+            _fail("provider_already_submitted", "This task already reserved a submission; inspect existing evidence or use an eligible explicit successor.")
     _task_model(config, manifest["request"])
+    if _successor is not None and manifest["digest"] != _successor["bundle_digest"]:
+        _fail("provider_successor_invalid", "The successor must keep the original task intent unchanged.")
     screen_sensitive(manifest["request"])
     prompt = pilot._prompt(manifest["request"], manifest["digest"])
     capture_budget = _budget(config, prompt)
@@ -364,6 +412,8 @@ def run(store, *, bundle=None, request=None, output=None):
               "configuration_digest":config["digest"],"bundle_digest":manifest["digest"],"bundle":str(bundle_root),"output":str(root),
               "controller_submissions":0,"automatic_retry_allowed":False,"patch_applied":False,"acceptance_allowed":False,"capture_budget":capture_budget,
               "production_dispatch_allowed":False,"remote_usage":"not_sent","native_internal_retries":"unknown","descendant_cessation":"unknown"}
+    if _successor is not None:
+        record.update(format="local-provider-run/2",manual_successor=_successor)
     record = _event(store, record, root, "preflight")
     claimed = False
     try:
@@ -372,7 +422,12 @@ def run(store, *, bundle=None, request=None, output=None):
             _fail("provider_executable_changed", "The installed binary changed before submission; configure it again.")
         _, fresh = pilot._bundle(str(bundle_root))
         if fresh["digest"] != manifest["digest"]: _fail("provider_task_changed", "The task changed before submission.")
-        _claim(store, bundle_root, manifest, record); claimed = True
+        if _successor is None:
+            _claim(store, bundle_root, manifest, record)
+        else:
+            from .muse_successor import claim_submission
+            claim_submission(store, bundle_root, manifest, record, _successor, config)
+        claimed = True
         record = _event(store, record, root, "starting", controller_submissions=1, remote_usage="unknown", context=context)
         session = _uuid7()
         argv = _argv(config, provider="meta", workspace=root/"workspace", prompt=root/"prompt.txt", session=session)
@@ -382,6 +437,8 @@ def run(store, *, bundle=None, request=None, output=None):
             if _observe_file(config["binary"]["path"], executable=True) != config["binary"]:
                 _fail("provider_executable_changed", "The native binary changed before gate release.")
             read_regular(root,"prompt.txt",max_bytes=len(prompt),expected_sha256=hashlib.sha256(prompt).hexdigest(),private=True,expected_mode=0o400)
+            if _successor is not None:
+                _check(store, _successor, config)
             record = _event(store, record, root, "running", process_receipt=receipt.to_dict())
         env = _environment(config, root)
         result = run_foreground_experiment(argv, mode=FOREGROUND_EXPERIMENT, cwd=root/"workspace", env=env,
@@ -417,4 +474,7 @@ def run(store, *, bundle=None, request=None, output=None):
 
 def inspect(store, run_id):
     if type(run_id) is not str: return None
-    return store.setting("provider-run:" + run_id)
+    record = store.setting("provider-run:" + run_id)
+    if record is not None: return record
+    from .muse_successor import inspect_reserved
+    return inspect_reserved(store, run_id)

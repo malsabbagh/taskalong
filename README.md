@@ -58,6 +58,12 @@ proposed patch: review and apply it manually, then run tests in a disposable cop
 There is no automatic apply, retry, model/provider fallback or remote settlement.
 Native retries/remote usage/descendant lifetime may remain unknown.
 
+The 20-second default is a short smoke budget. Explicit configuration supports
+finite deadlines through 720 seconds. A consumed task can use the separate
+[manual timeout successor procedure](docs/operations.md#explicit-manual-timeout-successors):
+one 360-second successor and one conditional final 720-second successor, retaining
+the original claims and task. Nothing automatically retries or applies a patch.
+
 Set `context` to `exclude` to request full exclusion. The currently supported Muse
 client cannot guarantee that with its existing login, so TaskAlong fails clearly
 before provider dispatch. `native-only` is an explicit partial option that passes

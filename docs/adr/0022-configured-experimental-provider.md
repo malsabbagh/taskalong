@@ -48,5 +48,8 @@ adapter separately caps canonical decoded proposal bytes and records retained
 buffer counts separately from all drained bytes. It never omits protocol records
 to manufacture success. Existing caps/defaults remain finite; old configuration
 identities remain readable without rewriting receipts or claims.
-New configurations use format `/2` to prevent older clients from silently
-ignoring the added proposal bound; legacy `/1` remains readable by this client.
+Proposal configuration introduced format `/2`; finite manual successors use
+`/3` to prevent older clients from silently ignoring the larger deadline and
+proposal bound. Legacy `/1` and `/2` remain readable within their original limits.
+The explicit successor command and its retained slots are described in proposed
+[ADR0023](0023-finite-manual-muse-successors.md); ordinary run never replays a claim.

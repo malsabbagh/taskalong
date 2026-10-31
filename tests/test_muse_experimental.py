@@ -376,7 +376,7 @@ class ExperimentalMuseTests(unittest.TestCase):
     def test_new_format_fences_rollback_and_requires_explicit_valid_proposal_limit(self):
         from taskalong.validation import digest
         self.configure();value=self.service._store.setting('provider:muse')
-        self.assertEqual(value['format'],'local-muse-provider/2')
+        self.assertEqual(value['format'],'local-muse-provider/3')
         for field in (None,True,0,262145):
             bad=dict(value)
             if field is None:bad.pop('max_proposal_bytes')

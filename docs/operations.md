@@ -832,9 +832,10 @@ For a deliberately larger, separately selected task, a finite example config is:
 UTF-8 JSON, including its digest, path keys and replacement texts. The default is
 65,536, with supported values 1,024 through 262,144. Existing stored configs that
 omit this additive field use that default without rewriting their identity.
-New configurations use `local-muse-provider/2` and require an explicit valid
+New configurations use `local-muse-provider/3` and require an explicit valid
 proposal limit. Older binaries refuse this format instead of silently ignoring
-the new limit. The corrected reader still accepts legacy `/1` configurations.
+the new limits. The corrected reader still accepts legacy `/1` and `/2` configurations
+at their original 60-second ceiling.
 Exceeding it retains the raw capture and submission claim, returns
 `provider_proposal_too_large`, and stages no patch. Model instructions to keep an
 answer short do not replace either enforced bound.
@@ -847,3 +848,63 @@ cap. Overflow still cancels and fails; truncated output is never decoded as a
 successful proposal. These pipe limits do not cap native-owned journal storage
 or remote usage. Do not discard protocol records to make a result appear to fit,
 reset an old claim or automatically resubmit an uncertain attempt.
+
+### Explicit manual timeout successors
+
+`attempt_seconds` defaults to the short 20-second smoke budget. New `/3`
+configuration supports integer values from 1 through 720. A larger local deadline
+is an operator choice, not a vendor completion, token or cost guarantee. Keep an
+explicit finite whole-protocol and proposal cap for actual coding tasks.
+
+For an already consumed request, do not change its nonce, use a fresh state, reset
+the claim or issue another ordinary `run`. Use the same original state store and
+the explicit successor commands. The fixed ladder is a 360-second successor and,
+only after its qualifying timeout, one final 720-second successor. Configure the
+required deadline while preserving every other original provider setting.
+
+```text
+taskalong --state-dir /private/original-state configure-provider muse --config /private/provider-360.json
+taskalong --state-dir /private/original-state provider-successor-plan muse --predecessor ORIGINAL_RUN_ID
+taskalong --state-dir /private/original-state provider-successor muse --predecessor ORIGINAL_RUN_ID --key chosen-next-key --plan-digest EXACT_PLAN_DIGEST --output /private/new-next-output
+taskalong --state-dir /private/original-state status NEXT_RUN_ID
+taskalong --state-dir /private/original-state result NEXT_RUN_ID
+```
+
+The plan starts no process and reserves nothing. It derives the unchanged task
+from the predecessor bundle and checks retained process/capture/journal evidence.
+It reports the required deadline, remaining controller slots and local deadline
+reservations, while preserving unknown remote usage and descendant cessation.
+The plan is not a grant imported from JSON; execution recomputes its digest and
+revalidates before the provider gate opens. A changed config, artifact, model,
+account, context or capture/proposal limit refuses.
+
+An eligible predecessor must be a failed, fully captured local timeout with root
+exit and group termination observed, clean tracking/cleanup, no explicit cancel
+or overflow, and a matching native cancelled-during-model-step terminal. A
+successful/in-progress/incomplete/ambiguous run, response/proposal, complete JSON
+output, contradictory terminal or changed original history stops the ladder.
+These checks do not claim complete detached-descendant cessation, cancellation of
+accepted remote inference, or accounting settlement.
+
+Each explicit execution reserves its single slot before even the model-free
+native preflight. A denial or other setup failure stops the ladder. A repeated
+identical key only observes its existing result; it cannot resume crashed code or
+dispatch again. A different key cannot repeat the predecessor. An incomplete
+reservation appears as `reserved_incomplete` with unknown outcome, never as free
+capacity. Keep all old claims and effects. No automatic provider retry or fallback
+is scheduled.
+
+The private sibling `.taskalong-muse-successors-ROOT_RUN_ID` directory contains
+an immutable enrollment and at most two slot files. It must remain alongside the
+original output, separate from the database backup: restoring an old database
+cannot reopen its consumed slots. Do not delete, copy/reset or automatically
+repair it. A missing/partial/conflicting directory or state scope refuses. The
+original output and bundle files remain unchanged. Output paths cannot overlap
+any ancestor output/bundle or this control directory.
+
+If NEXT ends in a qualifying local timeout with no response, independently invoke
+the same two commands with its run ID and a 720-second config. That is the last
+slot. Stop on success, denial, another failure or uncertain local cleanup. The
+two new Meta deadlines total at most 1,080 seconds, plus separate five-second
+preflights and existing owned cleanup. They do not bound remote spend or native
+internal retries. Proposals still require manual review/application and tests.
