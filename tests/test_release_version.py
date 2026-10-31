@@ -1,4 +1,4 @@
-import importlib.util, json, tempfile, unittest
+import contextlib, importlib.util, io, json, tempfile, unittest
 from pathlib import Path
 
 _f = Path(__file__).resolve().parents[1] / 'tools' / 'release_version.py'
@@ -15,7 +15,7 @@ class ReleaseVersionTests(unittest.TestCase):
     files = {
       'pyproject.toml': toml if toml is not None else 'project={name="taskalong",version="' + v + '"}',
       'src/taskalong/__init__.py': _ver(v) if init is None else init,
-      'packages/npm/cli/package.json': pkg if pkg is not None else json.dumps({'name': name, 'version': npm}),
+      'packages/npm/cli/package.json': pkg if pkg is not None else json.dumps({'name': name, 'version': npm, 'taskalong': {'pythonVersion': v}}),
     }
     for rel, text in files.items():
       p = r / rel
@@ -24,13 +24,13 @@ class ReleaseVersionTests(unittest.TestCase):
     return r
 
   def test_mappings(self):
-    cases = {'1.2.3': '1.2.3', '0.1.0a1': '0.1.0-alpha.1', '1.0.0b2': '1.0.0-beta.2', '2.3.4rc3': '2.3.4-rc.3'}
+    cases = {'1.2.3': '1.2.3', '0.1.0a1': '0.1.0-alpha.1', '1.0.0b2': '1.0.0-beta.2', '2.3.4rc3': '2.3.4-rc.3', '9007199254740991.0.0': '9007199254740991.0.0', '0.9007199254740991.0': '0.9007199254740991.0', '0.0.9007199254740991': '0.0.9007199254740991', '1.2.3a9007199254740991': '1.2.3-alpha.9007199254740991'}
     for v, npm in cases.items():
       with self.subTest(v=v):
         self.assertEqual(rv.release_versions(v), {'python': v, 'npm': npm, 'tag': 'v' + v})
 
   def test_invalid_versions(self):
-    bad = ['', 'v1.2.3', ' 1.2.3', '1.2.3 ', '1.2', '1.2.3.4', '01.2.3', '1.02.3', '1.2.03', '1.2.3a0', '1.2.3a01', '1.2.3a', '1.2.3c1', '1.2.3-alpha.1', '1.2.3+local', '1.2.3.post1', '1.2.3.dev1', '1!1.2.3', '1.2.3é', '9' * 61 + '.2.3', None, True, 1, 1.2, b'1.2.3', [], {}]
+    bad = ['', 'v1.2.3', ' 1.2.3', '1.2.3 ', '1.2', '1.2.3.4', '01.2.3', '1.02.3', '1.2.03', '1.2.3a0', '1.2.3a01', '1.2.3a', '1.2.3c1', '1.2.3-alpha.1', '1.2.3+local', '1.2.3.post1', '1.2.3.dev1', '1!1.2.3', '1.2.3é', '9' * 61 + '.2.3', '9007199254740992.0.0', '0.9007199254740992.0', '0.0.9007199254740992', '1.2.3a9007199254740992', None, True, 1, 1.2, b'1.2.3', [], {}]
     for v in bad:
       with self.subTest(v=repr(v)), self.assertRaises(ValueError):
         rv.release_versions(v)
@@ -77,6 +77,31 @@ class ReleaseVersionTests(unittest.TestCase):
       r = self.make(d, init=init)
       self.assertEqual(rv.check_tree(r, 'v0.1.0a1')['python'], '0.1.0a1')
       self.assertFalse(sentinel.exists())
+
+  def test_regressions(self):
+    h = '{"name":"@taskalong/cli","version":"0.1.0-alpha.1","taskalong":{"pythonVersion":"0.1.0a1"},"x":'
+    ts = ('NaN', 'Infinity', '-Infinity')
+    bad = [h + t + '}' for t in ts] + [h + '{"y":[' + t + ']}}' for t in ts]
+    b = {'name': '@taskalong/cli', 'version': '0.1.0-alpha.1', 'taskalong': {'pythonVersion': '0.1.0a1'}}
+    bad += [json.dumps(dict(b, taskalong=m)) for m in (None, 1, 'x', [], {}, {'pythonVersion': '0.1.0a2'}, {'pythonVersion': 1})]
+    p = dict(b); del p['taskalong']; bad.append(json.dumps(p))
+    with tempfile.TemporaryDirectory() as d:
+      for pkg in bad:
+        with self.subTest(pkg=pkg), self.assertRaises(ValueError):
+          rv.check_tree(self.make(d, pkg=pkg), 'v0.1.0a1')
+      deeps = [{'toml': 'project={name="taskalong",version="0.1.0a1"}\nx=' + '[' * 2000 + ']' * 2000}, {'pkg': h + '[' * 2000 + ']' * 2000 + '}'}, {'init': _ver('0.1.0a1') + '\nx=' + '(' * 2000 + '1' + ')' * 2000}]
+      for kw in deeps:
+        with self.subTest(kw=list(kw)):
+          try:
+            self.assertEqual(rv.check_tree(self.make(d, **kw), 'v0.1.0a1')['python'], '0.1.0a1')
+          except ValueError:
+            pass
+      r = self.make(d, toml='project={')
+      e = io.StringIO()
+      with contextlib.redirect_stderr(e):
+        self.assertEqual(rv.main(['--root', str(r), '--tag', 'v0.1.0a1']), 1)
+      self.assertTrue(e.getvalue().startswith('error: '))
+      self.assertNotIn('Traceback', e.getvalue())
 
 if __name__ == '__main__':
   unittest.main()
