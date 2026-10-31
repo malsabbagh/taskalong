@@ -365,3 +365,5 @@ include docs/adr/0022-configured-experimental-provider.md
 include src/taskalong/muse_successor.py
 include tests/test_muse_successor.py
 include docs/adr/0023-finite-manual-muse-successors.md
+include tests/test_muse_capture_envelope.py
+include docs/adr/0024-bounded-implementation-capture.md

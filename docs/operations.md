@@ -762,7 +762,7 @@ taskalong result RUN_ID
 The provider config requires `executable` (direct native binary). Optional fields
 are `account_home`, `muse_home`, `model`, `reasoning_effort`, `context`,
 `attempt_seconds`, `max_output_bytes`, `max_proposal_bytes`, `catalog_digest`, `context_hashes`,
-`public_context_hashes` and `native_roots`. `native_roots` preserves selected
+`public_context_hashes`, `capture_profile` and `native_roots`. `native_roots` preserves selected
 XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_CACHE_HOME directories;
 the data root agrees with muse_home. These are paths, never credential values. Default account HOME is the current user; default Muse
 data directory is its native local-data directory. No credential is copied or
@@ -832,7 +832,7 @@ For a deliberately larger, separately selected task, a finite example config is:
 UTF-8 JSON, including its digest, path keys and replacement texts. The default is
 65,536, with supported values 1,024 through 262,144. Existing stored configs that
 omit this additive field use that default without rewriting their identity.
-New configurations use `local-muse-provider/3` and require an explicit valid
+Ordinary new configurations use `local-muse-provider/3` and require an explicit valid
 proposal limit. Older binaries refuse this format instead of silently ignoring
 the new limits. The corrected reader still accepts legacy `/1` and `/2` configurations
 at their original 60-second ceiling.
@@ -917,3 +917,76 @@ short-original schedule's two new Meta deadlines total at most 1,080 seconds;
 the original-360 schedule has only one new 720-second deadline. Both have separate
 five-second preflights and existing owned cleanup. They do not bound remote spend or native
 internal retries. Proposals still require manual review/application and tests.
+
+
+### Fixed implementation capture profile
+
+The explicit `capture_profile: implementation` option creates
+`local-muse-provider/4` with exactly 720 seconds, 4,194,304 combined raw
+stdout/stderr bytes, 8,192 nonempty stdout protocol records and a 65,536-byte
+canonical decoded proposal. Omit the three numeric limits or supply precisely
+those values; other combinations refuse. This opts in to a new identity;
+it does not reinterpret any legacy configuration, claim or plan. Ordinary
+configuration defaults and `/1`–`/3` limits remain unchanged. Older readers
+refuse `/4` instead of silently treating it as a legacy configuration.
+
+```json
+{"executable":"/absolute/native/muse","model":"muse-wonder-full-1.0","reasoning_effort":"max","context":"include","capture_profile":"implementation"}
+```
+
+The whole raw protocol remains retained within one combined byte budget.
+No echo, metadata or delta record is filtered to make an answer fit. The line
+parser is explicitly bounded by the same 4 MiB total, so a line larger than the
+old callback default of 1 MiB can fit without a separate hidden failure. The
+8,193rd nonempty record requests owned cancellation. `protocol_records_observed`
+counts records delivered to the observer until its first error; it is not a
+claim about every record drained afterward. Raw observed/drained byte counts
+remain distinct from retained bytes. Byte, record, malformed/partial-stream,
+local cancellation and decoded-proposal failures preserve the claim and never
+stage partial output. A successful `/4` response requires final newline framing.
+
+The input-echo budget check remains a lower bound, never a guarantee that model
+output and streaming overhead will fit. These limits do not bound native HTTP
+retries, remote usage, account charges or complete descendant lifetime. No
+production runtime qualification or remote settlement follows from this profile.
+
+### Explicit capture successor
+
+A trusted caller may explicitly request **one** final capture successor using
+`--reason capture`. This is separate from the unchanged timeout ladders. The
+predecessor must be an original `/3` run at exactly 720 seconds / 1 MiB raw /
+64 KiB proposal that ended with a verified capture overflow, retained root exit
+and group termination, clean local boundary observations, and a matching native
+cancelled-during-model-step journal. It must have no complete JSON proposal,
+completed/failed/conflicting terminal, staged response or prior successor.
+Unknown remote usage, native retries and complete descendant cessation stay
+unknown and are carried forward. A manual cancellation or unknown local cleanup
+cannot qualify.
+
+Configure the fixed `/4` profile in the **same State**, keeping binary, account,
+model, effort, context, bundle, deadline and proposal limit unchanged. Inspect
+the model-free plan, then explicitly invoke its digest with a new output/key:
+
+```sh
+taskalong --state-dir /private/original-state configure-provider muse --config /private/implementation-provider.json
+taskalong --state-dir /private/original-state provider-successor-plan muse --reason capture --predecessor ORIGINAL_RUN_ID
+taskalong --state-dir /private/original-state provider-successor muse --reason capture --predecessor ORIGINAL_RUN_ID --key chosen-capture-key --plan-digest EXACT_PLAN_DIGEST --output /private/new-capture-output
+```
+
+The new plan/enrollment/reservation use format `/2` and bind the capture reason.
+They share the existing timeout reservation indexes and external control
+anchor. Reservation precedes native preflight. Denial, crash and incomplete
+reservation consume the logical slot; repeating the same key observes only.
+Another key, copied/restored State or either successor reason cannot reopen it.
+The child is final even if it times out or overflows. There is no adaptive growth,
+automatic retry, new task nonce, state replacement or automatic patch application.
+
+An overflow can tear the last metadata record. Capture eligibility recognizes
+only a prefix of the pinned native delta-metadata layout, with ordered keys,
+strict types, bound session/run and next sequence wherever visible, ending
+before any result text. Interior corruption, arbitrary incomplete JSON,
+duplicate fields, terminal/result payloads and unsupported layouts refuse.
+All original bytes are still hashed and retained as a failed attempt. This
+narrow eligibility check never makes truncated output successful or changes the
+ordinary decoder. The original bundle submission marker, claim and events stay
+immutable; new lineage appears in separate private records and control files.

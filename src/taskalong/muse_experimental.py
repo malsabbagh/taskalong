@@ -27,7 +27,27 @@ from .validation import canonical_bytes, digest, loads, screen_sensitive
 _CONFIG = "provider:muse"
 _EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 _CONTEXT = {"include", "native-only", "exclude"}
-_KEYS = {"executable", "account_home", "muse_home", "model", "reasoning_effort", "context", "catalog_digest", "public_context_hashes", "context_hashes", "native_roots", "attempt_seconds", "max_output_bytes", "max_proposal_bytes"}
+_KEYS = {"executable", "account_home", "muse_home", "model", "reasoning_effort", "context", "catalog_digest", "public_context_hashes", "context_hashes", "native_roots", "attempt_seconds", "max_output_bytes", "max_proposal_bytes", "capture_profile"}
+_IMPLEMENTATION = (720, 4*1048576, 65536, 8192)
+
+
+def _max_records(config):
+    # Never reinterpret an old cohort by adding defaults to its sealed bytes.
+    return 8192 if config["format"] == "local-muse-provider/4" else 2048
+
+
+class _RecordBudget:
+    """Count complete stdout records; never filter or replace their bytes."""
+    def __init__(self):
+        self.observed = 0
+        self.limited = False
+
+    def observe(self, line):
+        if line:
+            self.observed += 1
+            if self.observed > 8192:
+                self.limited = True
+                _fail("provider_protocol_record_limit", "The finite protocol record budget was exceeded.", outcome="uncertain")
 
 
 def _fail(code, message, *, outcome="not_sent", recovery=None):
@@ -56,17 +76,23 @@ def configure(store, value):
     model = value.get("model", "muse-wonder-full-1.0")
     effort = value.get("reasoning_effort", "high")
     context = value.get("context", "include")
-    seconds = value.get("attempt_seconds", 20); maximum = value.get("max_output_bytes", 65536)
+    profile = value.get("capture_profile")
+    if profile is not None and (type(profile) is not str or profile != "implementation"):
+        _fail("provider_config_invalid", "Select the supported implementation capture profile or omit it.")
+    seconds = value.get("attempt_seconds", 720 if profile else 20)
+    maximum = value.get("max_output_bytes", 4*1048576 if profile else 65536)
     proposal_maximum = value.get("max_proposal_bytes", 65536)
     catalog_digest = value.get("catalog_digest")
     if (type(model) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", model)
             or type(effort) is not str or effort not in _EFFORTS
             or type(context) is not str or context not in _CONTEXT
             or type(seconds) is not int or not 1 <= seconds <= 720
-            or type(maximum) is not int or not 1024 <= maximum <= 1048576
+            or type(maximum) is not int or not 1024 <= maximum <= (4*1048576 if profile else 1048576)
             or type(proposal_maximum) is not int or not 1024 <= proposal_maximum <= 262144
             or catalog_digest is not None and (type(catalog_digest) is not str or not re.fullmatch(r"[a-f0-9]{64}", catalog_digest))):
         _fail("provider_config_invalid", "Select valid model, effort, context and finite local limits.")
+    if profile and (seconds, maximum, proposal_maximum) != _IMPLEMENTATION[:3]:
+        _fail("provider_config_invalid", "Implementation capture requires exactly 720 seconds, 4 MiB protocol and 64 KiB proposal.")
     public_hashes = value.get("public_context_hashes", {})
     if (type(public_hashes) is not dict or set(public_hashes) - {"capability_policy", "security_mode", "meta_context_note"}
             or any(type(v) is not str or not re.fullmatch(r"[a-f0-9]{64}", v) for v in public_hashes.values())):
@@ -80,10 +106,12 @@ def configure(store, value):
     with Path(binary["path"]).open("rb") as stream:
         if stream.read(2) == b"#!":
             _fail("provider_native_binary_required", "Select the installed direct native binary, not an updater or shell wrapper.")
-    config = {"format": "local-muse-provider/3", "provider": "muse", "experimental": True,
+    config = {"format": "local-muse-provider/4" if profile else "local-muse-provider/3", "provider": "muse", "experimental": True,
               "binary": binary, "account_home": str(home), "muse_home": str(muse_home), "native_roots": native_roots, "model": model,
               "reasoning_effort": effort, "context": context, "catalog_digest": catalog_digest, "public_context_hashes": public_hashes, "context_hashes": context_hashes,
               "attempt_seconds": seconds, "max_output_bytes": maximum, "max_proposal_bytes": proposal_maximum}
+    if profile:
+        config.update(capture_profile="implementation", max_protocol_records=8192)
     config["digest"] = digest(config)
     with store.transaction() as db:
         db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", ("provider-config:" + config["digest"], canonical_bytes(config).decode()))
@@ -106,12 +134,20 @@ def _configuration(store):
 
 
 def _checked_configuration(config):
-    if type(config) is not dict or config.get("format") not in ("local-muse-provider/1", "local-muse-provider/2", "local-muse-provider/3") or config.get("digest") != digest(config):
+    if type(config) is not dict or config.get("format") not in ("local-muse-provider/1", "local-muse-provider/2", "local-muse-provider/3", "local-muse-provider/4") or config.get("digest") != digest(config):
         _fail("provider_configuration_changed", "The local provider configuration is inconsistent; configure it again.")
-    ceiling = 720 if config["format"] == "local-muse-provider/3" else 60
+    implementation = config["format"] == "local-muse-provider/4"
+    if implementation:
+        if (config.get("capture_profile") != "implementation"
+                or type(config.get("max_protocol_records")) is not int
+                or tuple(config.get(k) for k in ("attempt_seconds", "max_output_bytes", "max_proposal_bytes", "max_protocol_records")) != _IMPLEMENTATION):
+            _fail("provider_configuration_changed", "The implementation capture profile is inconsistent.")
+    elif "capture_profile" in config or "max_protocol_records" in config:
+        _fail("provider_configuration_changed", "Legacy capture identities cannot declare implementation bounds.")
+    ceiling = 720 if config["format"] in {"local-muse-provider/3", "local-muse-provider/4"} else 60
     if type(config.get("attempt_seconds")) is not int or not 1 <= config["attempt_seconds"] <= ceiling:
         _fail("provider_configuration_changed", "The provider deadline is invalid for its configuration format.")
-    if type(config.get("max_output_bytes")) is not int or not 1024 <= config["max_output_bytes"] <= 1048576:
+    if type(config.get("max_output_bytes")) is not int or not 1024 <= config["max_output_bytes"] <= (4*1048576 if implementation else 1048576):
         _fail("provider_configuration_changed", "The whole-protocol capture limit is invalid.")
     if config["format"] != "local-muse-provider/1" and (type(config.get("max_proposal_bytes")) is not int or not 1024 <= config["max_proposal_bytes"] <= 262144):
         _fail("provider_configuration_changed", "This provider configuration requires an explicit finite proposal limit; configure it again.")
@@ -222,13 +258,16 @@ def _budget(config, prompt):
         ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
         for kind in ("turn.input.user", "run.lifecycle.started"))
     maximum = config["max_output_bytes"]
-    return {"provider": "muse", "model_free": True, "controller_submissions": 0,
+    value = {"provider": "muse", "model_free": True, "controller_submissions": 0,
             "prompt_bytes": len(prompt), "input_echo_contract": "muse-session-input-echo/1",
             "minimum_input_echo_bytes": minimum, "max_output_bytes": maximum,
             "max_proposal_bytes": config.get("max_proposal_bytes", 65536),
             "input_echoes_fit": minimum < maximum,
             "remaining_after_minimum_echo_bytes": max(0, maximum - minimum),
             "response_fit_guaranteed": False}
+    if config.get("format") == "local-muse-provider/4":
+        value.update(capture_profile="implementation", max_protocol_records=8192)
+    return value
 
 
 def budget(store, *, request):
@@ -310,10 +349,10 @@ def context_snapshot(store, *, output):
     return _preflight(config, root)
 
 
-def _session_records(raw, session):
+def _session_records(raw, session, *, max_records=2048):
     try:
         rows = [_native_json(line) for line in raw.splitlines() if line]
-        if not 1 <= len(rows) <= 2048: raise ValueError()
+        if type(max_records) is not int or max_records not in (2048,8192) or not 1 <= len(rows) <= max_records: raise ValueError()
         run = None; sequence = 0
         for row in rows:
             if (type(row) is not dict or type(row.get("schema_version")) is not int or row["schema_version"] != 1
@@ -332,9 +371,10 @@ def _session_records(raw, session):
         _fail("provider_response_unrecognized", "The captured native output has no unambiguous completed response; preserve it without redispatch.", outcome="uncertain")
 
 
-def _decode(raw, session, *, max_proposal_bytes=65536):
+def _decode(raw, session, *, max_proposal_bytes=65536, max_records=2048):
     try:
-        rows, run = _session_records(raw, session)
+        if max_records==8192 and not raw.endswith(b'\n'):raise ValueError()
+        rows, run = _session_records(raw, session, max_records=max_records)
         terminal = []
         for row in rows:
             payload = row["payload"]
@@ -441,14 +481,21 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
                 _check(store, _successor, config)
             record = _event(store, record, root, "running", process_receipt=receipt.to_dict())
         env = _environment(config, root)
+        record_budget = _RecordBudget() if config["format"] == "local-muse-provider/4" else None
+        capture_options = {"on_stdout_line": record_budget.observe, "max_line_bytes": config["max_output_bytes"]} if record_budget else {}
         result = run_foreground_experiment(argv, mode=FOREGROUND_EXPERIMENT, cwd=root/"workspace", env=env,
             timeout_seconds=config["attempt_seconds"], max_output_bytes=config["max_output_bytes"], signal_grace_seconds=.5,
-            on_spawn=spawned, cancel_requested=lambda:(root/"cancel-request.json").exists())
+            on_spawn=spawned, cancel_requested=lambda:(root/"cancel-request.json").exists(), **capture_options)
         pilot._write(root,"stdout.bin",redact(result.stdout)); pilot._write(root,"stderr.bin",redact(result.stderr))
-        pilot._write(root,"process.json",canonical_bytes(_summary(result)))
-        if result.root_exit_code != 0 or result.timed_out or result.cancelled or result.output_limited or _owner_failed(result):
-            return _event(store,record,root,"failed",process=_summary(result),error="provider_local_failure",remote_usage="unknown")
-        response, native_run = _decode(result.stdout, session, max_proposal_bytes=config.get("max_proposal_bytes", 65536))
+        process = _summary(result)
+        if record_budget:
+            process.update(protocol_records_observed=record_budget.observed,
+                           protocol_record_limit=8192, protocol_record_limited=record_budget.limited)
+        pilot._write(root,"process.json",canonical_bytes(process))
+        if result.root_exit_code != 0 or result.timed_out or result.cancelled or result.output_limited or _owner_failed(result) or record_budget and record_budget.limited:
+            return _event(store,record,root,"failed",process=process,
+                          error="provider_protocol_record_limit" if record_budget and record_budget.limited else "provider_local_failure",remote_usage="unknown")
+        response, native_run = _decode(result.stdout, session, max_proposal_bytes=config.get("max_proposal_bytes", 65536), max_records=_max_records(config))
         screen_sensitive(response); pilot._proposal(manifest,response)
         _, events, metadata = _journal(config, session)
         observations = {"requested_provider":"meta","requested_model":config["model"],"requested_effort":config["reasoning_effort"],
@@ -458,7 +505,7 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
             _fail("provider_response_identity_mismatch", "The native journal reports a different provider or model; inspect the captured output.", outcome="uncertain")
         pilot._write(root,"response.json",canonical_bytes(response))
         proposal = pilot.stage(bundle=str(bundle_root),response=response,output=str(root/"proposal"))
-        return _event(store,record,root,"proposal_ready",process=_summary(result),execution=observations,
+        return _event(store,record,root,"proposal_ready",process=process,execution=observations,
                       proposal_path=str(root/"proposal/proposed.patch"),review_path=str(root/"proposal/review.json"),proposal_digest=proposal["digest"],remote_usage="unknown")
     except (TaskAlongError, ProcessBoundaryError, OSError) as exc:
         code = exc.code if hasattr(exc,"code") else "provider_local_io"

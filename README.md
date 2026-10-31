@@ -70,6 +70,13 @@ Set `context` to `exclude` to request full exclusion. The currently supported Mu
 client cannot guarantee that with its existing login, so TaskAlong fails clearly
 before provider dispatch. `native-only` is an explicit partial option that passes
 Muse's foreign-context exclusion flag while retaining native personal context.
+For explicitly larger implementation tasks, opt in to the fixed
+`"capture_profile":"implementation"` configuration: 720 seconds, 4 MiB combined
+protocol, 8,192 records and 64 KiB decoded proposal. Defaults and legacy limits
+stay unchanged. A consumed legacy implementation capture failure has a separate
+[one-shot capture successor](docs/operations.md#explicit-capture-successor);
+it requires retained cancellation evidence and never retries automatically.
+
 Private configuration, context and raw captures stay local; publish code and
 sanitized validation summaries only.
 
