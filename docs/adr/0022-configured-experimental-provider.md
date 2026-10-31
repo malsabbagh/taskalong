@@ -38,3 +38,15 @@ exclusion failure, data screening, one-use claims, normal CLI/API/result behavio
 output binding and manual proposal staging using explicit synthetic fixtures.
 A bounded real test must be reported separately and only after actual observation.
 No new Store/schema migration is needed; rollback leaves claims/history intact.
+
+Capture admission additionally measures the generated prompt against the supported
+session protocol's two complete input echoes, using minimal JSON framing and
+UTF-8 escaping. A known-insufficient whole-protocol cap refuses before any native
+process or submission claim. A local provider-budget query exposes this lower
+bound; it does not promise response fit or replace runtime cancellation. The
+adapter separately caps canonical decoded proposal bytes and records retained
+buffer counts separately from all drained bytes. It never omits protocol records
+to manufacture success. Existing caps/defaults remain finite; old configuration
+identities remain readable without rewriting receipts or claims.
+New configurations use format `/2` to prevent older clients from silently
+ignoring the added proposal bound; legacy `/1` remains readable by this client.

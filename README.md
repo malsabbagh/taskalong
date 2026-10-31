@@ -45,6 +45,7 @@ its existing login; TaskAlong does not take an API key or start a login flow.
 ```sh
 taskalong configure-provider muse --config provider.json
 taskalong providers
+taskalong provider-budget muse --request task.json
 taskalong provider-context muse --output /absolute/private-context-review
 taskalong run --provider muse --request task.json --output /absolute/new-run
 taskalong result RUN_ID

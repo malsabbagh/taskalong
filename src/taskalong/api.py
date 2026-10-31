@@ -56,6 +56,13 @@ class RunService:
         from .muse_experimental import context_snapshot
         return context_snapshot(self._store, output=output)
 
+    def provider_budget(self, provider="muse", *, request):
+        """Measure the explicit task's native echo lower bound without dispatch."""
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_experimental import budget
+        return budget(self._store, request=request)
+
     def run_provider(self, provider="muse", *, bundle=None, request=None, output=None):
         if provider != "muse":
             raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)

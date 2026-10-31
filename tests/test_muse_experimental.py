@@ -256,3 +256,136 @@ class ExperimentalMuseTests(unittest.TestCase):
             code,value=cli(['run','--provider','muse','--bundle',str(self.bundle),'--output',str(self.root/'output')])
         self.assertEqual(code,0);self.assertEqual(value['data']['state'],'proposal_ready')
         code,value=cli(['status',value['data']['run_id']]);self.assertEqual(code,0);self.assertEqual(value['data']['state'],'proposal_ready')
+
+    def large_request(self):
+        value=request()
+        value['files']={'first.txt':'x'*60000+'\n','second.txt':'x'*60000+'\n','third.txt':'x\n'}
+        _,prompt=pilot._manifest(value)
+        value['files']['third.txt']='x'*(1+132870-len(prompt))+'\n'
+        self.assertEqual(len(pilot._manifest(value)[1]),132870)
+        return value
+
+    def test_realistic_large_prompt_refuses_before_any_process_claim_or_output(self):
+        self.configure();value=self.large_request()
+        with patch.object(muse,'run_foreground_experiment') as owner,patch.object(muse,'_preflight') as preflight:
+            report=self.service.provider_budget(request=value)
+            self.assertFalse(report['input_echoes_fit']);self.assertGreater(report['minimum_input_echo_bytes'],265740)
+            self.assertEqual(report['controller_submissions'],0);self.assertFalse(report['response_fit_guaranteed'])
+            with patch.object(muse.sys,'platform','darwin'),self.assertRaises(TaskAlongError) as exc:
+                self.service.run_provider(request=value,output=str(self.root/'large-output'))
+        self.assertEqual(exc.exception.code,'provider_capture_budget_insufficient');self.assertEqual(exc.exception.effect_outcome,'not_sent')
+        owner.assert_not_called();preflight.assert_not_called();self.assertFalse((self.root/'large-output').exists())
+        with self.service._store.transaction() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM settings WHERE name LIKE 'provider-claim:%' OR name LIKE 'provider-run:%'").fetchone()[0],0)
+
+    def test_existing_one_mib_configuration_admits_echo_space_without_promising_result_fit(self):
+        self.configure(max_output_bytes=1048576,max_proposal_bytes=12288)
+        with patch.object(muse,'run_foreground_experiment') as owner:
+            report=self.service.provider_budget(request=self.large_request())
+        owner.assert_not_called();self.assertTrue(report['input_echoes_fit']);self.assertFalse(report['response_fit_guaranteed'])
+        self.assertEqual(report['max_output_bytes'],1048576);self.assertEqual(report['max_proposal_bytes'],12288)
+        self.assertGreater(report['remaining_after_minimum_echo_bytes'],700000)
+
+    def test_echo_lower_bound_counts_escaping_utf8_and_each_json_frame(self):
+        # Independent literal JSON wire oracle: quote, LF, backslash, tab, Arabic.
+        prompt='"\n\\\tع'.encode()
+        encoded=b'"\\"\\n\\\\\\t\xd8\xb9"'
+        expected=sum(len(b'{"payload_type":"'+kind+b'","payload":{"prompt":'+encoded+b'}}\n')
+                     for kind in (b'turn.input.user',b'run.lifecycle.started'))
+        report=muse._budget({'max_output_bytes':expected},prompt)
+        self.assertEqual(report['minimum_input_echo_bytes'],expected)
+        self.assertFalse(report['input_echoes_fit'])
+        self.assertTrue(muse._budget({'max_output_bytes':expected+1},prompt)['input_echoes_fit'])
+
+    def test_whole_capture_and_decoded_proposal_have_independent_finite_ranges(self):
+        for key,good,bad in [('max_output_bytes',(1024,1048576),(True,1023,1048577)),
+                             ('max_proposal_bytes',(1024,262144),(True,1023,262145))]:
+            for value in good:self.assertTrue(self.configure(**{key:value})['configured'])
+            for value in bad:
+                with self.subTest(key=key,value=value),self.assertRaises(TaskAlongError) as exc:self.configure(**{key:value})
+                self.assertEqual(exc.exception.code,'provider_config_invalid')
+        self.configure();self.assertTrue(self.service.provider_budget(request=request())['input_echoes_fit'])
+
+    def test_decoded_proposal_cap_measures_complete_canonical_json_utf8(self):
+        response={'bundle_digest':self.manifest['digest'],'changes':{'greeting.txt':'ع'*600+'\n'}}
+        raw=native_output('session',json.dumps(response,ensure_ascii=True,indent=2))
+        size=len(canonical_bytes(response))
+        self.assertEqual(muse._decode(raw,'session',max_proposal_bytes=size)[0],response)
+        with self.assertRaises(TaskAlongError) as exc:muse._decode(raw,'session',max_proposal_bytes=size-1)
+        self.assertEqual(exc.exception.code,'provider_proposal_too_large')
+
+    def test_oversized_proposal_preserves_capture_and_claim_without_staging(self):
+        self.configure(max_output_bytes=1048576,max_proposal_bytes=1024)
+        original=self.process
+        def oversized(argv,**options):
+            value=original(argv,**options);session=argv[argv.index('--session-id')+1]
+            value.stdout=native_output(session,json.dumps({'bundle_digest':self.manifest['digest'],'changes':{'greeting.txt':'x'*2048+'\n'}}))
+            return value
+        with patch.object(muse.sys,'platform','darwin'),patch.object(muse,'_preflight',return_value={}),patch.object(muse,'run_foreground_experiment',side_effect=oversized),self.assertRaises(TaskAlongError) as exc:
+            self.service.run_provider(bundle=str(self.bundle),output=str(self.root/'oversized'))
+        self.assertEqual(exc.exception.code,'provider_proposal_too_large');self.assertEqual(exc.exception.effect_outcome,'uncertain')
+        self.assertTrue((self.root/'oversized/stdout.bin').exists());self.assertFalse((self.root/'oversized/proposal').exists())
+        self.assertEqual(self.service.result(exc.exception.recovery[0]['run_id'])['state'],'failed')
+        self.assertTrue((self.bundle/'provider-submission.json').exists());self.assertEqual(len(self.calls),1)
+
+    def test_overflow_and_cancel_keep_truncation_failure_and_explicit_byte_counts(self):
+        self.configure()
+        for index,flag in enumerate(('output_limited','cancelled')):
+            value=request();value['task']+=str(index)
+            root=self.root/f'failure-{index}'
+            def stopped(argv,**options):
+                result=self.process(argv,**options)
+                result.stdout=b'partial JSON';result.stderr=b'error';result.root_exit_code=130
+                setattr(result,flag,True)
+                before=result.to_dict()
+                result.to_dict=lambda:{**before,'root_exit_code':130,flag:True,'output_bytes':288338}
+                return result
+            with patch.object(muse.sys,'platform','darwin'),patch.object(muse,'_preflight',return_value={}),patch.object(muse,'run_foreground_experiment',side_effect=stopped),patch.object(muse,'_decode') as decoder:
+                result=self.service.run_provider(request=value,output=str(root))
+            decoder.assert_not_called();self.assertEqual(result['state'],'failed');self.assertEqual(result['remote_usage'],'unknown')
+            self.assertEqual(result['process']['observed_output_bytes'],288338)
+            self.assertEqual(result['process']['retained_output_bytes'],17)
+            self.assertEqual(result['process']['retained_stdout_bytes'],12);self.assertEqual(result['process']['retained_stderr_bytes'],5)
+            self.assertEqual((root/'stdout.bin').read_bytes(),b'partial JSON');self.assertFalse((root/'proposal').exists())
+            with patch.object(muse.sys,'platform','darwin'),self.assertRaises(TaskAlongError) as exc:
+                self.service.run_provider(bundle=result['bundle'],output=str(self.root/f'retry-{index}'))
+            self.assertEqual(exc.exception.code,'provider_already_submitted')
+
+    def test_cli_budget_is_local_and_run_cannot_dispatch_an_insufficient_request(self):
+        from taskalong.cli import main
+        self.configure();path=self.root/'large.json';path.write_bytes(canonical_bytes(self.large_request()))
+        def cli(arguments):
+            output=io.StringIO()
+            with contextlib.redirect_stdout(output):code=main(['--json','--state-dir',str(self.root/'state'),*arguments])
+            value=json.loads(output.getvalue());validate('command-result',value);return code,value
+        with patch.object(muse.sys,'platform','darwin'),patch.object(muse,'run_foreground_experiment') as owner:
+            code,result=cli(['provider-budget','muse','--request',str(path)])
+            self.assertEqual(code,0);self.assertFalse(result['data']['input_echoes_fit'])
+            code,result=cli(['run','--request',str(path),'--output',str(self.root/'cli-output')])
+            self.assertEqual(code,3);self.assertEqual(result['errors'][0]['code'],'provider_capture_budget_insufficient')
+        owner.assert_not_called();self.assertFalse((self.root/'cli-output').exists())
+
+    def test_existing_configuration_without_proposal_field_remains_readable(self):
+        from taskalong.validation import digest
+        self.configure();old=self.service._store.setting('provider:muse');old.pop('max_proposal_bytes');old['format']='local-muse-provider/1';old['digest']=digest(old)
+        self.service._store.set_setting('provider:muse',old)
+        self.assertEqual(self.service.provider_budget(request=request())['max_proposal_bytes'],65536)
+        self.assertEqual(self.service._store.setting('provider:muse'),old)
+        self.assertEqual(self.run_fixture()['state'],'proposal_ready')
+
+    def test_new_format_fences_rollback_and_requires_explicit_valid_proposal_limit(self):
+        from taskalong.validation import digest
+        self.configure();value=self.service._store.setting('provider:muse')
+        self.assertEqual(value['format'],'local-muse-provider/2')
+        for field in (None,True,0,262145):
+            bad=dict(value)
+            if field is None:bad.pop('max_proposal_bytes')
+            else:bad['max_proposal_bytes']=field
+            bad['digest']=digest(bad);self.service._store.set_setting('provider:muse',bad)
+            with patch.object(muse,'run_foreground_experiment') as owner,self.assertRaises(TaskAlongError) as exc:
+                self.service.provider_budget(request=request())
+            self.assertEqual(exc.exception.code,'provider_configuration_changed');owner.assert_not_called()
+        bad={**value,'format':'local-muse-provider/999'};bad['digest']=digest(bad)
+        self.service._store.set_setting('provider:muse',bad)
+        with self.assertRaises(TaskAlongError) as exc:self.service.provider_budget(request=request())
+        self.assertEqual(exc.exception.code,'provider_configuration_changed')

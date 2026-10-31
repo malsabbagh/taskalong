@@ -26,6 +26,7 @@ def parser():
     p = command("configure-provider"); p.add_argument("provider"); p.add_argument("--config", required=True)
     command("providers")
     p = command("provider-context"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--output", required=True)
+    p = command("provider-budget"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--request", required=True)
     p = command("run"); p.add_argument("--provider", default="muse"); p.add_argument("--output")
     task = p.add_mutually_exclusive_group(required=True); task.add_argument("--bundle"); task.add_argument("--request")
     p = command("register-repository"); p.add_argument("path"); p.add_argument("--workspace-root")
@@ -127,6 +128,7 @@ def main(argv=None):
             if cmd == "configure-provider": result = service.configure_provider(args.provider, load_json(args.config))
             elif cmd == "providers": result = service.providers()
             elif cmd == "provider-context": result = service.provider_context(args.provider, output=args.output)
+            elif cmd == "provider-budget": result = service.provider_budget(args.provider, request=load_json(args.request))
             elif cmd in {"run", "supervised-pilot-run"}:
                 result = service.run_provider(getattr(args, "provider", "muse"), bundle=getattr(args, "bundle", None),
                     request=load_json(args.request) if getattr(args, "request", None) else None, output=args.output)

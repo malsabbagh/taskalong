@@ -752,6 +752,7 @@ Local provider configuration enables ordinary experimental execution immediately
 
 ```text
 taskalong configure-provider muse --config /absolute/provider.json
+taskalong provider-budget muse --request /absolute/task.json
 taskalong provider-context muse --output /absolute/private-context-review
 taskalong run --provider muse --request /absolute/task.json --output /absolute/new-run
 taskalong status RUN_ID
@@ -760,7 +761,7 @@ taskalong result RUN_ID
 
 The provider config requires `executable` (direct native binary). Optional fields
 are `account_home`, `muse_home`, `model`, `reasoning_effort`, `context`,
-`attempt_seconds`, `max_output_bytes`, `catalog_digest`, `context_hashes`,
+`attempt_seconds`, `max_output_bytes`, `max_proposal_bytes`, `catalog_digest`, `context_hashes`,
 `public_context_hashes` and `native_roots`. `native_roots` preserves selected
 XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_CACHE_HOME directories;
 the data root agrees with muse_home. These are paths, never credential values. Default account HOME is the current user; default Muse
@@ -802,3 +803,47 @@ candidate. status/result read existing records without invoking the provider.
 Configuration/context/login/local paths and raw outputs belong in private local
 state, never in Git, PR descriptions or CI artifacts. Tests use synthetic fixtures;
 only sanitized validation summaries may be published.
+
+### Capture budget before dispatch
+
+`max_output_bytes` limits the combined retained stdout/stderr protocol, not just
+the model's answer. Its default remains 65,536 bytes; supported values are
+1,024 through 1,048,576. Muse's supported session protocol echoes the complete
+prompt in both `turn.input.user` and `run.lifecycle.started`. Large snapshots can
+therefore exhaust a small capture before any answer. This is a local controller
+setting, not a Muse account, token or spending limit.
+
+`provider-budget` measures the generated prompt and minimal framing for both
+JSON-escaped UTF-8 echoes. It starts no native process, creates no provider run
+and reserves no submission. `input_echoes_fit: false` means `run` refuses with
+`provider_capture_budget_insufficient` before creating its output or launching
+even the model-free context check. A true value establishes only that this known
+minimum fits: native metadata, stderr, output deltas and the completed response
+still require space. `response_fit_guaranteed` is always false. This is not an
+inference, context-inspection or execution admission receipt.
+
+For a deliberately larger, separately selected task, a finite example config is:
+
+```json
+{"executable":"/absolute/native/muse","model":"muse-wonder-full-1.0","reasoning_effort":"high","context":"include","attempt_seconds":20,"max_output_bytes":1048576,"max_proposal_bytes":12288}
+```
+
+`max_proposal_bytes` independently caps the complete decoded proposal's canonical
+UTF-8 JSON, including its digest, path keys and replacement texts. The default is
+65,536, with supported values 1,024 through 262,144. Existing stored configs that
+omit this additive field use that default without rewriting their identity.
+New configurations use `local-muse-provider/2` and require an explicit valid
+proposal limit. Older binaries refuse this format instead of silently ignoring
+the new limit. The corrected reader still accepts legacy `/1` configurations.
+Exceeding it retains the raw capture and submission claim, returns
+`provider_proposal_too_large`, and stages no patch. Model instructions to keep an
+answer short do not replace either enforced bound.
+
+Process records retain the legacy `output_bytes` count and add
+`observed_output_bytes` for all bytes drained, plus `retained_stdout_bytes`,
+`retained_stderr_bytes` and `retained_output_bytes` for bounded buffers before
+redaction. Draining during owned shutdown can observe more than the retention
+cap. Overflow still cancels and fails; truncated output is never decoded as a
+successful proposal. These pipe limits do not cap native-owned journal storage
+or remote usage. Do not discard protocol records to make a result appear to fit,
+reset an old claim or automatically resubmit an uncertain attempt.
