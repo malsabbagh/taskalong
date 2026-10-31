@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:taskalong:schema:v2.12:driver-config",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "driver_config"
+    },
+    "schema_version": {
+      "const": "2.12"
+    },
+    "extensions": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "config_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "qualification": {
+      "const": "production"
+    },
+    "projection": {
+      "const": "muse-production-plain/1"
+    },
+    "transport": {
+      "const": "taskalong_owned_production"
+    },
+    "executable": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 4096
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+          "minLength": 64,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "build": {
+      "const": "1.4.10-R6427.1"
+    },
+    "requested_model": {
+      "const": "wonder-full"
+    },
+    "permission_profile": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9:][A-Za-z0-9._:/-]{0,255}$"
+    },
+    "max_model_steps": {
+      "const": 1
+    },
+    "inference_destination_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "check_profile_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "checks_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "review_config_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "command_sandbox_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}(?![\\s\\S])",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "reasoning_effort": {
+      "const": "high"
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "profile_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "intent_configuration_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "local_subject_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "declared_inputs": {
+      "type": "object",
+      "properties": {
+        "instructions_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "tools_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "dependency_paths": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        }
+      },
+      "required": [
+        "instructions_path",
+        "tools_path",
+        "dependency_paths"
+      ],
+      "additionalProperties": false
+    },
+    "review_provider": {
+      "enum": [
+        "local-ollama",
+        "cloud-ollama",
+        "openrouter",
+        "openai-compatible"
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "schema_version",
+    "extensions",
+    "config_id",
+    "qualification",
+    "projection",
+    "transport",
+    "executable",
+    "build",
+    "requested_model",
+    "permission_profile",
+    "max_model_steps",
+    "inference_destination_id",
+    "check_profile_digest",
+    "checks_digest",
+    "review_config_digest",
+    "command_sandbox_digest",
+    "digest",
+    "reasoning_effort",
+    "profile_id",
+    "profile_digest",
+    "intent_configuration_digest",
+    "local_subject_digest",
+    "declared_inputs",
+    "review_provider"
+  ],
+  "additionalProperties": false
+}

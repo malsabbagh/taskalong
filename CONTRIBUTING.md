@@ -1,6 +1,7 @@
 # Contributing
 
-This is an experimental foundation with live executor dispatch disabled. The
+This is an experimental foundation with configured local Muse execution and
+separate closed production-qualification contracts. The
 project uses the [MIT License](LICENSE). Submit original contributions under
 that license and retain applicable notices; no separate contributor agreement
 is included in this candidate.
@@ -9,7 +10,10 @@ Use original code and synthetic examples. Do not add credentials, private prompt
 source snapshots, operational logs or third-party implementation without recorded
 rights and notices. Keep changes small and state actual qualification limits.
 Preserve v1 canonical data, durable effects, worktree fencing, unknown-effect
-quarantine, independent acceptance and the production refusal.
+quarantine, independent acceptance and the separate production-qualification boundary.
+Configured experimental provider execution must remain usable without a second
+activation gate. Preserve explicit context choices, one-use dispatch and manual
+patch review; never publish local context, account data or raw provider captures.
 
 Run relevant tests plus `python scripts/check_docs.py`,
 `python tools/sync_guides.py --check` and whitespace checks. Full installed

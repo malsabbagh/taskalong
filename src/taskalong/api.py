@@ -38,6 +38,49 @@ class RunService:
     def register_profile(self, profile):
         return self._workflow.register_profile(profile)
 
+    def configure_provider(self, provider, configuration):
+        """Local configuration enables the provider's experimental task route."""
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_experimental import configure
+        return configure(self._store, configuration)
+
+    def providers(self):
+        from .muse_experimental import providers
+        return providers(self._store)
+
+    def provider_context(self, provider="muse", *, output):
+        """Private local-only startup snapshot, without a remote model request."""
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_experimental import context_snapshot
+        return context_snapshot(self._store, output=output)
+
+    def provider_budget(self, provider="muse", *, request):
+        """Measure the explicit task's native echo lower bound without dispatch."""
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_experimental import budget
+        return budget(self._store, request=request)
+
+    def run_provider(self, provider="muse", *, bundle=None, request=None, output=None):
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_experimental import run
+        return run(self._store, bundle=bundle, request=request, output=output)
+
+    def provider_successor_plan(self, provider="muse", *, predecessor):
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_successor import plan
+        return plan(self._store, predecessor=predecessor)
+
+    def provider_successor(self, provider="muse", *, predecessor, key, plan_digest, output):
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+        from .muse_successor import execute
+        return execute(self._store, predecessor=predecessor, key=key, plan_digest=plan_digest, output=output)
+
     def configure_muse(self, configuration):
         """Register production intent only; never qualify or launch Muse."""
         from .muse_production import configure
@@ -46,6 +89,19 @@ class RunService:
     def muse_readiness(self, profile_id, configuration_digest):
         from .muse_production import readiness
         return readiness(self._store, profile_id, configuration_digest)
+
+    def prepare_muse(self, spec, *, inputs):
+        """Retain measured production inputs without granting runtime authority."""
+        from .muse_preparation import prepare
+        return prepare(self._store, spec, inputs=inputs)
+
+    def muse_preparation(self, preparation_digest):
+        from .muse_preparation import observe
+        return observe(self._store, preparation_digest)
+
+    def configure_muse_driver(self, configuration):
+        from .muse_lifecycle import configure
+        return configure(self._store, configuration)
 
     def configure_muse_capture(self, configuration):
         """Trusted original synthetic Muse registration, not a live capability grant."""
@@ -91,7 +147,15 @@ class RunService:
     def start(self, run_id, *, operation_key, expected_revision, authority_id=None):
         return self._workflow.start(run_id, operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id)
 
+    def muse_exposure(self):
+        from .muse_exposure import view
+        return view(self._store)
+
     def inspect(self, run_id):
+        from .muse_experimental import inspect as provider_run
+        experimental = provider_run(self._store, run_id)
+        if experimental is not None:
+            return experimental
         run = self._store.run(run_id)
         if run["schema_version"] in {"2.7", "2.10"}:
             from .steps import view
@@ -105,6 +169,9 @@ class RunService:
             raise TaskAlongError("execution_mode_unsupported", "Select an explicit supported observation mode.")
         run = self._store.run(run_id)
         spec = self._store.spec(run)
+        if spec["schema_version"] == "2.12":
+            from .muse_lifecycle import capabilities_view
+            return capabilities_view(self._store, run, spec, mode)
         if spec["schema_version"] == "2.9":
             from .muse_handoff import capabilities_view
             return capabilities_view(self._store, run, spec, mode)
@@ -127,12 +194,21 @@ class RunService:
         """Read persisted outcomes/immutable references; never reconcile or launch.
 
         A completed worker remains distinct from independent acceptance. Raw
-        task/policy bodies, runtime paths, credentials and logs are excluded.
+        Legacy worker views exclude raw bodies, runtime paths and logs. Configured
+        provider views include private capture paths for local review; do not publish
+        those records as public artifacts.
         """
+        from .muse_experimental import inspect as provider_run
+        experimental = provider_run(self._store, run_id)
+        if experimental is not None:
+            return experimental
         run = self._store.run(run_id)
         if run["schema_version"] in {"2.7", "2.10"}:
             from .steps import view
             return view(self._store, run)
+        if self._store.spec(run)["schema_version"] == "2.12":
+            from .muse_lifecycle import result_view
+            return result_view(self._store, run)
         if self._store.spec(run)["schema_version"] == "2.9":
             from .muse_handoff import result_view
             return result_view(self._store, run)

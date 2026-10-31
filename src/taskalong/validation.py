@@ -142,6 +142,8 @@ def load_json(path: str | Path, *, max_bytes: int = MAX_DOCUMENT_BYTES) -> dict[
 def schema_names(*, version: str = "1.0") -> tuple[str, ...]:
     if version == "1.0":
         return SCHEMA_NAMES
+    if version == "2.12":
+        return ("driver-config", "task-spec", "worker-packet", "packet-projection", "execution-handoff", "result-view", "capabilities-view")
     if version == "2.11":
         return ("runtime-profile", "task-spec", "driver-config")
     if version == "2.0":
@@ -173,7 +175,7 @@ def schema_names(*, version: str = "1.0") -> tuple[str, ...]:
 
 @functools.lru_cache(maxsize=None)
 def _cached_schema(name: str, version: str) -> dict[str, Any]:
-    directory = {"2.11": "v2.11", "1.0": "v1", "2.0": "v2", "2.1": "v2.1", "2.2": "v2.2", "2.3": "v2.3", "2.4": "v2.4", "2.5": "v2.5", "2.6": "v2.6", "2.7": "v2.7", "2.10": "v2.10", "2.8": "v2.8", "2.9": "v2.9"}[version]
+    directory = {"2.12": "v2.12", "2.11": "v2.11", "1.0": "v1", "2.0": "v2", "2.1": "v2.1", "2.2": "v2.2", "2.3": "v2.3", "2.4": "v2.4", "2.5": "v2.5", "2.6": "v2.6", "2.7": "v2.7", "2.10": "v2.10", "2.8": "v2.8", "2.9": "v2.9"}[version]
     return loads(resources.files("taskalong.resources").joinpath("schemas", directory, name + ".schema.json").read_bytes())
 
 
@@ -426,7 +428,7 @@ def validate_versioned(name: str, document: dict[str, Any], *, expected_version:
     elif expected_version == "2.1":
         from .qualification import _semantics as qualification_semantics
         qualification_semantics(result)
-    elif expected_version in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.8", "2.9"}:
+    elif expected_version in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.8", "2.9", "2.12"}:
         _sets(result, name)
         if name in {"task-spec", "worker-packet", "worker-result"}:
             _semantics(result, name)
@@ -453,7 +455,7 @@ def seal_versioned(name: str, document: dict[str, Any], *, version: str) -> dict
     if version == "2.0":
         from .bindings import _normalize
         _normalize(result)
-    elif version in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11"}:
+    elif version in {"2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11", "2.12"}:
         _sets(result, name)
     if "digest" in selected["properties"]:
         result["digest"] = digest(result)

@@ -2,6 +2,7 @@
 from .bindings import ExecutionBinding, HarnessInstallation, ProviderProfile
 from .contracts import RuntimeProfile
 from .muse_handoff import MuseConfiguration
+from .muse_lifecycle import MuseProductionConfiguration
 from .errors import TaskAlongError
 from .qualification import QualificationDecision
 from .execution import InstructionBundle, ToolPolicy, SandboxPolicy, CheckBinding
@@ -23,7 +24,7 @@ _TRIAL_TYPES = {cls.schema_name.replace("-", "_"): cls for cls in
 
 
 def _require(store):
-    if store.format_version not in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
+    if store.format_version not in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
         raise TaskAlongError("store_upgrade_required", "Versioned history requires the explicit backed-up store upgrade.", exit_code=3)
 
 
@@ -44,10 +45,12 @@ def record_document(store, document, *, operation_key):
         raise TaskAlongError("store_upgrade_required", "Trial document history requires explicit format-8 maintenance.", exit_code=3)
     _require(store)
     key_check(operation_key)
-    if type(document) not in (*_TYPES.values(), OllamaDriverConfig, CursorDriverConfig, AntigravityDriverConfig, *_TRIAL_TYPES.values()):
+    if type(document) not in (*_TYPES.values(), OllamaDriverConfig, CursorDriverConfig, AntigravityDriverConfig, MuseProductionConfiguration, *_TRIAL_TYPES.values()):
         raise TaskAlongError("history_document_invalid", "Only validated immutable profile/binding/decision documents can be stored.")
     document = type(document)(document.to_bytes())
     value = document.to_dict()
+    if value["schema_version"] == "2.12" and store.format_version < 12:
+        raise TaskAlongError("store_upgrade_required", "Production Muse requires format-12 maintenance.", exit_code=3)
     if value["schema_version"] == "2.9" and store.format_version < 9:
         raise TaskAlongError("store_upgrade_required", "Muse configuration requires explicit format-9 maintenance.", exit_code=3)
     if value["schema_version"] == "2.2" and store.format_version < 3:
@@ -85,7 +88,11 @@ def document_history(store, kind, identity):
         if len(records) == 1000:
             raise TaskAlongError("history_limit", "This history exceeds the bounded reader; no partial history is returned.", exit_code=3)
         value = loads(row["document"])
-        if value.get("schema_version") == "2.8":
+        if value.get("schema_version") == "2.12":
+            if store.format_version < 12 or kind != "driver_config":
+                raise TaskAlongError("store_integrity", "Production Muse history is outside its format fence.", exit_code=70)
+            document = MuseProductionConfiguration.from_dict(value)
+        elif value.get("schema_version") == "2.8":
             if store.format_version < 8 or kind not in _TRIAL_TYPES:
                 raise TaskAlongError("store_integrity", "Trial history is outside its explicit format fence.", exit_code=70)
             document = _TRIAL_TYPES[kind].from_dict(value)

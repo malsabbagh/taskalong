@@ -29,7 +29,7 @@ def _refuse(code="execution_projection_unsupported"):
 
 
 def _require(store):
-    if store.format_version not in (3, 4, 5, 6, 7, 8, 9, 10, 11):
+    if store.format_version not in (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
         _refuse("store_upgrade_required")
 
 
@@ -140,7 +140,7 @@ def registered_profile(store, binding_digest):
 
 
 def registered_driver_config(store, binding_digest):
-    if store.format_version not in (4, 5, 6, 7, 8, 9, 10, 11):
+    if store.format_version not in (4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
         _refuse("store_upgrade_required")
     registration = _registration(store, binding_digest)
     version = registration.get("schema_version")
@@ -165,6 +165,12 @@ def worker_contract(store, spec, configuration):
         if retained != configuration:
             _refuse("execution_identity_mismatch")
         return contract_for(retained, task_version=snapshot["schema_version"], projection=snapshot["projection"]["projection"]), snapshot["provider"]
+    if spec["schema_version"] == "2.12":
+        from .muse_lifecycle import configuration as production_configuration, PROJECTION as production_projection, _subject as production_subject
+        retained = production_configuration(store, spec["execution"]["driver_config_digest"])
+        if retained != configuration:
+            _refuse("execution_identity_mismatch")
+        return contract_for(retained, task_version="2.12", projection=production_projection), production_subject(store, spec, retained)
     if spec["schema_version"] == "2.9":
         from .muse_handoff import configuration as muse_configuration, PROJECTION
         retained = muse_configuration(store, spec["execution"]["driver_config_digest"])
@@ -184,6 +190,9 @@ def worker_contract(store, spec, configuration):
 
 def resolve(store, spec, *, mode="start", authority_id=None):
     """Resolve current trusted facts; caller owns the transaction/fence boundary."""
+    if spec["schema_version"] == "2.12":
+        from .muse_lifecycle import resolve as resolve_production
+        return resolve_production(store, spec, mode=mode, authority_id=authority_id)
     if spec["schema_version"] == "2.9":
         from .muse_handoff import resolve as resolve_muse
         return resolve_muse(store, spec, mode=mode, authority_id=authority_id)

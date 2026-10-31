@@ -645,3 +645,68 @@ Installation qualification remains `unknown` in this preparation. The aggregate
 `reviewer_qualification_unverified`, or awaiting missing assessments. Consistency
 does not change a raw CLI exit 1/2 into exit 0 or satisfy the separate native
 App stage. See [the E1 ADR](adr/0010-e1-offline-trial-preparation.md).
+
+
+## Production Muse preparation
+
+The v2.11 profile/config/task meanings remain intent only. The Python API adds
+`RunService.prepare_muse(spec, inputs=...)` and
+`RunService.muse_preparation(preparation_digest)`. The CLI exposes `prepare-muse`
+and `muse-preparation`; see the [operations recipe](operations.md#production-muse-preparation).
+
+Inputs have exactly `instructions_path`, `tools_path` and `dependency_paths`.
+Instruction/tool paths select direct local regular files whose SHA-256 identities
+must match the registered profile. Dependencies are at most 32 distinct direct
+absolute paths, each at most 64 MiB and together at most 128 MiB of retained
+measurements. Executables are bounded at 512 MiB; other policy/instruction/tool
+files at 1 MiB each. File observations bind path, SHA-256, byte count and mode.
+Symlinks, nonregular files and observed mutation refuse. These checks do not
+establish filesystem isolation or exclude every transient path replacement.
+
+The private `muse-production-preparation/1` record binds the sealed task, selected
+paths and assessment. Its digest content-addresses one immutable settings entry;
+the ordinary canonical 1 MiB document ceiling applies. The assessment binds exact
+profile/configuration identities, local measurements, the full pinned Git base
+manifest and its tree identity, symbolic core-owned argv bindings, requested
+budgets and explicit false qualification/dispatch/acceptance flags. It retains
+identities rather than original input bytes. No prompt is compiled or retained.
+The source manifest lists blob identities rather than reading all blob contents;
+it is neither a byte-volume cap nor enforcement of source exposure.
+
+This format is private measurement data, not a versioned worker packet,
+qualification receipt or execution handoff. Readback checks its closed outer
+shape/digest, validates the sealed task and repeats the exact measurement; changed
+inputs or forged assessment fields refuse without refreshing the original.
+Repetition of unchanged inputs is idempotent. Dependency order is canonical.
+Preparation creates no task/run/attempt, authority, effect, lease, workspace,
+acceptance or migration, and cannot change the unconditional v2.11 submit refusal.
+
+
+## Production Muse lifecycle v2.12
+
+Seven new contracts define production driver configuration, task, canonical
+packet, projection, supervisor handoff and read-only capabilities/result views.
+Format12 is required. The exact driver binds wonder-full/high, one attempt and
+one model step, at most 60 active seconds, explicit policy inputs and an immutable
+non-fixture review provider. It reuses existing authority/effect/workspace ownership.
+All original schemas and v2.11 refusal/preparation remain unchanged.
+
+The canonical packet binds authority, task/run/attempt, configuration, runtime
+subject, base/start content, lease fence and requested budget. Projection binds
+the complete prompt-byte SHA256 separately from semantic packet digests. The
+supervisor handoff binds authoritative prepare/spawn/capture/finish operations,
+original captures, exact owned process receipt and frozen workspace scope.
+Observed session/model/usage stay unknown. Shared mechanics do not grant trust.
+Current production admission always refuses at the closed native-runtime gate.
+See the [ADR](adr/0017-muse-production-lifecycle.md) for unsupported boundaries.
+
+## Muse local shutdown and retained exposure
+
+Store13 adds a backed-up append-only local exposure ledger for production2.12.
+The read-only `muse-exposure` command separates local cessation from unknown
+remote usage and cannot authorize dispatch or settlement. A possible release
+holds later Muse attempts across destination aliases within that Store. This is
+not an account-wide spending cap. No absolute vendor cessation promise is
+required; actual whole-process containment and account/checker observations are
+still missing here. See the [execution plan](muse-shutdown.md) for exact controls,
+qualification limits and the Linux host/security action awaiting approval.

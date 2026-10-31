@@ -521,3 +521,399 @@ On macOS the existing native-fork limitation and experimental foreground unknown
 cessation remain blockers. Local control tests are not Muse qualification. A
 separately authorized TaskAlong-owned real canary must precede the protected
 RED-to-GREEN defect journey. Track these under existing issues 12 and 30.
+
+
+## Production Muse preparation
+
+After registering the v2.11 intent above, select reviewed local instruction and
+tool files and any declared dependencies in a bounded JSON input document:
+
+```json
+{
+  "instructions_path": "/reviewed/inputs/instructions.txt",
+  "tools_path": "/reviewed/inputs/tools.json",
+  "dependency_paths": []
+}
+```
+
+The paths must be canonical absolute direct files. The instruction/tool hashes
+must match the profile; preparation never discovers effective Muse inputs.
+Do not put credentials or credential paths in this document.
+
+```sh
+taskalong --state-dir "$STATE" --json prepare-muse --spec task.json --inputs inputs.json
+taskalong --state-dir "$STATE" --json muse-preparation "$PREPARATION_DIGEST"
+```
+
+The first command returns `preparation_digest`; use that exact digest for the
+second command. Both exit zero only for matching measured inputs and return
+`production_dispatch_allowed: false` and `acceptance_allowed: false`. No Muse,
+updater, account or provider command runs. Read-only local Git inspection does
+run to bind the clean registered repository and full immutable base tree.
+The argv template uses symbolic prospective workspace/prompt bindings; no prompt
+or executable attempt exists. The declared file list is not complete runtime
+closure, and requested budgets are not enforcement of total inference usage.
+
+A stale retained assessment exits 3 with `muse_preparation_stale`; changed bound
+executable/policy/instruction/tool bytes have their specific changed-identity
+codes. Unsafe/missing/oversized inputs, corrupt records and unknown digests also
+refuse before dispatch. No retained record is silently rewritten. Preserve the
+original, review changed inputs and prepare a distinct subject. A clean move of
+HEAD alone does not change a preparation pinned to an earlier existing base.
+The [contract](contracts.md#production-muse-preparation) lists measurement bounds.
+These preparation commands create no executable attempt. The separate
+[production lifecycle](#production-muse-lifecycle-configuration) implements
+packet, capture, completion and recovery contracts behind a closed runtime gate.
+
+
+## Production Muse lifecycle configuration
+
+`RunService.configure_muse_driver(document)` and
+`configure-muse-driver --config FILE` register a 2.12 production configuration only
+after explicit backed-up format 12 maintenance. It binds the existing 2.11 profile
+and intent configuration, direct measured instruction/tool/dependency inputs,
+check/sandbox/review identities and an explicit non-fixture `review_provider`.
+Registration returns its immutable digest; no runtime authority is created.
+Use the installed2.12 driver/task schemas for the exact closed vocabulary.
+
+`validate --spec FILE` returns the exact runtime subject identity and current false
+readiness. `submit` refuses `muse_runtime_unqualified`/`not_sent` before creating a
+run/attempt/effect/workspace. Even an imported run rechecks the gate at start and
+inside the closed owned spawn boundary. No setting or caller-supplied receipt can
+open it. Native resume and automatic retries are unsupported.
+
+The blockers are concrete: the pinned 1.4.10 contract lacks a supported aggregate
+observer/judge/subagent bound; the Darwin owner cannot prove complete native-fork
+cessation; requested CLI flags and local hashes do not establish OS containment
+or authenticated account/allowance and independent-checker facts. Select a runtime
+host/build that supports those boundaries before qualification. No new credentials,
+access, terms, security settings or broader live canary are implied by these APIs.
+
+## Muse local shutdown and retained exposure
+
+Store13 adds a backed-up append-only local exposure ledger for production2.12.
+The read-only `muse-exposure` command separates local cessation from unknown
+remote usage and cannot authorize dispatch or settlement. A possible release
+holds later Muse attempts across destination aliases within that Store. This is
+not an account-wide spending cap. No absolute vendor cessation promise is
+required; actual whole-process containment and account/checker observations are
+still missing here. See the [execution plan](muse-shutdown.md) for exact controls,
+qualification limits and the Linux host/security action awaiting approval.
+
+## Mac model-free Muse connection probe
+
+`taskalong --json muse-mac-probe --executable /absolute/pinned/Muse --evidence-dir /new/private/directory`
+performs one fixed native echo-host initialize request with zero capabilities.
+It creates no agent session or turn, opens no TaskAlong Store, changes no saved
+settings, and never retries or escalates. Only the exact measured1.4.10 Mac binary
+is supported. Evidence is retained even on protocol or lifecycle failure.
+The returned sandbox availability is a host report; file/shell/network enforcement
+and real-provider admission remain unqualified. Forked descendants stay unknown.
+See [ADR0019](adr/0019-mac-model-free-connection-probe.md).
+
+
+## Supervised patch proposal development
+
+This separate POSIX workflow prepares and stages local text proposals. It does not
+call a provider, inspect a real repository, apply a patch, run tests or grant live
+admission. Source snapshots and the supplied base commit are operator claims.
+Provider/model fields are intent for future adapters, not observed account context.
+
+Create a strict JSON request, for example:
+
+```json
+{"base_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","task":"Change greeting.","provider":"muse","model":"wonder-full","reasoning_effort":"high","files":{"hello.txt":"hello\n","note.txt":null}}
+```
+
+`null` declares an absent file that may be added. Select only disposable/public
+content appropriate for the intended provider; preparation sends nothing.
+Use direct absolute paths and new output directories:
+
+```text
+taskalong --json supervised-pilot-prepare --request /private/request.json --output /private/new-bundle
+```
+
+The private bundle contains `bundle.json` and a digest-bound `prompt.txt`. For local
+development/testing, supply a synthetic response with the returned bundle digest:
+
+```json
+{"bundle_digest":"<digest returned by prepare>","changes":{"hello.txt":"hello world\n","note.txt":"note\n"}}
+```
+
+A change value is complete new file text, or `null` for deletion. Then stage it:
+
+```text
+taskalong --json supervised-pilot-stage --bundle /private/new-bundle --response /private/response.json --output /private/new-review
+taskalong --json supervised-pilot-run --bundle /private/new-bundle
+```
+
+Staging emits `proposed.patch`, the unverified `response.json`, and a final
+`review.json`. The run command uses the normally configured local Muse provider. There is no
+separate production activation gate for this experimental route. Provider context
+selection, local limits, retained one-use claims and manual review apply. Existing
+production-qualification contracts remain separate.
+
+Review the exact patch and its snapshot binding. Independently verify the actual
+repository/base and run patch checks and tests in a disposable checkout before
+manually applying any proposal. Staging does not perform those checks. The original
+source is never an output target. One exclusive response claim is retained per bundle;
+a partial failure is uncertain and is not automatically replayed. Preserve artifacts
+for inspection; do not treat a fresh directory as permission to retry a provider.
+
+Supported input is at most 32 declared literal paths, 64 KiB per LF-terminated text
+file and 256 KiB total snapshot/replacement text. Protected, traversal, case-alias
+and ancestor-conflicting paths refuse. Binary/non-LF data, symlinks, renames, mode
+changes and empty-file creation/deletion are unsupported. These artifacts are not
+production execution, test, independent acceptance or remote-usage settlement receipts.
+
+
+## Supervised Muse runner component development
+
+`supervised-muse-plan --bundle <directory> --executable <direct pinned binary> --output <new directory>`
+measures the pinned binary and prepares an original native protocol/startup plan.
+It never starts the binary. The plan fixes Muse/meta `wonder-full`, reasoning `high`,
+zero client capabilities, the existing `:read-only` profile, disabled shell/write,
+contributor mode off, proxy-only sandbox network and no workspace trust. Fresh
+HOME/XDG paths and an empty workspace are allocated as intent; access to the
+existing account in that context is unresolved. No credential is copied or read.
+
+The plan intends one turn submission, zero provider retries, 20 seconds locally,
+a 2-second interrupt grace and 64 KiB captured output. No aggregate inference,
+token/cost or whole-process guarantee is claimed. This command creates data only;
+there is no live transport or wall-clock enforcement in planning/replay.
+
+`supervised-muse-replay --bundle <directory> --plan <runner-plan.json> --transcript <JSON> --output <new directory>`
+exercises runner components against unverified local frames. The transcript has
+`responses` (six JSON-RPC replies, IDs 1–6 for initialize, profile list, model list,
+usage/read, session/start, turn/start) and `notifications`. Any interrupt response
+uses ID 7. Saved `projected-requests.json` explicitly marks all requests unsent.
+The replay creates `response.json` only for a complete, unblocked final response
+that validates against the prepared snapshot; stage it through supervised-pilot-stage
+for human review/manual application. It never creates a production receipt.
+
+The reducer rejects auxiliary child/tool/workflow/hook activity and projects at
+most one supported `turn/interrupt` targeting the acknowledged session/turn.
+An interrupt acknowledgement is not a terminal. Final answer/foreground completion
+is not a terminal either. Cancellation/completion preserves unknown descendant
+and remote-usage state; missing usage is never zero. Rejection after a child event
+does not prove that the child was prevented or any prior request was cancelled.
+
+The pinned native echo canary produced three reminder-child sessions even with
+these restrictive switches and the read-only profile. No real model ran. It also
+returned empty bundled model metadata and no last-observed subscription usage.
+The native journal also reported workflow/web/memory/cron agent tools; zero client
+capabilities do not prove that agent tools are absent or blocked. Those observations
+cannot qualify the actual account/model/allowance or a finite
+aggregate inference bound. A supported suppression/cap control has not been
+established. A future live pilot requires the actual existing-account/context
+binding, qualified bounded ownership/transport and a separate owner decision on
+residual auxiliary/remote uncertainty. Configured experimental execution is described below; production qualification remains separate.
+
+
+The pinned experimental schema and a zero-turn native echo query establish
+read-only `account/read` and `settings/readSchema`/`settings/read` surfaces. Account
+projection reports a credential lane; it returns no key material, endpoint binding
+or enforced spending cap. A fresh HOME may lack the existing login; the configured account HOME controls
+which native account context is used. Runner
+components project only these read methods and omit display identity values from
+the reduced result. No login/logout/settings-write method is projected.
+The served settings schema includes web-fetch/search controls, but no reminder
+suppression key in that key set. Those controls have not been changed or tested
+as enforced network denial. Existing-account access with a fresh context remains
+an integration boundary; no credential is copied to bridge it.
+
+
+`supervised-muse-exec-plan --bundle <directory> --executable <pinned binary> --model-id muse-wonder-full-1.0 --output <new directory>`
+prepares the shorter exec candidate using the explicitly selected canonical catalog
+model, requested High, empty preset, one model step, disabled reminders/web tools,
+no foreign personal context, read-only profile and disabled shell/write. It is
+still data only; no execution or wall-time enforcement occurs. The native echo
+check of this combination reported empty tool and reminder rosters, one session
+and a completed parent. Native fork lifetime remains unknown. Meta-only parallel
+flags are projected for Meta; they cannot be used in the Echo qualification case.
+Named profiles cannot be combined with legacy sandbox-network or approval-judge
+flags; the candidate uses the existing read-only/human-review profile.
+
+`--no-foreign-personal-context` did not exclude the public user-skill canary from
+native model context. Reusing the existing native data/config roots with fresh
+HOME still projected loggedOut, so those environment changes did not establish a
+credential-preserving isolated context. No credential copy or new login was tried.
+A credential-state projection and catalog metadata do not by themselves bind
+effective reasoning, included allowance or remote settlement.
+Catalog availability is not account allowance, a High-effort receipt or an alias
+binding. The exec-plan model id is explicit operator intent, never a fallback.
+Native internal HTTP retry policy is not established by the one-model-step limit.
+Experimental runs record these uncertainties instead of claiming production guarantees.
+
+
+## Configured local Muse provider
+
+Local provider configuration enables ordinary experimental execution immediately:
+
+```text
+taskalong configure-provider muse --config /absolute/provider.json
+taskalong provider-budget muse --request /absolute/task.json
+taskalong provider-context muse --output /absolute/private-context-review
+taskalong run --provider muse --request /absolute/task.json --output /absolute/new-run
+taskalong status RUN_ID
+taskalong result RUN_ID
+```
+
+The provider config requires `executable` (direct native binary). Optional fields
+are `account_home`, `muse_home`, `model`, `reasoning_effort`, `context`,
+`attempt_seconds`, `max_output_bytes`, `max_proposal_bytes`, `catalog_digest`, `context_hashes`,
+`public_context_hashes` and `native_roots`. `native_roots` preserves selected
+XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_CACHE_HOME directories;
+the data root agrees with muse_home. These are paths, never credential values. Default account HOME is the current user; default Muse
+data directory is its native local-data directory. No credential is copied or
+stored by TaskAlong. Existing Muse login/configuration remains native-owned.
+
+`context: include` is the default: no foreign-context exclusion flag is added.
+`context: native-only` explicitly excludes foreign personal context while retaining
+native context; it is not full isolation. `context: exclude` requests full
+exclusion and currently fails clearly before provider dispatch because this
+native client cannot honor it with the existing login. Never silently substitute
+include for exclude, or silently exclude preconfigured context from include.
+provider-context creates an optional private local-only snapshot with the selected
+context mode; it cannot submit to Meta or reserve a task. context_hashes can pin
+stable rules/catalog and vendor message text; session/workspace identities change
+per invocation. Optional catalog/template fingerprints let a caller bind a specifically reviewed
+context snapshot; they are data-scope checks, not production qualification or a
+required activation step. Recognizable credentials in task/startup context refuse
+before the real provider request; this secondary screen is not a complete DLP claim.
+
+The task request uses the same explicit `base_commit`, `task`, `provider`, `model`,
+`reasoning_effort` and `files` snapshot format as supervised-pilot-prepare. `run`
+also accepts an already prepared `--bundle`; supervised-pilot-run is an alias.
+The adapter uses an empty preset, no tools/reminders/web, read-only policy and
+existing account. A fixed native Echo check inspects local startup context without
+sending it to a model endpoint. It is labeled model-free and is not the provider
+result. The actual configured Meta invocation is separate and occurs once.
+
+The controller enforces the selected process timeout and capture bound. It retains
+an exclusive bundle/Store submission claim before releasing the native process;
+failed, interrupted or uncertain runs cannot automatically redispatch. Native
+HTTP retries, remote usage and all descendants may remain unknown. Root/group
+observations never stamp remote settlement. No model/provider fallback occurs.
+
+On a completed bound response, TaskAlong emits a validated proposed.patch and
+review record. It does not apply the patch, run its contents, claim independent
+acceptance or automatically publish it. Review manually and verify a disposable
+candidate. status/result read existing records without invoking the provider.
+Configuration/context/login/local paths and raw outputs belong in private local
+state, never in Git, PR descriptions or CI artifacts. Tests use synthetic fixtures;
+only sanitized validation summaries may be published.
+
+### Capture budget before dispatch
+
+`max_output_bytes` limits the combined retained stdout/stderr protocol, not just
+the model's answer. Its default remains 65,536 bytes; supported values are
+1,024 through 1,048,576. Muse's supported session protocol echoes the complete
+prompt in both `turn.input.user` and `run.lifecycle.started`. Large snapshots can
+therefore exhaust a small capture before any answer. This is a local controller
+setting, not a Muse account, token or spending limit.
+
+`provider-budget` measures the generated prompt and minimal framing for both
+JSON-escaped UTF-8 echoes. It starts no native process, creates no provider run
+and reserves no submission. `input_echoes_fit: false` means `run` refuses with
+`provider_capture_budget_insufficient` before creating its output or launching
+even the model-free context check. A true value establishes only that this known
+minimum fits: native metadata, stderr, output deltas and the completed response
+still require space. `response_fit_guaranteed` is always false. This is not an
+inference, context-inspection or execution admission receipt.
+
+For a deliberately larger, separately selected task, a finite example config is:
+
+```json
+{"executable":"/absolute/native/muse","model":"muse-wonder-full-1.0","reasoning_effort":"high","context":"include","attempt_seconds":20,"max_output_bytes":1048576,"max_proposal_bytes":12288}
+```
+
+`max_proposal_bytes` independently caps the complete decoded proposal's canonical
+UTF-8 JSON, including its digest, path keys and replacement texts. The default is
+65,536, with supported values 1,024 through 262,144. Existing stored configs that
+omit this additive field use that default without rewriting their identity.
+New configurations use `local-muse-provider/3` and require an explicit valid
+proposal limit. Older binaries refuse this format instead of silently ignoring
+the new limits. The corrected reader still accepts legacy `/1` and `/2` configurations
+at their original 60-second ceiling.
+Exceeding it retains the raw capture and submission claim, returns
+`provider_proposal_too_large`, and stages no patch. Model instructions to keep an
+answer short do not replace either enforced bound.
+
+Process records retain the legacy `output_bytes` count and add
+`observed_output_bytes` for all bytes drained, plus `retained_stdout_bytes`,
+`retained_stderr_bytes` and `retained_output_bytes` for bounded buffers before
+redaction. Draining during owned shutdown can observe more than the retention
+cap. Overflow still cancels and fails; truncated output is never decoded as a
+successful proposal. These pipe limits do not cap native-owned journal storage
+or remote usage. Do not discard protocol records to make a result appear to fit,
+reset an old claim or automatically resubmit an uncertain attempt.
+
+### Explicit manual timeout successors
+
+`attempt_seconds` defaults to the short 20-second smoke budget. New `/3`
+configuration supports integer values from 1 through 720. A larger local deadline
+is an operator choice, not a vendor completion, token or cost guarantee. Keep an
+explicit finite whole-protocol and proposal cap for actual coding tasks.
+
+For an already consumed request, do not change its nonce, use a fresh state, reset
+the claim or issue another ordinary `run`. Use the same original state store and
+the explicit successor commands. For an original timeout of at most 60 seconds,
+the fixed ladder is a 360-second successor and, only after its qualifying timeout,
+one final 720-second successor. An original 360-second timeout instead permits
+one linked 720-second successor, with one remaining controller slot and 720 local
+Meta deadline seconds. Other longer originals have no implicit retry schedule.
+Configure the required deadline while preserving every other original provider
+setting, including the requested effort, context and capture/proposal limits.
+The same commands below apply to the original-360 case using a 720-second config;
+the plan reports that single slot rather than manufacturing an earlier stage.
+
+```text
+taskalong --state-dir /private/original-state configure-provider muse --config /private/provider-360.json
+taskalong --state-dir /private/original-state provider-successor-plan muse --predecessor ORIGINAL_RUN_ID
+taskalong --state-dir /private/original-state provider-successor muse --predecessor ORIGINAL_RUN_ID --key chosen-next-key --plan-digest EXACT_PLAN_DIGEST --output /private/new-next-output
+taskalong --state-dir /private/original-state status NEXT_RUN_ID
+taskalong --state-dir /private/original-state result NEXT_RUN_ID
+```
+
+The plan starts no process and reserves nothing. It derives the unchanged task
+from the predecessor bundle and checks retained process/capture/journal evidence.
+It reports the required deadline, remaining controller slots and local deadline
+reservations, while preserving unknown remote usage and descendant cessation.
+The plan is not a grant imported from JSON; execution recomputes its digest and
+revalidates before the provider gate opens. A changed config, artifact, model,
+account, context or capture/proposal limit refuses.
+
+An eligible predecessor must be a failed, fully captured local timeout with root
+exit and group termination observed, clean tracking/cleanup, no explicit cancel
+or overflow, and a matching native cancelled-during-model-step terminal. A
+successful/in-progress/incomplete/ambiguous run, response/proposal, complete JSON
+output, contradictory terminal or changed original history stops the ladder.
+These checks do not claim complete detached-descendant cessation, cancellation of
+accepted remote inference, or accounting settlement.
+
+Each explicit execution reserves its single slot before even the model-free
+native preflight. A denial or other setup failure stops the ladder. A repeated
+identical key only observes its existing result; it cannot resume crashed code or
+dispatch again. A different key cannot repeat the predecessor. An incomplete
+reservation appears as `reserved_incomplete` with unknown outcome, never as free
+capacity. Keep all old claims and effects. No automatic provider retry or fallback
+is scheduled.
+
+The private sibling `.taskalong-muse-successors-ROOT_RUN_ID` directory contains
+an immutable enrollment and at most two slot files. It must remain alongside the
+original output, separate from the database backup: restoring an old database
+cannot reopen its consumed slots. Do not delete, copy/reset or automatically
+repair it. A missing/partial/conflicting directory or state scope refuses. The
+original output and bundle files remain unchanged. Output paths cannot overlap
+any ancestor output/bundle or this control directory.
+
+For the short-original schedule only, if NEXT ends in a qualifying local timeout
+with no response, independently invoke the same two commands with its run ID and
+a 720-second config. That is the last slot. The original-360 schedule ends after
+its single 720-second successor, including a timeout. Stop on success, denial,
+another failure or uncertain local cleanup. The
+short-original schedule's two new Meta deadlines total at most 1,080 seconds;
+the original-360 schedule has only one new 720-second deadline. Both have separate
+five-second preflights and existing owned cleanup. They do not bound remote spend or native
+internal retries. Proposals still require manual review/application and tests.

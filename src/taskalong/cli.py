@@ -13,7 +13,7 @@ from .validation import canonical_bytes, load_json
 
 
 def parser():
-    root = argparse.ArgumentParser(prog="taskalong", description="Experimental bounded development-task core. Live production dispatch is disabled.")
+    root = argparse.ArgumentParser(prog="taskalong", description="Local development tasks with configured experimental providers and manual patch review.")
     root.add_argument("--version", action="version", version=f"taskalong {__version__} (API/schema 1.0)")
     root.add_argument("--state-dir")
     root.add_argument("--json", action="store_true")
@@ -23,10 +23,29 @@ def parser():
         p.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
         return p
     p = command("guide"); p.add_argument("name", nargs="?", default="fixture", choices=("fixture", "operations", "contracts", "qualification", "ordered"))
+    p = command("configure-provider"); p.add_argument("provider"); p.add_argument("--config", required=True)
+    command("providers")
+    p = command("provider-context"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--output", required=True)
+    p = command("provider-budget"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--request", required=True)
+    p = command("provider-successor-plan"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--predecessor", required=True)
+    p = command("provider-successor"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--predecessor", required=True); p.add_argument("--key", required=True); p.add_argument("--plan-digest", required=True); p.add_argument("--output", required=True)
+    p = command("run"); p.add_argument("--provider", default="muse"); p.add_argument("--output")
+    task = p.add_mutually_exclusive_group(required=True); task.add_argument("--bundle"); task.add_argument("--request")
     p = command("register-repository"); p.add_argument("path"); p.add_argument("--workspace-root")
     p = command("register-profile"); p.add_argument("--profile", required=True)
+    p = command("configure-muse-driver"); p.add_argument("--config", required=True)
     p = command("configure-muse"); p.add_argument("--config", required=True)
     p = command("muse-readiness"); p.add_argument("--profile-id", required=True); p.add_argument("--configuration-digest", required=True)
+    p = command("prepare-muse"); p.add_argument("--spec", required=True); p.add_argument("--inputs", required=True)
+    command("muse-exposure")
+    p = command("muse-mac-probe"); p.add_argument("--executable", required=True); p.add_argument("--evidence-dir", required=True)
+    p = command("muse-preparation"); p.add_argument("preparation_digest")
+    p = command("supervised-pilot-prepare"); p.add_argument("--request", required=True); p.add_argument("--output", required=True)
+    p = command("supervised-pilot-stage"); p.add_argument("--bundle", required=True); p.add_argument("--response", required=True); p.add_argument("--output", required=True)
+    p = command("supervised-pilot-run"); p.add_argument("--bundle", required=True); p.add_argument("--output")
+    p = command("supervised-muse-exec-plan"); p.add_argument("--bundle", required=True); p.add_argument("--executable", required=True); p.add_argument("--model-id", required=True); p.add_argument("--output", required=True)
+    p = command("supervised-muse-plan"); p.add_argument("--bundle", required=True); p.add_argument("--executable", required=True); p.add_argument("--output", required=True)
+    p = command("supervised-muse-replay"); p.add_argument("--bundle", required=True); p.add_argument("--plan", required=True); p.add_argument("--transcript", required=True); p.add_argument("--output", required=True)
     p = command("configure-review"); p.add_argument("--config", required=True); p.add_argument("--fixture-response"); p.add_argument("--executable"); p.add_argument("--python-executable")
     p = command("configure-sandbox"); p.add_argument("--executable", required=True)
     p = command("configure-publication"); p.add_argument("--gh", required=True); p.add_argument("--git-remote", required=True)
@@ -80,14 +99,51 @@ def main(argv=None):
             else:
                 print(markdown, end="" if markdown.endswith("\n") else "\n")
             return 0
+        if args.command == "muse-mac-probe":
+            from .muse_mac_probe import probe
+            result = probe(executable=args.executable, evidence_dir=args.evidence_dir)
+            print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result,indent=2))
+            return 0
+        if args.command.startswith("supervised-muse-"):
+            from . import supervised_muse_runner
+            from .supervised_pilot import read_document
+            if args.command == "supervised-muse-exec-plan":
+                result = supervised_muse_runner.prepare_exec(bundle=args.bundle, executable=args.executable, model_id=args.model_id, output=args.output)
+            elif args.command == "supervised-muse-plan":
+                result = supervised_muse_runner.prepare(bundle=args.bundle, executable=args.executable, output=args.output)
+            else:
+                result = supervised_muse_runner.replay(plan_path=args.plan, bundle=args.bundle, transcript=read_document(args.transcript), output=args.output)
+            print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result, indent=2))
+            return 0
+        if args.command in {"supervised-pilot-prepare", "supervised-pilot-stage"}:
+            from . import supervised_pilot
+            if args.command == "supervised-pilot-prepare":
+                result = supervised_pilot.prepare(supervised_pilot.read_document(args.request), output=args.output)
+            elif args.command == "supervised-pilot-stage":
+                result = supervised_pilot.stage(bundle=args.bundle, response=supervised_pilot.read_document(args.response), output=args.output)
+            print(canonical_bytes(envelope(args.command, data=result)).decode() if json_output else json.dumps(result, indent=2))
+            return 0
         from .api import RunService
         with RunService(args.state_dir) as service:
             cmd = args.command
             mutation = {"operation_key": getattr(args, "key", None), "expected_revision": getattr(args, "expected_revision", None)}
-            if cmd == "register-repository": result = service.register_repository(args.path, args.workspace_root)
+            if cmd == "configure-provider": result = service.configure_provider(args.provider, load_json(args.config))
+            elif cmd == "providers": result = service.providers()
+            elif cmd == "provider-context": result = service.provider_context(args.provider, output=args.output)
+            elif cmd == "provider-budget": result = service.provider_budget(args.provider, request=load_json(args.request))
+            elif cmd == "provider-successor-plan": result = service.provider_successor_plan(args.provider, predecessor=args.predecessor)
+            elif cmd == "provider-successor": result = service.provider_successor(args.provider, predecessor=args.predecessor, key=args.key, plan_digest=args.plan_digest, output=args.output)
+            elif cmd in {"run", "supervised-pilot-run"}:
+                result = service.run_provider(getattr(args, "provider", "muse"), bundle=getattr(args, "bundle", None),
+                    request=load_json(args.request) if getattr(args, "request", None) else None, output=args.output)
+            elif cmd == "register-repository": result = service.register_repository(args.path, args.workspace_root)
             elif cmd == "register-profile": result = service.register_profile(load_json(args.profile))
+            elif cmd == "configure-muse-driver": result = service.configure_muse_driver(load_json(args.config))
             elif cmd == "configure-muse": result = service.configure_muse(load_json(args.config))
             elif cmd == "muse-readiness": result = service.muse_readiness(args.profile_id, args.configuration_digest)
+            elif cmd == "prepare-muse": result = service.prepare_muse(load_json(args.spec), inputs=load_json(args.inputs))
+            elif cmd == "muse-exposure": result = service.muse_exposure()
+            elif cmd == "muse-preparation": result = service.muse_preparation(args.preparation_digest)
             elif cmd == "configure-review": result = service.configure_review(args.config, fixture_response=args.fixture_response, executable=args.executable, python_executable=args.python_executable)
             elif cmd == "configure-sandbox": result = service.configure_command_sandbox(args.executable)
             elif cmd == "configure-publication": result = service.configure_publication(args.gh, args.git_remote)
@@ -129,7 +185,7 @@ def main(argv=None):
             for requirement in result.get("blocker_details", []):
                 print(requirement["code"] + ": " + requirement.get("requirement", requirement.get("limitation", "")))
         else: print(f"{cmd}: {result.get('state', 'completed')}" + (f" ({result['run_id']})" if "run_id" in result else ""))
-        if cmd in {"start", "advance", "retry", "resume", "cancel", "reconcile", "verify", "publish"}:
+        if cmd in {"run", "supervised-pilot-run", "start", "advance", "retry", "resume", "cancel", "reconcile", "verify", "publish"}:
             if result.get("state") == "cancel_pending": return 6
             if result.get("state") == "blocked":
                 return 5 if any(b.get("effect_outcome") == "uncertain" for b in result.get("blockers", [])) else 3

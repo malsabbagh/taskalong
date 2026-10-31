@@ -112,3 +112,17 @@ evidence, and `trial_control.py` owns historical registration and non-executing
 inspection. The unchanged closed executor registry has no E1 factory. A complete
 observation or consistent attributed assessment still cannot satisfy the combined
 local-review gate until producer qualification is independently established.
+
+
+Production Muse preparation is a separate offline measurement module behind
+RunService. It retains an immutable local-input and pinned-base manifest in
+additive settings, without allocating lifecycle state. Readback remeasures the
+subject and rejects drift. Symbolic argv bindings remain plans: no prompt,
+workspace, execution packet or admission exists. See proposed
+[ADR0016](adr/0016-muse-production-preparation.md).
+
+
+The [production Muse lifecycle ADR](adr/0017-muse-production-lifecycle.md) adds
+explicit 2.12 contracts and format 12 through the same owner. A closed runtime
+authenticator refuses the unsupported native tuple before dispatch. Neutral
+opaque capture/handoff mechanics are shared with 2.9 without changing its schemas.
