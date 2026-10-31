@@ -69,17 +69,17 @@ class RunService:
         from .muse_experimental import run
         return run(self._store, bundle=bundle, request=request, output=output)
 
-    def provider_successor_plan(self, provider="muse", *, predecessor):
+    def provider_successor_plan(self, provider="muse", *, predecessor, reason="timeout"):
         if provider != "muse":
             raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
         from .muse_successor import plan
-        return plan(self._store, predecessor=predecessor)
+        return plan(self._store, predecessor=predecessor, reason=reason)
 
-    def provider_successor(self, provider="muse", *, predecessor, key, plan_digest, output):
+    def provider_successor(self, provider="muse", *, predecessor, key, plan_digest, output, reason="timeout"):
         if provider != "muse":
             raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
         from .muse_successor import execute
-        return execute(self._store, predecessor=predecessor, key=key, plan_digest=plan_digest, output=output)
+        return execute(self._store, predecessor=predecessor, key=key, plan_digest=plan_digest, output=output, reason=reason)
 
     def configure_muse(self, configuration):
         """Register production intent only; never qualify or launch Muse."""

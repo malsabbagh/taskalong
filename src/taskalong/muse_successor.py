@@ -7,6 +7,7 @@ claims, unknown remote usage and descendant uncertainty are never refunded.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import uuid
 
@@ -56,7 +57,75 @@ def _read_run(store, run_id):
     return record, root
 
 
+def _truncated_metadata_prefix(raw, session, native_run, last_sequence):
+    """Recognize only a prefix of the pinned native delta metadata layout.
+
+    Never skip arbitrary incomplete JSON. Literal order, identity, sequence and
+    types are bound before accepting a torn metadata record. Stop before any
+    result text; malformed, duplicate, terminal or contradictory fields refuse.
+    This is eligibility evidence only; original bytes stay hashed and failed.
+    """
+    if not raw or len(raw)>1024:return False
+    position=0
+    class Incomplete(Exception):pass
+    def literal(expected):
+        nonlocal position
+        remaining=raw[position:]
+        if len(remaining)<len(expected):
+            if expected.startswith(remaining):raise Incomplete()
+            raise ValueError()
+        if not remaining.startswith(expected):raise ValueError()
+        position+=len(expected)
+    def uuid_string():
+        nonlocal position
+        literal(b'"')
+        for char in b'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx':
+            if position==len(raw):raise Incomplete()
+            actual=raw[position];position+=1
+            if char==ord('-'):
+                if actual!=char:raise ValueError()
+            elif actual not in b'0123456789abcdef':raise ValueError()
+        literal(b'"')
+    def timestamp():
+        nonlocal position
+        start=position
+        while position<len(raw) and raw[position] in b'0123456789':position+=1
+        token=raw[start:position]
+        if token and (token[0]==ord('0') or len(token)>20):raise ValueError()
+        if position==len(raw):raise Incomplete()
+        if not token:raise ValueError()
+    try:
+        literal(b'{"schema_version":1,"id":');uuid_string()
+        literal(b',"stream":{"kind":"session","id":'+json.dumps(session).encode()+b'},"sequence":')
+        literal(str(last_sequence+1).encode()+b',"recorded_at":');timestamp()
+        literal(b',"record_type":"status","durability":"ephemeral","causation_id":');uuid_string()
+        literal(b',"payload_type":"run.output.delta","payload_schema_version":1,"payload":{"kind":"run_output_delta","command_id":')
+        literal(json.dumps(native_run).encode())
+        # Any later byte could be result material. Do not discard it.
+        if position==len(raw):raise Incomplete()
+    except Incomplete:return True
+    except ValueError:return False
+    return False
+
+
+def _capture_prefix(stdout, session, *, max_records):
+    if not stdout.endswith(b'\n'):
+        prefix,separator,tail=stdout.rpartition(b'\n')
+        if not separator:_fail("provider_successor_history_changed")
+        try:muse._native_json(tail)
+        except (ValueError,UnicodeError,RecursionError):
+            rows,native_run=muse._session_records(prefix+b'\n',session,max_records=max_records)
+            if not _truncated_metadata_prefix(tail,session,native_run,rows[-1]["sequence"]):
+                _fail("provider_successor_result_exists")
+            return prefix+b'\n'
+    return stdout
+
+
 def _timeout(store, run_id):
+    return _failed_attempt(store,run_id,reason="timeout")
+
+
+def _failed_attempt(store, run_id, *, reason):
     record, root = _read_run(store, run_id)
     process = record.get("process")
     if (record["state"] != "failed" or record.get("error") != "provider_local_failure"
@@ -65,10 +134,10 @@ def _timeout(store, run_id):
             or record.get("native_internal_retries")!="unknown" or record.get("automatic_retry_allowed") is not False
             or record.get("patch_applied") is not False or record.get("acceptance_allowed") is not False
             or type(process) is not dict
-            or process.get("timed_out") is not True or process.get("root_exit_observed") is not True
+            or process.get("timed_out") is not (reason=="timeout") or process.get("root_exit_observed") is not True
             or type(process.get("root_exit_code")) is not int
             or process.get("group_termination_confirmed") is not True
-            or process.get("cancelled") is not False or process.get("output_limited") is not False
+            or process.get("cancelled") is not False or process.get("output_limited") is not (reason=="capture")
             or process.get("mode") != "darwin-foreground-experiment/1"
             or process.get("tracking_errors") != [] or process.get("boundary_failures") != []
             or process.get("failure_code") is not None or process.get("protocol_error") is not None):
@@ -101,6 +170,9 @@ def _timeout(store, run_id):
             or process.get("retained_stdout_bytes") != len(stdout)
             or process.get("retained_stderr_bytes") != len(stderr)):
         _fail("provider_successor_history_changed")
+    if reason=="capture" and (type(process.get("observed_output_bytes")) is not int
+            or process["observed_output_bytes"]<=config["max_output_bytes"]):
+        _fail("provider_successor_history_changed")
     prompt = pilot._prompt(manifest["request"],manifest["digest"])
     if read("prompt.txt",1048576) != prompt:
         _fail("provider_successor_history_changed")
@@ -111,7 +183,8 @@ def _timeout(store, run_id):
             or invocation.get("bundle_digest") != manifest["digest"]
             or invocation.get("argv") != muse._argv(config,provider="meta",workspace=root/"workspace",prompt=root/"prompt.txt",session=session)):
         _fail("provider_successor_history_changed")
-    session_rows, native_run = muse._session_records(stdout,session)
+    inspected_stdout=_capture_prefix(stdout,session,max_records=muse._max_records(config)) if reason=="capture" else stdout
+    session_rows, native_run = muse._session_records(inspected_stdout,session,max_records=muse._max_records(config))
     stdout_terminals = [r for r in session_rows if r.get("payload_type", "").startswith("run.terminal.")]
     if (len(stdout_terminals)>1 or any(r["payload_type"]!="run.terminal.cancelled"
             or r["payload"].get("kind")!="run_terminal" or r["payload"].get("terminal")!="cancelled"
@@ -137,7 +210,7 @@ def _timeout(store, run_id):
         else:
             _fail("provider_successor_result_exists")
     try:
-        muse._decode(stdout,session,max_proposal_bytes=config.get("max_proposal_bytes",65536))
+        muse._decode(inspected_stdout,session,max_proposal_bytes=config.get("max_proposal_bytes",65536),max_records=muse._max_records(config))
     except TaskAlongError as exc:
         if exc.code != "provider_response_unrecognized":
             _fail("provider_successor_result_exists")
@@ -269,16 +342,60 @@ def _material_unchecked(store, predecessor, config):
     return plan, parent, root, manifest
 
 
-def _material(store, predecessor, config):
+def _capture_material(store, predecessor, config):
+    original,_=_read_run(store,predecessor)
+    if original.get("format")!="local-provider-run/1" or original.get("manual_successor") is not None:
+        _fail("provider_successor_limit", "A capture follow-up is final and can only follow an original consumed capture failure.")
+    parent,root,previous,manifest,artifacts=_failed_attempt(store,predecessor,reason="capture")
+    if (previous["format"]!="local-muse-provider/3"
+            or tuple(previous.get(k) for k in ("attempt_seconds","max_output_bytes","max_proposal_bytes"))!=(720,1048576,65536)
+            or config["format"]!="local-muse-provider/4"):
+        _fail("provider_successor_capture_profile", "Capture recovery requires an original 720-second /3 implementation attempt and the fixed /4 profile.")
+    # Capture migration is explicit and reason-specific. Timeout scope matching
+    # is never relaxed by this separate path.
+    def unchanged(value):
+        return {k:v for k,v in value.items() if k not in {"format","digest","capture_profile","max_protocol_records","max_output_bytes"}}
+    claim=store.setting("provider-claim:muse:"+manifest["digest"])
+    if (unchanged(config)!=unchanged(previous) or type(claim) is not dict
+            or claim!={"run_id":parent["run_id"],"output":parent["output"],"bundle_digest":manifest["digest"]}):
+        _fail("provider_successor_configuration_mismatch", "Keep the original task, State, account, model, effort, context, deadline and proposal limit unchanged.")
+    marker=read_regular(pilot._root(parent["bundle"]),"provider-submission.json",max_bytes=65536,private=True,expected_mode=0o400)
+    if marker!=canonical_bytes({"provider":"muse","run_id":parent["run_id"],"bundle_digest":manifest["digest"]}):
+        _fail("provider_successor_history_changed")
+    artifacts["bundle/provider-submission.json"]=hashlib.sha256(marker).hexdigest()
+    enrollment={"format":"manual-muse-ladder/2","reason":"capture","root_run_id":parent["run_id"],
+        "root_record_digest":parent["digest"],"bundle_digest":manifest["digest"],
+        "state_scope":hashlib.sha256(str(store.root).encode()).hexdigest(),
+        "deadlines_seconds":[720],"max_new_controller_submissions":1}
+    registered=store.setting("provider-successor-root:muse:"+parent["run_id"])
+    if registered is not None and registered!=enrollment:_fail("provider_successor_history_changed")
+    _anchor_view(store,parent,enrollment)
+    history=[{"run_id":parent["run_id"],"controller_submissions":1,
+        "remote_usage":parent["remote_usage"],"descendant_cessation":parent["descendant_cessation"]}]
+    value={"format":"manual-muse-successor-plan/2","reason":"capture","provider":"muse",
+        "predecessor_run_id":predecessor,"predecessor_digest":parent["digest"],"root_run_id":parent["run_id"],"ordinal":1,
+        "bundle_digest":manifest["digest"],"configuration_digest":config["digest"],"attempt_seconds":720,
+        "max_output_bytes":4194304,"max_protocol_records":8192,"max_proposal_bytes":65536,
+        "artifact_hashes":artifacts,"enrollment":enrollment,"remaining_controller_slots_including_this":1,
+        "remaining_local_meta_seconds_including_this":720,"history":history,"automatic_retry_allowed":False,
+        "remote_usage_settled":False,"complete_descendant_cessation_proven":False,"model_free":True}
+    value["digest"]=digest(value)
+    return value,parent,root,manifest
+
+
+def _material(store, predecessor, config, *, reason="timeout"):
     try:
+        if type(reason) is not str:_fail("provider_successor_invalid")
+        if reason=="capture":return _capture_material(store,predecessor,config)
+        if reason!="timeout":_fail("provider_successor_invalid", "Select timeout or explicit capture recovery.")
         return _material_unchecked(store,predecessor,config)
     except (KeyError,TypeError,ValueError,AttributeError):
         _fail("provider_successor_history_changed")
 
 
-def plan(store, *, predecessor):
+def plan(store, *, predecessor, reason="timeout"):
     config=muse._configuration(store)
-    value, _, _, _=_material(store,_id(predecessor),config)
+    value, _, _, _=_material(store,_id(predecessor),config,reason=reason)
     reserved=store.setting("provider-successor:muse:"+predecessor)
     if reserved is not None:
         _fail("provider_successor_reserved", "This predecessor already has a reserved successor. Read its existing status; never dispatch it again.")
@@ -293,9 +410,13 @@ def _check(store, reservation, config):
             or store.setting("provider-successor-run:muse:"+reservation["run_id"])!=reservation
             or store.setting("provider-successor-key:muse:"+reservation["key_digest"])!=reservation):
         _fail("provider_successor_history_changed")
+    reason=reservation.get("reason","timeout")
+    if (type(reason) is not str or reason not in {"timeout","capture"}
+            or reservation.get("format")!=("manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1")):
+        _fail("provider_successor_history_changed")
     if store.setting("provider:muse") != config:
         _fail("provider_successor_plan_changed")
-    fresh, _, _, _=_material(store,reservation["predecessor_run_id"],config)
+    fresh, _, _, _=_material(store,reservation["predecessor_run_id"],config,reason=reason)
     if fresh["digest"]!=reservation["plan_digest"]:
         _fail("provider_successor_plan_changed")
     return fresh
@@ -321,19 +442,21 @@ def inspect_reserved(store, run_id):
         "descendant_cessation":"unknown","automatic_retry_allowed":False,"patch_applied":False,"acceptance_allowed":False}
 
 
-def execute(store, *, predecessor, key, plan_digest, output):
+def execute(store, *, predecessor, key, plan_digest, output, reason="timeout"):
     _id(predecessor);key_check(key);screen_sensitive(key)
+    if type(reason) is not str or reason not in {"timeout","capture"}:_fail("provider_successor_invalid")
     if type(plan_digest) is not str or len(plan_digest)!=64 or any(c not in "0123456789abcdef" for c in plan_digest):
         _fail("provider_successor_invalid")
     target=pilot._root(output)
     key_digest=hashlib.sha256(key.encode()).hexdigest()
     existing=store.setting("provider-successor-key:muse:"+key_digest)
     identity={"predecessor_run_id":predecessor,"plan_digest":plan_digest,"output":str(target)}
+    if reason=="capture":identity["reason"]=reason
     if existing is not None:
-        if type(existing) is not dict or existing.get("digest")!=digest(existing) or any(existing.get(k)!=v for k,v in identity.items()):_fail("provider_successor_key_conflict")
+        if type(existing) is not dict or existing.get("digest")!=digest(existing) or existing.get("reason","timeout")!=reason or any(existing.get(k)!=v for k,v in identity.items()):_fail("provider_successor_key_conflict")
         return muse.inspect(store,existing["run_id"])
     config=muse._configuration(store)
-    proof,parent,parent_root,manifest=_material(store,predecessor,config)
+    proof,parent,parent_root,manifest=_material(store,predecessor,config,reason=reason)
     if proof["digest"]!=plan_digest:_fail("provider_successor_plan_changed")
     original,original_root=_read_run(store,proof["root_run_id"])
     for protected in (parent_root,pilot._root(parent["bundle"]),original_root,pilot._root(original["bundle"]),_anchor(original)):
@@ -341,7 +464,7 @@ def execute(store, *, predecessor, key, plan_digest, output):
     pilot._destination(output)
     budget=muse._budget(config,pilot._prompt(manifest["request"],manifest["digest"]))
     if not budget["input_echoes_fit"]:_fail("provider_capture_budget_insufficient")
-    reservation={"format":"manual-muse-successor/1",**identity,"run_id":identifier(),"key_digest":key_digest,
+    reservation={"format":"manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1",**identity,"run_id":identifier(),"key_digest":key_digest,
         "root_run_id":proof["root_run_id"],"ordinal":proof["ordinal"],"predecessor_digest":parent["digest"],
         "bundle_digest":manifest["digest"],"configuration_digest":config["digest"],"attempt_seconds":proof["attempt_seconds"],
         "history":proof["history"]}
@@ -351,7 +474,7 @@ def execute(store, *, predecessor, key, plan_digest, output):
     with store.transaction() as db:
         again=store.setting("provider-successor-key:muse:"+key_digest)
         if again is not None:
-            if type(again) is not dict or again.get("digest")!=digest(again) or any(again.get(k)!=v for k,v in identity.items()):_fail("provider_successor_key_conflict")
+            if type(again) is not dict or again.get("digest")!=digest(again) or again.get("reason","timeout")!=reason or any(again.get(k)!=v for k,v in identity.items()):_fail("provider_successor_key_conflict")
             return muse.inspect(store,again["run_id"])
         if store.setting("provider-successor:muse:"+predecessor) is not None:_fail("provider_successor_reserved")
         if store.setting("provider-run:"+predecessor)!=parent or store.setting("provider:muse")!=config:_fail("provider_successor_plan_changed")

@@ -48,6 +48,7 @@ class ForegroundExperimentResult:
 def run_foreground_experiment(
     argv: Sequence[str], *, mode: str, cwd: str | Path, stdin: bytes = b"",
     timeout_seconds: int | float = 30, max_output_bytes: int = 65536,
+    max_line_bytes: int = 1048576,
     env: Mapping[str, str] | None = None,
     cancel_requested: Callable[[], bool] | None = None,
     heartbeat: Callable[[], None] | None = None,
@@ -75,7 +76,7 @@ def run_foreground_experiment(
     effect_outcome = "uncertain"
     try:
         result = run_bounded(argv, cwd=cwd, stdin=stdin, timeout_seconds=timeout_seconds,
-            max_output_bytes=max_output_bytes, env=env, cancel_requested=cancel_requested,
+            max_output_bytes=max_output_bytes, max_line_bytes=max_line_bytes, env=env, cancel_requested=cancel_requested,
             heartbeat=heartbeat, on_spawn=on_spawn, on_stdout_line=on_stdout_line,
             secrets=secrets, signal_grace_seconds=signal_grace_seconds,
             _lifetime_observations=observations)
