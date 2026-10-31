@@ -1,7 +1,7 @@
 import contextlib, importlib.util, io, json, tempfile, unittest
 from pathlib import Path
 
-_f = Path(__file__).resolve().parents[1] / 'tools' / 'release_version.py'
+_f = Path(__file__).resolve().parents[1] / "release_version.py"
 _s = importlib.util.spec_from_file_location('release_version', _f)
 rv = importlib.util.module_from_spec(_s)
 _s.loader.exec_module(rv)
