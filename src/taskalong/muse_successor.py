@@ -189,6 +189,10 @@ def _anchor_view(store, original, enrollment):
     for ordinal in (1,2):
         name=f"slot-{ordinal}.json"
         existing=store.setting("provider-successor:muse:"+parent) if parent else None
+        if ordinal > enrollment["max_new_controller_submissions"]:
+            if existing is not None or (anchor/name).exists() or (anchor/name).is_symlink():
+                _fail("provider_successor_history_changed")
+            continue
         if (anchor/name).exists() or (anchor/name).is_symlink():
             value=loads(read_regular(anchor,name,max_bytes=65536,private=True,expected_mode=0o400))
             if type(value) is not dict or value!=existing or value.get("digest")!=digest(value) or value.get("ordinal")!=ordinal:
@@ -204,8 +208,15 @@ def _material_unchecked(store, predecessor, config):
     parent, root, previous_config, manifest, artifacts = _timeout(store,predecessor)
     link = parent.get("manual_successor")
     if link is None:
-        if parent["format"]!="local-provider-run/1" or previous_config["attempt_seconds"]>60:
-            _fail("provider_successor_limit", "A successor ladder must start from an original short local timeout.")
+        if parent["format"]!="local-provider-run/1":
+            _fail("provider_successor_limit")
+        seconds=previous_config["attempt_seconds"]
+        if seconds<=60:
+            deadlines=_DEADLINES
+        elif seconds==360:
+            deadlines=(720,)
+        else:
+            _fail("provider_successor_limit", "A ladder requires an original timeout of at most 60 seconds or exactly 360 seconds.")
         original, ordinal = parent, 1
     else:
         if (parent["format"]!="local-provider-run/2" or type(link) is not dict
@@ -224,18 +235,19 @@ def _material_unchecked(store, predecessor, config):
         if first_plan["digest"] != link.get("plan_digest"):
             _fail("provider_successor_history_changed")
         ordinal = 2
+        deadlines=_DEADLINES
     original_claim = store.setting("provider-claim:muse:"+manifest["digest"])
     if (type(original_claim) is not dict or original_claim.get("run_id")!=original["run_id"]
             or original_claim.get("output")!=original["output"] or original_claim.get("bundle_digest")!=manifest["digest"]
             or original["bundle_digest"]!=manifest["digest"] or _scope(config)!=_scope(previous_config)):
         _fail("provider_successor_configuration_mismatch", "Keep the original task, binary, account, model, context and capture/proposal limits unchanged.")
-    required = _DEADLINES[ordinal-1]
+    required = deadlines[ordinal-1]
     if config["format"]!="local-muse-provider/3" or config["attempt_seconds"]!=required:
         _fail("provider_successor_deadline", f"Configure the explicit {required}-second successor deadline; no request was sent.")
     enrollment = {"format":"manual-muse-ladder/1","root_run_id":original["run_id"],
         "root_record_digest":original["digest"],"bundle_digest":manifest["digest"],
         "state_scope":hashlib.sha256(str(store.root).encode()).hexdigest(),
-        "deadlines_seconds":[360,720],"max_new_controller_submissions":2}
+        "deadlines_seconds":list(deadlines),"max_new_controller_submissions":len(deadlines)}
     existing = store.setting("provider-successor-root:muse:"+original["run_id"])
     if existing is not None and existing!=enrollment:
         _fail("provider_successor_history_changed")
@@ -250,7 +262,7 @@ def _material_unchecked(store, predecessor, config):
         "bundle_digest":manifest["digest"],"configuration_digest":config["digest"],
         "attempt_seconds":required,"max_output_bytes":config["max_output_bytes"],
         "max_proposal_bytes":config["max_proposal_bytes"],"artifact_hashes":artifacts,"enrollment":enrollment,
-        "remaining_controller_slots_including_this":3-ordinal,"remaining_local_meta_seconds_including_this":sum(_DEADLINES[ordinal-1:]),
+        "remaining_controller_slots_including_this":len(deadlines)+1-ordinal,"remaining_local_meta_seconds_including_this":sum(deadlines[ordinal-1:]),
         "history":history,"automatic_retry_allowed":False,"remote_usage_settled":False,
         "complete_descendant_cessation_proven":False,"model_free":True}
     plan["digest"]=digest(plan)

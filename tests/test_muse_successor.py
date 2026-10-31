@@ -41,6 +41,7 @@ class SuccessorTests(unittest.TestCase):
         self.original_record=canonical_bytes(self.original)
         self.original_claim=canonical_bytes(self.service._store.setting('provider-claim:muse:'+self.original['bundle_digest']))
         self.original_native=self.journals[0].read_bytes()
+        self.original_journal=self.journals[0]
 
     def configure(self,seconds,*,legacy=False,**overrides):
         self.service.configure_provider('muse',{'executable':str(self.binary),'account_home':str(self.home),'muse_home':str(self.data),
@@ -97,9 +98,21 @@ class SuccessorTests(unittest.TestCase):
     def assert_original(self):
         self.assertEqual(canonical_bytes(self.service.result(self.original['run_id'])),self.original_record)
         self.assertEqual(canonical_bytes(self.service._store.setting('provider-claim:muse:'+self.original['bundle_digest'])),self.original_claim)
-        current={p.relative_to(self.root/'original').as_posix():p.read_bytes() for p in (self.root/'original').rglob('*') if p.is_file()}
+        original_root=Path(self.original['output'])
+        current={p.relative_to(original_root).as_posix():p.read_bytes() for p in original_root.rglob('*') if p.is_file()}
         self.assertEqual(current,self.original_bytes)
-        self.assertEqual(self.journals[0].read_bytes(),self.original_native)
+        self.assertEqual(self.original_journal.read_bytes(),self.original_native)
+
+    def original_at(self,seconds,**options):
+        self.configure(seconds,**options)
+        request={**self.request,'task':f'Independent original {seconds}-second synthetic intent.',
+                 'reasoning_effort':options.get('reasoning_effort','high')}
+        self.original=self.service.run_provider(request=request,output=str(self.root/f'original-{seconds}'))
+        self.original_bytes={p.relative_to(Path(self.original['output'])).as_posix():p.read_bytes()
+                             for p in Path(self.original['output']).rglob('*') if p.is_file()}
+        self.original_record=canonical_bytes(self.original)
+        self.original_claim=canonical_bytes(self.service._store.setting('provider-claim:muse:'+self.original['bundle_digest']))
+        self.original_journal=self.journals[-1];self.original_native=self.original_journal.read_bytes()
 
     def replace_record(self,record,**updates):
         value={**record,**updates};value['digest']=digest(value)
@@ -127,6 +140,82 @@ class SuccessorTests(unittest.TestCase):
         self.assertFalse(first['patch_applied']);self.configure(720)
         with self.assertRaises(TaskAlongError):self.plan(first)
         self.assertEqual(len(self.calls),2);self.assert_original()
+
+    def test_original_360_gets_only_one_explicit_720_with_same_max_scope(self):
+        self.original_at(360,reasoning_effort='max');self.configure(720,reasoning_effort='max')
+        before=len(self.calls);proof=self.plan()
+        self.assertEqual(len(self.calls),before)
+        self.assertEqual(proof['ordinal'],1);self.assertEqual(proof['attempt_seconds'],720)
+        self.assertEqual(proof['remaining_controller_slots_including_this'],1)
+        self.assertEqual(proof['remaining_local_meta_seconds_including_this'],720)
+        self.assertEqual(proof['enrollment']['deadlines_seconds'],[720])
+        self.assertEqual(proof['enrollment']['max_new_controller_submissions'],1)
+        self.assertFalse(proof['remote_usage_settled']);self.assertFalse(proof['complete_descendant_cessation_proven'])
+        last=self.execute(key='direct-last',plan=proof)
+        self.assertEqual(last['bundle_digest'],self.original['bundle_digest'])
+        self.assertEqual(last['manual_successor']['predecessor_run_id'],self.original['run_id'])
+        self.assertEqual(last['manual_successor']['history'][0]['controller_submissions'],1)
+        self.assertEqual(last['manual_successor']['history'][0]['remote_usage'],'unknown')
+        self.assertEqual(last['manual_successor']['history'][0]['descendant_cessation'],'unknown')
+        self.assertEqual([call[1]['timeout_seconds'] for call in self.calls[-2:]],[360,720])
+        self.assertEqual(self.execute(key='direct-last',plan=proof),last)
+        with self.assertRaises(TaskAlongError):self.execute(key='another-last',plan=proof)
+        with self.assertRaises(TaskAlongError) as exc:self.plan(last)
+        self.assertEqual(exc.exception.code,'provider_successor_limit')
+        self.assertEqual(len(self.calls),before+1);self.assert_original()
+
+    def test_other_long_original_deadlines_do_not_gain_a_successor(self):
+        for seconds in (61,359,361,719,720):
+            self.original_at(seconds);self.configure(720);before=len(self.calls)
+            with self.subTest(seconds=seconds),self.assertRaises(TaskAlongError) as exc:self.plan()
+            self.assertEqual(exc.exception.code,'provider_successor_limit');self.assertEqual(len(self.calls),before)
+            self.assertIsNone(self.service._store.setting('provider-successor:muse:'+self.original['run_id']))
+            self.assert_original()
+
+    def test_original_360_requires_exact_720_and_unchanged_context_and_limits(self):
+        self.original_at(360);self.configure(360)
+        with self.assertRaises(TaskAlongError) as exc:self.plan()
+        self.assertEqual(exc.exception.code,'provider_successor_deadline')
+        for options in ({'context':'native-only'},{'model':'different-model'},{'reasoning_effort':'max'},
+                        {'max_output_bytes':524288},{'max_proposal_bytes':8192}):
+            self.configure(720,**options)
+            with self.subTest(options=options),self.assertRaises(TaskAlongError) as exc:self.plan()
+            self.assertEqual(exc.exception.code,'provider_successor_configuration_mismatch')
+        self.assertIsNone(self.service._store.setting('provider-successor:muse:'+self.original['run_id']))
+        self.assertEqual(len(self.calls),2);self.assert_original()
+
+    def test_original_360_unknown_cleanup_or_other_failure_never_qualifies(self):
+        self.original_at(360);original=self.original;self.configure(720)
+        for changes in ({'root_exit_observed':False},{'group_termination_confirmed':False},
+                        {'tracking_errors':['lost']},{'failure_code':'cleanup_failed'},
+                        {'protocol_error':'partial'},{'output_limited':True},{'cancelled':True},{'timed_out':False}):
+            changed=self.replace_record(original,process={**original['process'],**changes})
+            with self.subTest(changes=changes),self.assertRaises(TaskAlongError):self.plan(changed)
+        self.assertIsNone(self.service._store.setting('provider-successor:muse:'+original['run_id']))
+        self.assertEqual(len(self.calls),2)
+
+    def test_original_360_successful_720_stops_without_application(self):
+        self.original_at(360);self.configure(720);self.mode='success';last=self.execute(key='success-last')
+        self.assertEqual(last['state'],'proposal_ready');self.assertFalse(last['patch_applied'])
+        with self.assertRaises(TaskAlongError):self.plan(last)
+        self.assertEqual(len(self.calls),3);self.assert_original()
+
+    def test_original_360_restored_state_cannot_reopen_its_single_slot(self):
+        self.original_at(360);self.configure(720)
+        with RunService(self.root/'long-snapshot') as snapshot:
+            self.service._store.db.backup(snapshot._store.db)
+            self.execute(key='one-long-slot')
+            snapshot._store.db.backup(self.service._store.db)
+            with self.assertRaises(TaskAlongError):self.plan()
+        self.assertEqual(len(self.calls),3);self.assert_original()
+
+    def test_original_360_rejects_an_unexpected_second_slot_file(self):
+        self.original_at(360);self.configure(720);self.execute(key='one-long-slot')
+        anchor=successor._anchor(self.original)
+        (anchor/'slot-2.json').write_bytes(b'{}');(anchor/'slot-2.json').chmod(0o400)
+        with self.assertRaises(TaskAlongError) as exc:self.plan()
+        self.assertEqual(exc.exception.code,'provider_successor_history_changed')
+        self.assertEqual(len(self.calls),3);self.assert_original()
 
     def test_repeated_same_key_only_observes_and_different_key_cannot_repeat_parent(self):
         self.configure(360);proof=self.plan();first=self.execute(plan=proof)

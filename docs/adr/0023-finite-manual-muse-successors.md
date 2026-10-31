@@ -7,9 +7,13 @@ deadline must not erase the consumed request, repeat a successful or ambiguous
 execution, or become an automatic provider retry loop.
 
 The OS operator explicitly configures and invokes a successor in the original
-state store. Task/response JSON cannot request one. The first successor has a
-360-second local deadline; a final successor has 720 seconds and requires the
-first to end in a qualifying local timeout without a response. Both retain the
+state store. Task/response JSON cannot request one. For an original timeout of at
+most 60 seconds, the first successor has a 360-second local deadline; a final
+successor has 720 seconds and requires the first to end in a qualifying local
+timeout without a response. An original 360-second timeout permits only one
+720-second successor. Other longer originals have no implicit successor schedule.
+The closed schedule is derived from retained original configuration, never a
+caller-selected stage or a cosmetic replacement task. Both schedules retain the
 same bundle, binary, account roots, model/effort, context pins and capture/proposal
 limits. The ordinary default remains 20 seconds. New config format `/3` supports
 the finite 1–720 range and makes older clients refuse rather than ignore it.
@@ -28,7 +32,7 @@ Alternative: changing the task nonce or creating a fresh state would abandon the
 old claim and liability. Alternative: trusting only SQLite permits an older backup
 to reopen a slot. Instead, append exclusive reservation indexes in the same store
 and retain a separate private control directory beside the original output, named
-`.taskalong-muse-successors-<root-run-id>`. Its immutable enrollment and two slot
+`.taskalong-muse-successors-<root-run-id>`. Its immutable enrollment and at most two slot
 files bind the original root, original state scope and exact successor descriptors.
 Original run/bundle/native journal bytes are never modified by the successor.
 
@@ -49,14 +53,18 @@ owner invocation. Only the existing bounded process owner performs cancellation.
 No saved-PID signalling, new credential, security setting or provider fallback is
 introduced. No exposure/production ledger or old charge is rewritten.
 
-At most two new controller submissions are possible in this ladder, with 1,080
-seconds of selected local Meta deadlines plus separate preflights and cleanup.
+The short-original schedule permits at most two new controller submissions, with
+1,080 seconds of selected local Meta deadlines. The original-360 schedule permits
+one new submission and 720 seconds. Both have separate preflights and cleanup.
 Those are reservations/upper bounds, not measured remote inference or spending.
 A proposal stops the ladder for manual review/application and independent tests.
 Any non-timeout failure or uncertain local cleanup stops it as well.
 
 Rollback retains all claims and the separate control directory. Older clients
-refuse `/3`; they cannot erase these reservations. No new SQL migration is needed.
+refuse `/3`; the first `/3` reader refuses original-360 successor admission.
+Existing short-original plans/enrollments keep their exact identity and limits.
+One-slot enrollment derives `[720]` and rejects an unexpected second slot. No
+new command, caller override, enrollment format or SQL migration is needed.
 Tests cover complete public API/CLI journeys, conditional final admission, strict
 deadlines, competing reservations, crashes, restored/copied databases, root-byte
 preservation, artifact/config drift, output isolation and ambiguous results.

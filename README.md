@@ -61,7 +61,9 @@ Native retries/remote usage/descendant lifetime may remain unknown.
 The 20-second default is a short smoke budget. Explicit configuration supports
 finite deadlines through 720 seconds. A consumed task can use the separate
 [manual timeout successor procedure](docs/operations.md#explicit-manual-timeout-successors):
-one 360-second successor and one conditional final 720-second successor, retaining
+one 360-second successor and one conditional final 720-second successor after an
+original timeout of at most 60 seconds. An original 360-second timeout instead
+permits only one linked 720-second successor. Both schedules retain
 the original claims and task. Nothing automatically retries or applies a patch.
 
 Set `context` to `exclude` to request full exclusion. The currently supported Muse

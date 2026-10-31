@@ -858,9 +858,15 @@ explicit finite whole-protocol and proposal cap for actual coding tasks.
 
 For an already consumed request, do not change its nonce, use a fresh state, reset
 the claim or issue another ordinary `run`. Use the same original state store and
-the explicit successor commands. The fixed ladder is a 360-second successor and,
-only after its qualifying timeout, one final 720-second successor. Configure the
-required deadline while preserving every other original provider setting.
+the explicit successor commands. For an original timeout of at most 60 seconds,
+the fixed ladder is a 360-second successor and, only after its qualifying timeout,
+one final 720-second successor. An original 360-second timeout instead permits
+one linked 720-second successor, with one remaining controller slot and 720 local
+Meta deadline seconds. Other longer originals have no implicit retry schedule.
+Configure the required deadline while preserving every other original provider
+setting, including the requested effort, context and capture/proposal limits.
+The same commands below apply to the original-360 case using a 720-second config;
+the plan reports that single slot rather than manufacturing an earlier stage.
 
 ```text
 taskalong --state-dir /private/original-state configure-provider muse --config /private/provider-360.json
@@ -902,9 +908,12 @@ repair it. A missing/partial/conflicting directory or state scope refuses. The
 original output and bundle files remain unchanged. Output paths cannot overlap
 any ancestor output/bundle or this control directory.
 
-If NEXT ends in a qualifying local timeout with no response, independently invoke
-the same two commands with its run ID and a 720-second config. That is the last
-slot. Stop on success, denial, another failure or uncertain local cleanup. The
-two new Meta deadlines total at most 1,080 seconds, plus separate five-second
-preflights and existing owned cleanup. They do not bound remote spend or native
+For the short-original schedule only, if NEXT ends in a qualifying local timeout
+with no response, independently invoke the same two commands with its run ID and
+a 720-second config. That is the last slot. The original-360 schedule ends after
+its single 720-second successor, including a timeout. Stop on success, denial,
+another failure or uncertain local cleanup. The
+short-original schedule's two new Meta deadlines total at most 1,080 seconds;
+the original-360 schedule has only one new 720-second deadline. Both have separate
+five-second preflights and existing owned cleanup. They do not bound remote spend or native
 internal retries. Proposals still require manual review/application and tests.
