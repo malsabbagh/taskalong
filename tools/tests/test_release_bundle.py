@@ -1,4 +1,4 @@
-import io,json,os,subprocess,sys,tarfile as tf,tempfile,unittest
+import gzip,io,json,os,subprocess,sys,tarfile as tf,tempfile,unittest
 from pathlib import Path as P
 from unittest import mock
 sys.path.insert(0,str(P(__file__).resolve().parents[1]))
@@ -19,9 +19,27 @@ class T(unittest.TestCase):
   with tf.open(p,"w:gz") as t:
    for n,b,m,y in it or s.its():i=tf.TarInfo(n);i.mode=m;i.type=y;i.linkname="x";i.size=len(b) if y==RT else 0;t.addfile(i,io.BytesIO(b) if y==RT else None)
   return p
+ def rawit(s,it=None):
+  b=io.BytesIO()
+  with tf.open(fileobj=b,mode="w") as t:
+   for n,d,m,y in it or s.its():i=tf.TarInfo(n);i.mode=m;i.type=y;i.size=len(d) if y==RT else 0;t.addfile(i,io.BytesIO(d) if y==RT else None)
+  return b.getvalue()
+ def rgz(s,raw):p=s.r/"a.tgz";p.write_bytes(gzip.compress(raw));return p
+ def cut(s,it):return sum(512+((len(d)+511)//512*512 if y==RT else 0) for _,d,_,y in it)
  def bad(s,it=None,p=None):s.assertRaises(rb.ReleaseError,rb.audit_npm,s.r,p or s.arc(it))
  def test_ok(s):
   a=rb.audit_npm(s.r,s.arc());assert len(a["members"])==4 and a["source_consistent"] and len(a["archive_sha256"])==64
+ def test_hidden_tar(s):
+  it=s.its();raw=s.rawit(it);base=raw[:s.cut(it)];z=b"\0"*512;rep=[["package/bin/taskalong.js",b"evil\n",420,RT]];rr=s.rawit(rep)[:s.cut(rep)]
+  s.assertTrue(rb.audit_npm(s.r,s.rgz(base+2*z))["source_consistent"])
+  s.assertTrue(rb.audit_npm(s.r,s.rgz(raw))["source_consistent"])
+  pad=bytearray(base+2*z);pad[512+len(it[0][1])]=1
+  chk=bytearray(base+2*z);chk[148]^=1
+  xh=bytearray(rr[:512]);xh[156:157]=b"x";xh[148:156]=b" "*8;xh[148:156]=f"{sum(xh):06o}\0 ".encode()
+  for x in (base+z+rr+2*z,base+2*z+rr+2*z,base+2*z+b"x"*512,base+z,base,base+rr+2*z,bytes(pad),bytes(chk),base[:-1],base[:512],bytes(xh)+rr[512:]+base+2*z):s.bad(p=s.rgz(x))
+  rel,res=s.tools();c=[];p=s.rgz(base+z+rr+2*z)
+  with mock.patch.object(rb.subprocess,"run",s.fake(c)):s.assertRaises(rb.ReleaseError,rb.npm_consumer,s.r,p,rel[0],node=rel[1],npm_cli=rel[2])
+  s.assertEqual(c,[])
  def test_bad(s):
   b=s.its()
   for i,j,v in [(0,0,"../x"),(0,2,438),(0,3,tf.SYMTYPE),(0,3,tf.DIRTYPE),(2,1,b"x"*262145)]:c=[x[:] for x in b];c[i][j]=v;s.bad(c)
@@ -34,7 +52,7 @@ class T(unittest.TestCase):
   W(s.c/"LICENSE",b"bad");s.bad()
  def test_tree_exact(s):
   p=s.arc()
-  for v in (None,{},{ "python":rb.PY},{"python":rb.PY,"npm":rb.NV,"tag":"v"+rb.PY,"x":1}):
+  for v in (None,{},{"python":rb.PY},{"python":rb.PY,"npm":rb.NV,"tag":"v"+rb.PY,"x":1}):
    with mock.patch.object(rb.release_version,"check_tree",return_value=v):s.assertRaises(rb.ReleaseError,rb.audit_npm,s.r,p)
  def sym(s,src,dst):
   try:dst.symlink_to(src,target_is_directory=src.is_dir())
@@ -63,11 +81,11 @@ class T(unittest.TestCase):
   o=subprocess.run([sel,"-c","import sys;print(sys.prefix)"],cwd=other,capture_output=True,text=True,timeout=30)
   s.assertEqual(o.returncode,0,o.stderr)
   s.assertEqual(P(o.stdout.strip()).resolve(),vd.resolve())
- def fake(s,calls,ver=None):
+ def fake(s,calls,ver=None,data=None):
   def f(a,cwd=None,env=None,shell=None,timeout=None,capture_output=None):
    calls.append((list(a),cwd,dict(env or {}),shell,timeout,capture_output))
    if len(calls)==1:
-    b=P(a[a.index("--prefix")+1])/"node_modules/@taskalong/cli/bin/taskalong.js";b.parent.mkdir(parents=True);b.write_text("x");return subprocess.CompletedProcess(a,0,b"",b"")
+    b=P(a[a.index("--prefix")+1])/"node_modules/@taskalong/cli/bin/taskalong.js";b.parent.mkdir(parents=True);b.write_bytes((s.c/"bin/taskalong.js").read_bytes() if data is None else data);return subprocess.CompletedProcess(a,0,b"",b"")
    return subprocess.CompletedProcess(a,0,((ver or rb.EXP)+"\n").encode(),b"")
   return f
  def tools(s):
@@ -89,4 +107,10 @@ class T(unittest.TestCase):
   rel,res=s.tools();c=[]
   with mock.patch.object(rb.subprocess,"run",s.fake(c,"wrong")):s.assertRaises(rb.ReleaseError,rb.npm_consumer,s.r,s.arc(),rel[0],node=rel[1],npm_cli=rel[2])
   s.assertEqual(len(c),2)
+ def test_mock_installed_bin_mismatch(s):
+  good=(s.c/"bin/taskalong.js").read_bytes();same=bytes([good[0]^1])+good[1:];a=s.arc()
+  for data in (good+b"x",good[:-1],same):
+   rel,res=s.tools();c=[]
+   with mock.patch.object(rb.subprocess,"run",s.fake(c,data=data)):s.assertRaises(rb.ReleaseError,rb.npm_consumer,s.r,a,rel[0],node=rel[1],npm_cli=rel[2])
+   s.assertEqual(len(c),1)
 if __name__=="__main__":unittest.main()

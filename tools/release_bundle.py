@@ -1,4 +1,4 @@
-import argparse,gzip,hashlib,io,json,os,shutil,stat,subprocess,sys,tarfile,tempfile
+import argparse,gzip,hashlib,io,json,os,shutil,stat,subprocess,sys,tempfile,zlib
 from pathlib import Path
 import check_dist,release_version
 PY="0.1.0a1";NV="0.1.0-alpha.1";MAX=1048576;LIM=262144;EXP="taskalong 0.1.0a1 (API/schema 1.0)"
@@ -39,23 +39,37 @@ def _meta(b):
  e=m.get("engines");c=m.get("publishConfig");t=m.get("taskalong")
  ok=(m.get("name"),m.get("version"),m.get("license"),m.get("type"),u)==("@taskalong/cli",NV,"MIT","commonjs",URL) and m.get("bin")=={"taskalong":"bin/taskalong.js"} and m.get("files")==["bin/taskalong.js","README.md","LICENSE"] and isinstance(e,dict) and e.get("node")==">=22.14.0" and isinstance(c,dict) and c.get("access")=="public" and isinstance(t,dict) and t.get("pythonVersion")==PY
  if not ok:raise E("bad metadata")
+def _oct(x):
+ if x[0]&128:raise E("bad tar")
+ y=x.split(b"\0")[0].strip()
+ if y and any(c<48 or c>55 for c in y):raise E("bad tar")
+ return int(y,8) if y else 0
+def _tar(raw):
+ if not raw or len(raw)%512:raise E("bad tar")
+ d={};o=0
+ for _ in range(4):
+  h=raw[o:o+512]
+  if len(h)<512 or not any(h):raise E("bad tar")
+  i=h.find(b"\0",0,100)
+  if i<0 or any(h[i:100]) or any(h[345:]) or (h[257:262]!=b"ustar" and any(h[257:265])):raise E("unsafe member")
+  try:n=h[:i].decode("ascii")
+  except UnicodeDecodeError as e:raise E("unsafe member") from e
+  if n not in M or n in d or h[156] not in (0,48):raise E("unsafe member")
+  mode=_oct(h[100:108]);size=_oct(h[124:136]);_oct(h[108:116]);_oct(h[116:124]);_oct(h[136:148]);_oct(h[329:337]);_oct(h[337:345])
+  if _oct(h[148:156])!=sum(h[:148])+256+sum(h[156:]):raise E("bad tar")
+  if size>LIM or mode not in ({420,493} if n.endswith(".js") else {420}):raise E("unsafe member")
+  o+=512;q=(size+511)//512*512
+  if o+q>len(raw) or any(raw[o+size:o+q]):raise E("bad tar")
+  d[n]=raw[o:o+size];o+=q
+ if len(raw)-o<1024 or any(raw[o:]):raise E("bad tar termination")
+ return d
 def audit_npm(root,archive):
  root=Path(root).resolve();_tree(root);comp=_read(archive,MAX)
  try:
   with gzip.GzipFile(fileobj=io.BytesIO(comp)) as g:raw=g.read(MAX+1)
- except (OSError,EOFError) as e:raise E("bad gzip") from e
+ except (OSError,EOFError,zlib.error) as e:raise E("bad gzip") from e
  if len(raw)>MAX:raise E("archive too large")
- d={}
- try:
-  with tarfile.open(fileobj=io.BytesIO(raw),mode="r:") as t:
-   ms=t.getmembers()
-   if len(ms)!=4 or {m.name for m in ms}!=set(M):raise E("bad members")
-   for m in ms:
-    if not m.isreg() or m.size>LIM or m.mode not in ({420,493} if m.name.endswith(".js") else {420}):raise E("unsafe member")
-    f=t.extractfile(m);b=f.read(LIM+1) if f else b""
-    if len(b)!=m.size:raise E("bad member")
-    d[m.name]=b
- except tarfile.TarError as e:raise E("bad tar") from e
+ d=_tar(raw)
  if any(d[a]!=_src(root,r) for a,r in M.items()):raise E("source mismatch")
  if hashlib.sha256(d["package/LICENSE"]).hexdigest()!=str(check_dist.APPROVED_LICENSE_SHA256).lower():raise E("bad license")
  _meta(d["package/package.json"])
@@ -91,8 +105,13 @@ def npm_consumer(root,archive,python,*,node=None,npm_cli=None):
   env={k:v for k,v in os.environ.items() if not k.upper().startswith("NPM_CONFIG_") and k not in ("NODE_AUTH_TOKEN","NPM_TOKEN")}
   env.update(NPM_CONFIG_USERCONFIG=str(u),NPM_CONFIG_GLOBALCONFIG=str(g),NPM_CONFIG_CACHE=str(cache),TASKALONG_PYTHON=py)
   _run([nd,cli,"install","--prefix",str(pre),"--offline","--ignore-scripts","--no-audit","--no-fund","--no-update-notifier","--no-package-lock","--cache",str(cache),"--userconfig",str(u),"--globalconfig",str(g),arc],t,env)
-  b=pre/"node_modules/@taskalong/cli/bin/taskalong.js"
-  if not b.is_file():raise E("installed bin missing")
+  m=next(x for x in a["members"] if x["name"]=="package/bin/taskalong.js");b=pre
+  for x in Path("node_modules/@taskalong/cli/bin/taskalong.js").parts:
+   b/=x
+   if b.is_symlink():raise E("installed bin unsafe")
+  if not b.resolve().is_relative_to(pre.resolve()):raise E("installed bin unsafe")
+  d=_read(b,m["size"])
+  if len(d)!=m["size"] or hashlib.sha256(d).hexdigest()!=m["sha256"]:raise E("installed bin mismatch")
   o=_run([nd,str(b),"--version"],t,env)
   try:s=o.decode()
   except UnicodeDecodeError as e:raise E("bad version output") from e
