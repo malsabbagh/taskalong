@@ -227,6 +227,11 @@
     "docs/proposals/taskalong-muse-model-free.service",
     "docs/provenance.json",
     "docs/qualification.md",
+    "packages/npm/cli/LICENSE",
+    "packages/npm/cli/README.md",
+    "packages/npm/cli/bin/taskalong.js",
+    "packages/npm/cli/package.json",
+    "packages/npm/cli/test/launcher.test.js",
     "pyproject.toml",
     "requirements-dev.lock",
     "scripts/check_docs.py",
@@ -541,6 +546,10 @@
     "tools/qualify_installed.py",
     "tools/qualify_portable.py",
     "tools/qualify_runtime.py",
-    "tools/sync_guides.py"
+    "tools/release_bundle.py",
+    "tools/release_version.py",
+    "tools/sync_guides.py",
+    "tools/tests/test_release_bundle.py",
+    "tools/tests/test_release_version.py"
   ]
 }
