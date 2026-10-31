@@ -367,3 +367,14 @@ include tests/test_muse_successor.py
 include docs/adr/0023-finite-manual-muse-successors.md
 include tests/test_muse_capture_envelope.py
 include docs/adr/0024-bounded-implementation-capture.md
+
+# Exact source release tooling and npm launcher inputs.
+include packages/npm/cli/LICENSE
+include packages/npm/cli/README.md
+include packages/npm/cli/bin/taskalong.js
+include packages/npm/cli/package.json
+include packages/npm/cli/test/launcher.test.js
+include tools/release_bundle.py
+include tools/release_version.py
+include tools/tests/test_release_bundle.py
+include tools/tests/test_release_version.py

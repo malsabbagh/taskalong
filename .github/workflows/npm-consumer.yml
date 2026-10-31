@@ -22,6 +22,8 @@ jobs:
         os: [ubuntu-24.04, macos-15, windows-2022]
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          persist-credentials: false
       - if: runner.os == 'Windows'
         run: git -c core.autocrlf=false checkout-index -f -a
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
@@ -30,10 +32,10 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.18.0
-      - run: python -m pip install --require-hashes -r requirements-dev.lock
+      - run: python -m pip install --isolated --disable-pip-version-check --require-hashes -r requirements-dev.lock
       - run: python -m build --no-isolation --wheel --sdist
-      - run: python tools/normalize_sdist.py dist
-      - run: python tools/check_dist.py dist
+      - run: python tools/normalize_sdist.py dist/*.tar.gz
+      - run: python tools/check_dist.py --dist-dir dist
       - run: python -m unittest discover -s tools/tests -v
       - run: node --test packages/npm/cli/test/launcher.test.js
       - run: python tools/release_version.py --root . --tag v0.1.0a1
@@ -51,7 +53,7 @@ jobs:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
           mkdir -p "$NPM_CONFIG_CACHE" npm-dist receipts
-          npm pack packages/npm/cli --offline --ignore-scripts --pack-destination npm-dist
+          npm pack ./packages/npm/cli --offline --ignore-scripts --pack-destination npm-dist
       - run: python tools/release_bundle.py audit-npm --root . --archive npm-dist/taskalong-cli-0.1.0-alpha.1.tgz > receipts/audit.json
       - run: |
           python - <<'PY'
