@@ -1,0 +1,13 @@
+{
+  "name": "@taskalong/cli",
+  "version": "0.1.0-alpha.1",
+  "description": "Thin launcher for the TaskAlong Python CLI",
+  "license": "MIT",
+  "type": "commonjs",
+  "repository": { "type": "git", "url": "git+https://github.com/malsabbagh/taskalong.git" },
+  "bin": { "taskalong": "bin/taskalong.js" },
+  "files": ["bin/taskalong.js", "README.md", "LICENSE"],
+  "engines": { "node": ">=22.14.0" },
+  "publishConfig": { "access": "public" },
+  "taskalong": { "pythonVersion": "0.1.0a1" }
+}
