@@ -121,6 +121,55 @@ class CodexCLITests(unittest.TestCase):
         self.assertEqual(result["state"], "completed")
         self.assertEqual(result["diagnostics"], {"unknown_event_count": 1})
 
+    def test_private_capture_receives_original_streams_without_public_stdout(self):
+        captures = []
+        result = self.invoke("unknown-event", capture_private_output=lambda stdout, stderr: captures.append((stdout, stderr)))
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(len(captures), 1)
+        stdout, stderr = captures[0]
+        self.assertIsInstance(stdout, bytes)
+        self.assertEqual(stderr, b"")
+        self.assertIn(b'"untrusted": "never public event payload"', stdout)
+        self.assertNotIn("stdout", result["process"])
+        self.assertNotIn("never public event payload", json.dumps(result))
+
+    def test_protocol_failure_still_reaches_private_capture(self):
+        captures = []
+        result = self.invoke("malformed-jsonl", capture_private_output=lambda stdout, stderr: captures.append((stdout, stderr)))
+        self.assertEqual((result["state"], result["error"]), ("failed", "runtime_protocol_invalid"))
+        self.assertEqual(len(captures), 1)
+        self.assertIn(b'{"type":"turn.completed","type":"error"}', captures[0][0])
+        self.assertTrue(result["process"]["termination_confirmed"])
+
+    def test_private_capture_failure_cannot_complete_or_expose_callback_text(self):
+        def fail_capture(stdout, stderr):
+            raise OSError("private sink contents must not escape")
+        with self.assertRaises(TaskAlongError) as raised:
+            self.invoke(capture_private_output=fail_capture)
+        self.assertEqual(raised.exception.code, "process_capture_failed")
+        self.assertEqual(raised.exception.effect_outcome, "uncertain")
+        self.assertNotIn("private sink contents", str(raised.exception.to_dict()))
+
+    def test_invalid_capture_sink_refuses_before_any_dispatch(self):
+        with self.assertRaises(TaskAlongError) as raised:
+            self.invoke(capture_private_output="task-selected-import")
+        self.assertEqual((raised.exception.code, raised.exception.effect_outcome),
+                         ("runtime_capture_invalid", "not_sent"))
+        self.assertFalse(self.executable.with_name("fake-codex-invocations.jsonl").exists())
+
+    def test_event_after_terminal_cannot_complete_with_a_valid_result_file(self):
+        source = self.executable.read_text().replace(
+            '    return 1 if mode == "nonzero" else 0',
+            '    print(json.dumps({"type": "item.completed", "item": {"text": "late output"}}), flush=True)\n'
+            '    return 1 if mode == "nonzero" else 0')
+        self.executable.write_text(source)
+        profile = fixture_profile(self.executable)
+        result = CodexCLI(profile).run(fixture_packet(profile), workspace=self.workspace,
+                                       output_dir=self.root/"late-output")
+        self.assertEqual((result["state"], result["error"]), ("failed", "runtime_protocol_invalid"))
+        self.assertIsNone(result["result"])
+        self.assertTrue(result["process"]["termination_confirmed"])
+
     def test_native_resume_uses_exact_thread_and_new_packet(self):
         first_packet = fixture_packet(self.profile)
         first = self.adapter.run(first_packet, workspace=self.workspace, output_dir=self.root/"first")
@@ -138,6 +187,14 @@ class CodexCLITests(unittest.TestCase):
         with self.assertRaises(TaskAlongError):
             self.adapter.build_argv(workspace=self.workspace, git_common_dir=self.root/"git", control_dir=self.root/"control",
                                     schema_path="/schema", result_path="/result", mode="native_resume")
+
+    def test_native_resume_never_interprets_an_observed_thread_as_a_flag(self):
+        for thread in ("--last", "--all", "-m", "-thread"):
+            with self.subTest(thread=thread), self.assertRaises(TaskAlongError) as raised:
+                self.adapter.build_argv(workspace=self.workspace, git_common_dir=self.root/"git", control_dir=self.root/"control",
+                                        schema_path="/schema", result_path="/result", mode="native_resume", thread_id=thread)
+            self.assertEqual(raised.exception.code, "native_resume_unavailable")
+        self.assertFalse(self.executable.with_name("fake-codex-invocations.jsonl").exists())
 
     def test_result_file_must_be_fresh(self):
         directory = self.root / "old"
