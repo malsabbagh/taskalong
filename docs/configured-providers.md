@@ -433,7 +433,7 @@ the same operation only observes retained state. Another key, copied State,
 restored database or changed scope cannot silently create a new slot. Original
 claims, failed evidence and unknown prior exposure remain retained.
 
-Verified complete-result recovery is not implemented here. When terminal
+The successor path does not recover complete results. When terminal
 completion is possible, the owner must first observe the exact bound session's
 full native journal or another sealed complete response, with its source,
 identity, hashes, completeness and original proposal limits checked. A full
@@ -441,3 +441,49 @@ journal showing completion cannot be reused as cancellation proof. Missing or
 contradictory evidence is reported; raising a cap or approving another call does
 not manufacture the missing facts. No fresh State or cosmetic request change is
 a supported recovery mechanism.
+
+## Recovering a sealed result after capture failure
+
+A completed native terminal is a result-reconciliation case, not permission to
+submit another attempt. The separate complete-result recovery route observes
+the original failed Muse `/5` run and its pinned configuration without invoking
+the provider or requiring a newly selected output profile. It does not change
+the original run's failed status, capture, events, submission claim or unknown
+usage and descendant observations.
+
+The model-free plan requires a full, stable, bound native journal containing one
+recognized configured request, one committed assistant response and one completed
+terminal, in that order. The retained stream and any torn terminal text must
+agree with that sealed response. Fragments alone are insufficient. Provider and
+model observations must match the original configuration, and the response must
+pass the original task's proposal, source, schema and sensitive-data checks.
+An empty declared toolset does not prove absence of all unknown native activity.
+
+Journal observation has separate local read ceilings of 64 MiB, 131,072 records
+and 16 MiB per frame. Committed response wire text is capped at 4 MiB, while its
+canonical proposal must still fit the original `/5` limit of at most 64 KiB.
+These read bounds do not enlarge the failed submission's capture or proposal
+allowance. Plans expose hashes, sizes and provenance rather than response text.
+
+Inspect the decision without staging:
+
+```text
+taskalong --state-dir EXISTING_STATE --json provider-result-recovery-plan muse --run-id FAILED_RUN
+```
+
+If the exact plan is eligible, an explicit local recovery operation can reserve
+one separately recorded result observation and stage its proposed patch:
+
+```text
+taskalong --state-dir EXISTING_STATE --json provider-result-recover muse --run-id FAILED_RUN --key RECOVERY_KEY --plan-digest PLAN_DIGEST --output FRESH_OUTPUT
+```
+
+This operation makes no inference request. It retains a private response and a
+new bound snapshot for proposal validation; the copied original submission marker
+prevents the snapshot from becoming a fresh provider task. Its exclusive anchor
+also fences cancellation successors and copied or restored State. The same key
+observes the existing recovery; another key cannot restage after a crash or
+uncertain local outcome. Missing, changed, conflicting or incomplete evidence
+refuses recovery. No automatic retry, application, acceptance or usage settlement
+is performed. The proposed patch still needs independent review and tests before
+manual application.

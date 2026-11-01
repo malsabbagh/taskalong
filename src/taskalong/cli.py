@@ -32,6 +32,8 @@ def parser():
     p.add_argument("--reason", choices=("timeout","capture"), default="timeout")
     p = command("provider-successor"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--predecessor", required=True); p.add_argument("--key", required=True); p.add_argument("--plan-digest", required=True); p.add_argument("--output", required=True)
     p.add_argument("--reason", choices=("timeout","capture"), default="timeout")
+    p = command("provider-result-recovery-plan"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--run-id", required=True)
+    p = command("provider-result-recover"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--run-id", required=True); p.add_argument("--key", required=True); p.add_argument("--plan-digest", required=True); p.add_argument("--output", required=True)
     p = command("run"); p.add_argument("--provider", default="muse"); p.add_argument("--output")
     task = p.add_mutually_exclusive_group(required=True); task.add_argument("--bundle"); task.add_argument("--request")
     p = command("register-repository"); p.add_argument("path"); p.add_argument("--workspace-root")
@@ -137,6 +139,8 @@ def main(argv=None):
             elif cmd == "prepare-provider-task": result = service.prepare_provider_task(args.provider, request=load_json(args.request))
             elif cmd == "provider-successor-plan": result = service.provider_successor_plan(args.provider, predecessor=args.predecessor, reason=args.reason)
             elif cmd == "provider-successor": result = service.provider_successor(args.provider, predecessor=args.predecessor, key=args.key, plan_digest=args.plan_digest, output=args.output, reason=args.reason)
+            elif cmd == "provider-result-recovery-plan": result = service.provider_result_recovery_plan(args.provider, run_id=args.run_id)
+            elif cmd == "provider-result-recover": result = service.recover_provider_result(args.provider, run_id=args.run_id, key=args.key, plan_digest=args.plan_digest, output=args.output)
             elif cmd in {"run", "supervised-pilot-run"}:
                 result = service.run_provider(getattr(args, "provider", "muse"), bundle=getattr(args, "bundle", None),
                     request=load_json(args.request) if getattr(args, "request", None) else None, output=args.output)

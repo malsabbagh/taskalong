@@ -125,8 +125,16 @@ def _parent(root, relative, *, private, create=False, changes=None, missing_ok=F
             descriptor = child
         yield descriptor, parts[-1], links
     finally:
-        for descriptor in reversed(descriptors):
-            os.close(descriptor)
+        owned, descriptors = descriptors, []
+        first_error = None
+        for descriptor in reversed(owned):
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
 
 def _unchanged_directories(links):
