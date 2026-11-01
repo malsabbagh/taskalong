@@ -394,3 +394,50 @@ account journals and remote usage remain outside them. Existing uncertainty abou
 provider-internal retries, effective effort, remote cancellation and descendants
 is preserved. Offline boundary tests establish parser and lifecycle behavior;
 they do not qualify an account or prove a live provider will complete the task.
+
+## Explicit recovery after a limited capture
+
+Changing capture limits does not release a consumed task claim. The newer
+`manual-muse-successor-plan/3` path is a separate, model-free decision for an
+original failed `local-muse-provider/5` large-task run and an explicitly selected
+`/6` configuration. It preserves the original deadline, task, binary, account,
+model, effort and context. Only the declared capture/proposal envelope changes.
+The earlier timeout ladder and `/3` to `/4` capture path remain unchanged.
+
+Request a decision with the existing command:
+
+```text
+taskalong --state-dir EXISTING_STATE --json provider-successor-plan muse --predecessor FAILED_RUN --reason capture
+```
+
+Eligibility requires independently checked limited-capture hashes and counters,
+unchanged run/event/process/invocation/bundle/submission evidence, observed root
+exit and owned-group termination without tracking/protocol errors, and a full
+stable native journal proving one bound empty-tools/reminders model request and
+one conclusive cancellation during that model step. The versioned proof inspects at most 64 owner events and 16 MiB of owner-event
+history, separately from the capture checkpoint and native journal bounds. These
+observations do not settle remote usage or prove that all descendants ceased.
+
+A complete JSON value assembled from nonterminal output fragments remains an
+unsealed candidate. It is never staged or accepted by this path. A completed,
+conflicting or ambiguous native terminal, any terminal-bearing torn prefix, or
+an existing staged response/proposal blocks a new attempt and requires result
+reconciliation. A visible `run.terminal.completed` prefix cut inside its text is
+such a stop; treating that text as discardable metadata would be incorrect.
+
+An eligible decision grants no invocation. A separately authorized explicit
+`provider-successor` command, using the exact plan digest, operation key and
+fresh output directory, can reserve at most one final successor. Reservation
+precedes preflight; denial, setup failure or a crash consumes the slot. Repeating
+the same operation only observes retained state. Another key, copied State,
+restored database or changed scope cannot silently create a new slot. Original
+claims, failed evidence and unknown prior exposure remain retained.
+
+Verified complete-result recovery is not implemented here. When terminal
+completion is possible, the owner must first observe the exact bound session's
+full native journal or another sealed complete response, with its source,
+identity, hashes, completeness and original proposal limits checked. A full
+journal showing completion cannot be reused as cancellation proof. Missing or
+contradictory evidence is reported; raising a cap or approving another call does
+not manufacture the missing facts. No fresh State or cosmetic request change is
+a supported recovery mechanism.

@@ -343,6 +343,9 @@ def _material_unchecked(store, predecessor, config):
 
 
 def _capture_material(store, predecessor, config):
+    if config.get("format") == "local-muse-provider/6":
+        from .muse_capture_recovery import material
+        return material(store, predecessor, config)
     original,_=_read_run(store,predecessor)
     if original.get("format")!="local-provider-run/1" or original.get("manual_successor") is not None:
         _fail("provider_successor_limit", "A capture follow-up is final and can only follow an original consumed capture failure.")
@@ -412,11 +415,14 @@ def _check(store, reservation, config):
         _fail("provider_successor_history_changed")
     reason=reservation.get("reason","timeout")
     if (type(reason) is not str or reason not in {"timeout","capture"}
-            or reservation.get("format")!=("manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1")):
+            or reservation.get("format") not in ({"manual-muse-successor/2", "manual-muse-successor/3"} if reason=="capture" else {"manual-muse-successor/1"})):
         _fail("provider_successor_history_changed")
     if store.setting("provider:muse") != config:
         _fail("provider_successor_plan_changed")
     fresh, _, _, _=_material(store,reservation["predecessor_run_id"],config,reason=reason)
+    expected_format = "manual-muse-successor/3" if fresh["format"] == "manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason == "capture" else "manual-muse-successor/1"
+    if reservation["format"] != expected_format:
+        _fail("provider_successor_history_changed")
     if fresh["digest"]!=reservation["plan_digest"]:
         _fail("provider_successor_plan_changed")
     return fresh
@@ -464,7 +470,7 @@ def execute(store, *, predecessor, key, plan_digest, output, reason="timeout"):
     pilot._destination(output)
     budget=muse._budget(config,pilot._prompt(manifest["request"],manifest["digest"]))
     if not budget["input_echoes_fit"]:_fail("provider_capture_budget_insufficient")
-    reservation={"format":"manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1",**identity,"run_id":identifier(),"key_digest":key_digest,
+    reservation={"format":"manual-muse-successor/3" if proof["format"]=="manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1",**identity,"run_id":identifier(),"key_digest":key_digest,
         "root_run_id":proof["root_run_id"],"ordinal":proof["ordinal"],"predecessor_digest":parent["digest"],
         "bundle_digest":manifest["digest"],"configuration_digest":config["digest"],"attempt_seconds":proof["attempt_seconds"],
         "history":proof["history"]}

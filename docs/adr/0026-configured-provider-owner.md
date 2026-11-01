@@ -140,3 +140,20 @@ prove a peak RSS, provider cost, remote cancellation or descendant cessation.
 The expanded limits support representative framing and escaping, not every
 possible repetition pattern. Overflow and incomplete evidence remain failures;
 there is no adaptive cap growth, replay, automatic application or acceptance.
+
+### Expanded capture-recovery decisions
+
+A separate versioned plan/reservation/enrollment `/3` may link an original failed
+Muse `/5` large-task capture to one `/6` attempt. Scope and deadline stay fixed;
+the explicitly selected capture/proposal envelope changes. Earlier timeout and
+capture identities retain their original rules. Planning reads evidence only;
+reservation precedes any native preflight and consumes the single final slot.
+
+This path distinguishes a hash-closed limited prefix from a complete protocol.
+Complete JSON in nonterminal fragments is unsealed inspection metadata, never an
+accepted result. A completed-terminal prefix, a conflicting terminal, a staged
+result, ambiguous journal evidence or missing cleanup proof blocks dispatch.
+In particular, truncation inside a native completed-terminal text is not
+cancellation evidence. Full bound native completion evidence must be reconciled
+before considering another attempt; verified result recovery is not implemented
+by the successor path. Old failure status, claims and unknown exposure survive.
