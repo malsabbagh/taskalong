@@ -364,6 +364,8 @@ def validate_test_accounting(schedule: dict, results: list[dict], system: str) -
                    'test_foreground_experiment.ForegroundExperimentTests.test_fork_wait_rapid_exit_and_session_escape_keep_descendants_unknown': 'Darwin foreground experiment processes',
                    'test_foreground_experiment.ForegroundExperimentTests.test_timeout_cancellation_and_output_limit_use_owned_cleanup': 'Darwin foreground experiment processes',
                    'test_foreground_experiment.ForegroundExperimentTests.test_tracking_failure_stays_separate_and_never_releases_a_refused_gate': 'Darwin foreground experiment tracking faults',
+                   'test_local_provider_streaming.LocalProviderStreamingTests.test_foreground_passes_live_raw_chunks_without_promoting_cessation': 'explicit Darwin foreground passthrough',
+                   'test_local_provider_streaming.LocalProviderStreamingTests.test_foreground_sink_failure_returns_uncertainty_without_second_dispatch': 'explicit Darwin foreground failure passthrough',
                    'test_muse_capture_envelope.EnvelopeTests.test_four_mib_combined_bound_and_large_protocol_line': 'Real foreground owner is Darwin-only',
                    'test_muse_capture_envelope.EnvelopeTests.test_real_python_callback_cancellation_without_provider': 'Real foreground owner is Darwin-only'}
         required = set(reasons) & set(expected)
