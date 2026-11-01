@@ -387,8 +387,16 @@ def run_bounded(
                                              or _lifetime_observations):
         raise ProcessBoundaryError("private lifetime observation sink must be an empty dict",
                                    effect_outcome="not_sent")
-    if isinstance(argv, (str, bytes)) or not argv or any(not isinstance(x, str) or not x or "\0" in x for x in argv):
-        raise ProcessBoundaryError("argv must contain nonempty strings")
+    if isinstance(argv, (str, bytes)) or not isinstance(argv, Sequence):
+        raise ProcessBoundaryError("argv must be a sequence of strings", effect_outcome="not_sent")
+    argv = tuple(argv)
+    if not argv or not isinstance(argv[0], str) or not argv[0] or any(not isinstance(x, str) or "\0" in x for x in argv):
+        raise ProcessBoundaryError("argv requires a nonempty executable and NUL-free strings", effect_outcome="not_sent")
+    try:
+        for argument in argv:
+            argument.encode("utf-8", errors="strict")
+    except UnicodeError:
+        raise ProcessBoundaryError("argv must have valid UTF-8 encoding", effect_outcome="not_sent") from None
     if (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
             or not 0 < timeout_seconds <= 3600):
         raise ProcessBoundaryError("invalid process deadline")

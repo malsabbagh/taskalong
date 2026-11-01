@@ -1,5 +1,6 @@
 """Real child processes exercise pipes, cancellation and bounded diagnostics."""
 import os
+import json
 from pathlib import Path
 import signal
 import sys
@@ -17,6 +18,39 @@ from taskalong.errors import TaskAlongError
 class ProcessTests(unittest.TestCase):
     def run_python(self, code, **kwargs):
         return run_bounded([sys.executable, "-c", code], cwd=tempfile.gettempdir(), **kwargs)
+
+    def test_empty_nonfirst_arguments_reach_owned_child_without_rewriting(self):
+        expected = ['--tools', '', '--following', 'value', '', '雪', '']
+        argv = (sys.executable, '-c', 'import json,sys;print(json.dumps(sys.argv[1:],ensure_ascii=False))', *expected)
+        result = run_bounded(argv, cwd=tempfile.gettempdir(), timeout_seconds=2, max_output_bytes=8192)
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(json.loads(result.stdout), expected)
+        self.assertTrue(result.termination_confirmed)
+
+    def test_invalid_argument_vectors_refuse_before_process_or_gate_creation(self):
+        from taskalong import process as boundary
+        cases = [None, [], (), '', 'command', b'command', {}, {sys.executable}, iter([sys.executable]),
+                 [''], ['', 'later'], [None], [sys.executable, None], [sys.executable, 1],
+                 [sys.executable, b''], [sys.executable, 'nul\0byte'], ['nul\0executable'],
+                 [sys.executable, '\ud800'], [sys.executable, '\udcff'], ['\ud800']]
+        for argv in cases:
+            with self.subTest(argv=repr(argv)), patch.object(boundary.subprocess, 'Popen') as spawn, \
+                    patch.object(boundary.os, 'pipe') as pipe, patch.object(boundary.os, 'write') as release, \
+                    patch.object(boundary.selectors, 'DefaultSelector') as selector, patch.object(boundary, 'fingerprint') as fingerprint:
+                with self.assertRaises(ProcessBoundaryError) as caught:
+                    run_bounded(argv, cwd=tempfile.gettempdir())
+                self.assertEqual(caught.exception.effect_outcome, 'not_sent')
+                for effect in (spawn, pipe, release, selector, fingerprint):
+                    effect.assert_not_called()
+
+    def test_empty_arguments_do_not_bypass_existing_resource_validation(self):
+        from taskalong import process as boundary
+        for options in ({'timeout_seconds': 0}, {'signal_grace_seconds': -1},
+                        {'max_output_bytes': 0}, {'stdin': b'x' * (1048576 + 1)}):
+            with self.subTest(options=list(options)), patch.object(boundary.subprocess, 'Popen') as spawn:
+                with self.assertRaises(ProcessBoundaryError):
+                    run_bounded([sys.executable, '', 'later'], cwd=tempfile.gettempdir(), **options)
+                spawn.assert_not_called()
 
     def test_concurrent_pipes_and_stdin_do_not_deadlock(self):
         result = self.run_python("import sys;sys.stderr.buffer.write(b'e'*200000);sys.stderr.flush();data=sys.stdin.buffer.read();sys.stdout.buffer.write(data)", stdin=b"x"*200000)
