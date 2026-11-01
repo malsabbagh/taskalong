@@ -18,7 +18,7 @@ from referencing.exceptions import Unresolvable
 
 from .errors import TaskAlongError
 from .local_provider_contract import ProviderLimits, ProviderObservation
-from .validation import canonical_bytes, loads
+from .validation import canonical_bytes, digest, loads
 from .provider_wire import loads_wire
 from .executors.antigravity_native import NativeAntigravityConfig, plan_native_turn
 from .executors.antigravity_native_protocol import NativeAntigravityDecoder, checked_native_schema
@@ -26,12 +26,15 @@ from .executors.claude_local import create_adapter
 from .executors.claude_local_config import absolute_path, executable, model_name
 from .executors.claude_local_protocol import ClaudeLocalDecoder, response_schema
 from .executors.codex_protocol import CodexEventDecoder
+from .executors.codex_route import normalize_route, route_overrides, SUPPORTED_CLIENT_VERSIONS
 
 FORMAT = "configured-provider-profile/1"
 FORMAT_V2 = "configured-provider-profile/2"
 FORMAT_V3 = "configured-provider-profile/3"
 FORMAT_V4 = "configured-provider-profile/4"
-_ATTEMPT_CEILINGS = {FORMAT: 720, FORMAT_V2: 1440, FORMAT_V3: 1440, FORMAT_V4: 1440}
+FORMAT_V5 = "configured-provider-profile/5"
+_EXTENDED = frozenset({FORMAT_V4, FORMAT_V5})
+_ATTEMPT_CEILINGS = {FORMAT: 720, FORMAT_V2: 1440, FORMAT_V3: 1440, FORMAT_V4: 1440, FORMAT_V5: 1440}
 PROVIDERS = frozenset({"codex", "antigravity", "claude-code"})
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 
@@ -108,17 +111,21 @@ def normalize_configuration(provider, raw):
     if type(provider) is not str or provider not in PROVIDERS:
         _fail("local_provider_unsupported")
     fields = {"format", "provider", "adapter_configuration", "limits"}
-    if type(raw) is dict and raw.get("format") in (FORMAT_V3, FORMAT_V4):
+    if type(raw) is dict and raw.get("format") in (FORMAT_V3, FORMAT_V4, FORMAT_V5):
         fields.add("native_roots")
+    if type(raw) is dict and raw.get("format") == FORMAT_V5:
+        fields.add("route")
     _object(raw, fields)
     if (type(raw["format"]) is not str or raw["format"] not in _ATTEMPT_CEILINGS
             or raw["provider"] != provider):
         _fail()
-    limits = _limits(raw["limits"], extended=raw["format"] == FORMAT_V4)
+    if raw["format"] == FORMAT_V5 and provider != "codex":
+        _fail("local_provider_route_unsupported")
+    limits = _limits(raw["limits"], extended=raw["format"] in _EXTENDED)
     if limits.attempt_seconds > _ATTEMPT_CEILINGS[raw["format"]]:
         _fail("local_provider_limits_unsupported")
     roots = None
-    if raw["format"] in (FORMAT_V3, FORMAT_V4):
+    if raw["format"] in (FORMAT_V3, FORMAT_V4, FORMAT_V5):
         roots = raw["native_roots"]
         if (type(roots) is not dict or set(roots) - {"CODEX_HOME"}
                 or provider != "codex" and (raw["format"] == FORMAT_V3 or roots)):
@@ -157,9 +164,18 @@ def normalize_configuration(provider, raw):
             NativeAntigravityConfig(cfg["executable"]["path"], cfg["executable"]["sha256"],
                 cfg["model"], cfg["effort"], cfg["print_timeout_seconds"])
     cfg["runtime_closure"] = _closure(inner["runtime_closure"], provider, cfg)
+    route = None
+    if raw["format"] == FORMAT_V5:
+        if (cfg["executable"]["version"] not in SUPPORTED_CLIENT_VERSIONS
+                or cfg["runtime_closure"]["kind"] == "node"
+                and cfg["runtime_closure"]["native_binary"]["version"] not in SUPPORTED_CLIENT_VERSIONS):
+            _fail("local_provider_route_version_unsupported")
+        route = normalize_route(raw["route"])
     result = {"format": raw["format"], "provider": provider, "adapter_configuration": cfg, "limits": limits.to_dict()}
     if roots is not None:
         result["native_roots"] = roots
+    if route is not None:
+        result["route"] = route
     return loads(canonical_bytes(result))
 
 
@@ -215,18 +231,25 @@ def validate_saved_model(config, raw):
 
 def capabilities(config):
     config = _configuration(config)
-    return {"provider": config["provider"], "configured_experimental": True,
+    result = {"provider": config["provider"], "configured_experimental": True,
             "production_dispatch": "unsupported", "context_exclude": "unsupported",
             "context_isolation": "unqualified", "tool_containment": "unqualified",
             "effective_effort": "unknown", "remote_cancellation": "unknown",
             "hard_cost_cap": "unsupported", "hard_token_cap": "unsupported",
             "native_resume": "unsupported", "native_retry_count": "unknown"}
+    if config["format"] == FORMAT_V5:
+        result.update(route_selection="explicit-per-run", authenticated_account="unknown",
+                      inference_origin="unqualified")
+    return result
 
 
 def _binding(config, raw):
     if type(raw) is not dict:
         _fail("local_provider_binding_invalid")
     cfg, provider = config["adapter_configuration"], config["provider"]
+    if config["format"] == FORMAT_V5:
+        if raw.get("route_digest") != digest(config["route"]):
+            _fail("local_provider_route_binding_mismatch")
     if (raw.get("provider") != provider or raw.get("backend") != cfg.get("backend")
             or raw.get("requested_model") != cfg["model"] or raw.get("requested_effort") != cfg["effort"]
             or raw.get("context_policy") != cfg["context"]):
@@ -282,7 +305,7 @@ def adapter_invocation(config, prepared, prompt):
         text = prompt.decode("utf-8")
     except UnicodeError:
         _fail("local_provider_input_invalid")
-    budget = _limits(prepared["remaining_budget"], extended=config["format"] == FORMAT_V4)
+    budget = _limits(prepared["remaining_budget"], extended=config["format"] in _EXTENDED)
     if any(value > config["limits"][key] for key, value in budget.to_dict().items()):
         _fail("local_provider_limits_expanded")
     cfg, provider = config["adapter_configuration"], config["provider"]
@@ -311,6 +334,8 @@ def adapter_invocation(config, prepared, prompt):
         closure = cfg["runtime_closure"]
         prefix = ([closure["node"]["path"], closure["entrypoint"]["path"]]
                   if closure["kind"] == "node" else [cfg["executable"]["path"]])
+        if config["format"] == FORMAT_V5:
+            prefix += list(route_overrides(config["route"]))
         argv = prefix + ["--no-daemon", "exec", "--json", "--color", "never", "--sandbox", "read-only",
             "-c", 'approval_policy="never"', "-c", "model_reasoning_effort=" + json.dumps(cfg["effort"]),
             "-m", cfg["model"], "-C", workspace, "--output-schema", schema_file,
@@ -326,7 +351,7 @@ class _Decoder:
     def __init__(self, config, binding, limits):
         self.config = _configuration(config)
         self.binding, self.schema = _binding(self.config, binding)
-        self.extended = self.config["format"] == FORMAT_V4
+        self.extended = self.config["format"] in _EXTENDED
         self.limits = _limits(limits, extended=self.extended)
         if any(v > self.config["limits"][k] for k, v in self.limits.to_dict().items()):
             _fail("local_provider_limits_expanded")

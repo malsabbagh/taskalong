@@ -64,7 +64,7 @@ def _native_roots(config):
 
 def _check_native_roots(store, config, bound=None):
     observed = _native_roots(config)
-    if config["provider"] != "codex" or config["format"] not in {"configured-provider-profile/3", "configured-provider-profile/4"}:
+    if config["provider"] != "codex" or config["format"] not in {"configured-provider-profile/3", "configured-provider-profile/4", "configured-provider-profile/5"}:
         return
     if bound is None:
         pointer = store.setting("provider-native-roots:" + config["digest"])
@@ -91,7 +91,7 @@ def configure(store, provider, value):
     with store.transaction() as db:
         raw = canonical_bytes(config).decode()
         db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", ("provider-config:" + config["digest"], raw))
-        if config["provider"] == "codex" and config["format"] in {"configured-provider-profile/3", "configured-provider-profile/4"}:
+        if config["provider"] == "codex" and config["format"] in {"configured-provider-profile/3", "configured-provider-profile/4", "configured-provider-profile/5"}:
             binding = {"configuration_digest": config["digest"], "roots": roots}
             binding["digest"] = digest(binding)
             name = "provider-native-root-observation:" + binding["digest"]
@@ -124,12 +124,15 @@ def _configuration(store, provider):
 
 def _view(config):
     inner = config["adapter_configuration"]
-    return {"provider": config["provider"], "configured": True, "experimental": True,
+    result = {"provider": config["provider"], "configured": True, "experimental": True,
             "configuration_digest": config["digest"], "model": inner["model"],
             "reasoning_effort": inner.get("effort"), "context": inner["context"],
             "backend": inner.get("backend"), "activation_required": False,
             "limits": config["limits"],
             "capabilities": _adapters().capabilities(_passive(config))}
+    if config["format"] == "configured-provider-profile/5":
+        result["requested_route"] = config["route"]
+    return result
 
 
 def providers(store):
@@ -251,7 +254,7 @@ def _process(config, prepared, invocation, *, output_chunk, cancelled, spawned):
     timeout = min(limits["attempt_seconds"], remaining_seconds)
     env = minimal_environment(runtime_parent=True)
     env.update(invocation["env_overrides"])
-    stream_options = {"_retain_output": False} if config.get("format") == "configured-provider-profile/4" else {}
+    stream_options = {"_retain_output": False} if config.get("format") in {"configured-provider-profile/4", "configured-provider-profile/5"} else {}
     if sys.platform == "darwin":
         from .experimental_process import FOREGROUND_EXPERIMENT, run_foreground_experiment
         result = run_foreground_experiment(invocation["argv"], mode=FOREGROUND_EXPERIMENT,
@@ -324,6 +327,8 @@ def run(store, provider, *, request, output=None):
         "artifact_format": plan["artifact_format"]}
     if native_binding is not None:
         prepared["native_root_binding"] = native_binding
+    if config["format"] == "configured-provider-profile/5":
+        prepared["route_digest"] = digest(config["route"])
     # Adapter projection and unsupported feature checks precede any claim.
     invocation = _adapters().adapter_invocation(_passive(config), prepared, prompt)
     decoder = _adapters().decoder(_passive(config), prepared, limits)
@@ -343,10 +348,12 @@ def run(store, provider, *, request, output=None):
         "limits": limits.to_dict()}
     if native_binding is not None:
         record["native_root_binding"] = native_binding
+    if config["format"] == "configured-provider-profile/5":
+        record["requested_route"] = config["route"]
     record = _event(store, record, root, "preflight")
     capture = PrivateCapture(control / "capture", max_output_bytes=limits.max_output_bytes,
                              max_records=min(8192, max(2, limits.max_protocol_records)),
-                             schema_version="2.0" if config["format"] == "configured-provider-profile/4" else "1.0")
+                             schema_version="2.0" if config["format"] in {"configured-provider-profile/4", "configured-provider-profile/5"} else "1.0")
     claimed = False
     process = None
     closure = None
@@ -433,7 +440,7 @@ def run(store, provider, *, request, output=None):
         _write(root, "process.json", canonical_bytes(process))
         observation = decoder.finish(process["root_exit_code"])
         response = observation["structured_result"]
-        if config["format"] == "configured-provider-profile/4" and response is not None:
+        if config["format"] in {"configured-provider-profile/4", "configured-provider-profile/5"} and response is not None:
             # Authority/event documents keep their original one-MiB ceiling.
             # A boundary-sized response lives as its own immutable object.
             screen_sensitive(response)
@@ -453,7 +460,7 @@ def run(store, provider, *, request, output=None):
                           error="provider_local_or_protocol_failure", capture=closure)
         screen_sensitive(response)
         artifact = validate_response(plan, response, max_proposal_bytes=limits.max_proposal_bytes,
-            max_patch_bytes=4*1048576 if config["format"] == "configured-provider-profile/4" else 1048576)
+            max_patch_bytes=4*1048576 if config["format"] in {"configured-provider-profile/4", "configured-provider-profile/5"} else 1048576)
         _write(root, "proposed.patch", artifact.patch_bytes)
         _write(root, "proposal.json", artifact.manifest_json)
         return _event(store, record, root, "proposal_ready", process=process, observation=observation,

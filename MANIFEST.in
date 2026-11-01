@@ -421,3 +421,6 @@ include src/taskalong/muse_result_recovery.py
 include tests/test_muse_result_recovery.py
 include src/taskalong/local_provider_workspace.py
 include tests/test_local_provider_workspace.py
+include src/taskalong/executors/codex_route.py
+include tests/test_codex_route.py
+include tests/test_codex_route_profile.py
