@@ -1,10 +1,12 @@
 """Interrupted /6 lineage with disposable State and synthetic native evidence."""
 import concurrent.futures
 import copy
+import datetime
 import errno
 import json
 import os
 from pathlib import Path
+import tempfile
 import threading
 import unittest
 from unittest.mock import patch
@@ -15,7 +17,125 @@ from taskalong import muse_successor as successor
 from taskalong.errors import TaskAlongError
 from taskalong.validation import canonical_bytes, digest
 import test_muse_successor as fixtures
-from test_muse_native_lifecycle import row as task_row, TASK, SECOND
+from test_muse_native_lifecycle import row as task_row, TASK, SECOND, SESSION, RUN, OTHER
+
+
+def passive_journal_rows():
+    """Invented values for closed passive startup/name bookkeeping schemas."""
+    start, name = OTHER, "66666666-6666-4666-8666-666666666666"
+    metadata = {"workspace_root": "/synthetic/workspace", "provider_id": "meta", "model_id": "synthetic-model",
+                "web_search_mode": "synthetic", "build": {"sha": "synthetic", "semver": "0.0.0"}, "tool_surface_version": "1"}
+    def row(namespace, version, payload):
+        return {"schema_version": 1, "payload_schema_version": version, "stream": {"kind": "session", "id": SESSION},
+                "payload_type": namespace, "payload": payload}
+    rows = [row("runtime.session.metadata", 1, {"kind": "metadata", "record": metadata}),
+        row("runtime.session.route_facts", 2, {"kind": "route_facts", "record": {
+            "cwd": "/synthetic/workspace", "pid": 123456, "terminal_title_identity": "synthetic"}}),
+        row("runtime.command_intake.received", 2, {"kind": "command_intake", "record": {
+            "kind": "received", "command_id": start, "session_stream": {"kind": "session", "id": SESSION},
+            "command": {"kind": "session_start", "background_tasks": "keep", "session_metadata": metadata}}}),
+        row("runtime.session_start.intake_v3", 3, {"kind": "session_start_intake_v3", "command_id": start,
+            "payload": {"schema_version": 3, "session_stream": {"kind": "session", "id": SESSION},
+                "background_tasks": "keep", "session_metadata": metadata, "activation_source": "startup"},
+            "command_payload_fingerprint": "sha256:" + "0" * 64}),
+        row("session.started", 1, {"kind": "session_started", "command_id": start,
+            "previous_session_stream": None, "background_tasks": "keep"}),
+        row("runtime.command_intake.settled", 1, {"kind": "command_intake", "record": {
+            "kind": "settled", "command_id": start, "outcome": {"kind": "accepted"}}}),
+        row("runtime.session", 2, {"kind": "agent_tree_initialized", "record": {"schema_version": 1,
+            "writer_protocol": 1, "root_agent_id": SECOND, "root_session_id": SESSION, "execution_capacity": 64}}),
+        row("runtime.command_intake.session_name.received", 1, {"kind": "command_intake", "record": {
+            "kind": "received", "command_id": name, "session_stream": {"kind": "session", "id": SESSION},
+            "command": {"kind": "session_name", "authority_id": OTHER, "task_id": TASK, "intent": {"kind": "allocate"}}}}),
+        row("runtime.command_intake.settled", 1, {"kind": "command_intake", "record": {
+            "kind": "settled", "command_id": name, "outcome": {"kind": "accepted"}}}),
+        row("runtime.session", 1, {"kind": "run", "run_id": RUN, "event": {
+            "kind": "model_request_configured", "toolset": {"active_tools": []}, "reminder_roster": {"agents": []}}})]
+    for i, value in enumerate(rows, 1): value["sequence"] = i
+    return rows
+
+
+@unittest.skipUnless(os.name == 'posix', 'Private local evidence requires POSIX')
+class PassiveJournalSchemaTests(unittest.TestCase):
+    def inspect_rows(self, rows):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary).resolve(); home.chmod(0o700)
+            folder = home / "sessions/2026/11/01" / SESSION; folder.mkdir(parents=True)
+            (folder / "session.jsonl").write_bytes(b"".join(canonical_bytes(row) + b"\n" for row in rows))
+            return recovery._journal({"muse_home": str(home), "model": "synthetic-model"}, SESSION, RUN,
+                int(datetime.datetime(2026, 11, 1, tzinfo=datetime.timezone.utc).timestamp() * 1000))
+
+    def test_closed_versioned_metadata_and_distinct_passive_commands(self):
+        result = self.inspect_rows(passive_journal_rows())
+        self.assertEqual(result["records"], 10)
+        self.assertEqual(result["configured_model_requests_observed_lower_bound"], 1)
+        self.assertIsNone(result["native_terminal_observed"])
+
+    def test_unknown_or_mismatched_namespace_versions_refuse(self):
+        for index in (1, 2, 3, 6):
+            wrong_known = 2 if index == 3 else 3
+            for version in (False, None, 0, 1.5, 4, "2", wrong_known):
+                rows = passive_journal_rows(); rows[index]["payload_schema_version"] = version
+                with self.subTest(index=index, version=version), self.assertRaises(TaskAlongError): self.inspect_rows(rows)
+            rows = passive_journal_rows(); rows[index]["payload_type"] = "unknown.passive.namespace"
+            with self.subTest(index=index), self.assertRaises(TaskAlongError): self.inspect_rows(rows)
+        rows = passive_journal_rows(); rows[1]["payload_schema_version"] = 1
+        self.assertEqual(self.inspect_rows(rows)["records"], 10)
+
+    def test_passive_schema_exemptions_do_not_hide_result_activity_or_foreign_references(self):
+        for index in (1, 2, 3, 4, 5, 6, 7, 8):
+            for extra in ({"run_id": OTHER}, {"session_id": OTHER}, {"command_id": OTHER},
+                          {"response": {}}, {"kind": "run_terminal", "terminal": "completed"},
+                          {"kind": "model_request_configured"}, {"kind": "task", "task_kind": "model.meta.response"}):
+                rows = passive_journal_rows(); rows[index]["payload"]["hidden"] = extra
+                with self.subTest(index=index, extra=extra), self.assertRaises(TaskAlongError): self.inspect_rows(rows)
+        rows = passive_journal_rows(); rows[-1]["payload"]["event"]["command_id"] = OTHER
+        with self.assertRaises(TaskAlongError): self.inspect_rows(rows)
+
+    def test_passive_command_flow_requires_received_binding_and_one_settlement(self):
+        for transform in (lambda r: r[:2] + r[3:], lambda r: r[:3] + r[4:],
+                          lambda r: r[:4] + r[5:], lambda r: r[:5] + [copy.deepcopy(r[5])] + r[5:],
+                          lambda r: r[:7] + r[8:], lambda r: r[:8] + r[9:], lambda r: r[:5] + r[6:]):
+            rows = transform(passive_journal_rows())
+            for index, row in enumerate(rows, 1): row["sequence"] = index
+            with self.subTest(transform=transform), self.assertRaises(TaskAlongError): self.inspect_rows(rows)
+        rows = passive_journal_rows(); rows[3]["payload"]["command_id"] = SECOND
+        with self.assertRaises(TaskAlongError): self.inspect_rows(rows)
+
+    def test_passive_command_exemption_is_one_dictionary_not_a_run_alias(self):
+        rows = passive_journal_rows(); schema = recovery._JournalSchema(SESSION, RUN, "synthetic-model")
+        slots = schema.observe(rows[2])
+        recovery._bindings(rows[2], SESSION, RUN, command_slots=slots)
+        rows[-1]["payload"]["event"]["command_id"] = OTHER
+        with self.assertRaises(TaskAlongError): recovery._bindings(rows[-1], SESSION, RUN, command_slots=slots)
+        rows = passive_journal_rows(); rows[2]["payload"]["record"]["command_id"] = RUN
+        with self.assertRaises(TaskAlongError): self.inspect_rows(rows)
+
+    def test_passive_command_metadata_retention_is_bounded(self):
+        schema = recovery._JournalSchema(SESSION, RUN, "synthetic-model")
+        for index in range(256):
+            row = copy.deepcopy(passive_journal_rows()[7])
+            row["payload"]["record"]["command_id"] = f"{index:08x}-7777-4777-8777-777777777777"
+            schema.observe(row)
+        self.assertEqual(len(schema.commands), 256)
+        row["payload"]["record"]["command_id"] = "ffffffff-7777-4777-8777-777777777777"
+        with self.assertRaises(TaskAlongError): schema.observe(row)
+        self.assertEqual(len(schema.commands), 256)
+
+    def test_passive_schema_types_and_bounds_are_strict(self):
+        cases = [(1, ("record", "pid"), False), (1, ("record", "pid"), -1),
+            (1, ("record", "cwd"), "relative"), (1, ("record", "terminal_title_identity"), "x" * 257),
+            (2, ("record", "command", "background_tasks"), "start"),
+            (3, ("payload", "schema_version"), True), (3, ("command_payload_fingerprint",), "unknown"),
+            (3, ("payload", "session_metadata", "model_id"), "foreign-model"),
+            (6, ("record", "writer_protocol"), 2), (6, ("record", "root_session_id"), OTHER),
+            (6, ("record", "execution_capacity"), False), (6, ("record", "execution_capacity"), 257),
+            (7, ("record", "command", "intent", "kind"), "invoke")]
+        for index, path, invalid in cases:
+            rows = passive_journal_rows(); part = rows[index]["payload"]
+            for key in path[:-1]: part = part[key]
+            part[path[-1]] = invalid
+            with self.subTest(index=index, path=path, invalid=invalid), self.assertRaises(TaskAlongError): self.inspect_rows(rows)
 
 
 @unittest.skipUnless(os.name == 'posix', 'Private local evidence requires POSIX')

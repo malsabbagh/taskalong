@@ -10,6 +10,7 @@ from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import os
+import re
 
 from . import muse_experimental as muse, muse_capture_recovery as proof
 from . import supervised_pilot as pilot
@@ -30,7 +31,7 @@ def _fail(code="provider_successor_history_changed"):
     muse._fail(code, "Interrupted-owner evidence is missing, live, changed or conflicting. Preserve the original claim and observations; no new request is authorized.")
 
 
-def _bindings(row, session, native_run):
+def _bindings(row, session, native_run, *, command_slots=None):
     """Recognized structured references bind recursively; text stays opaque."""
     payload, _, _ = proof._parts(row)
     def identifier(value):
@@ -47,6 +48,8 @@ def _bindings(row, session, native_run):
         part = pending.pop()
         if type(part) is dict:
             for key, expected in (("run_id", native_run), ("session_id", session), ("command_id", native_run)):
+                if key == "command_id" and command_slots is not None:
+                    expected = command_slots.get(id(part), expected)
                 if key in part and identifier(part[key]) != expected:
                     _fail()
             for key, kind, expected in (("run_stream", "run", native_run), ("session_stream", "session", session)):
@@ -60,6 +63,152 @@ def _bindings(row, session, native_run):
             pending.extend(part.values())
         elif type(part) is list:
             pending.extend(part)
+
+
+def _schema_keys(value, keys):
+    if type(value) is not dict or set(value) != set(keys):
+        _fail()
+
+
+def _schema_text(value, maximum=256):
+    if type(value) is not str or not value or not value.isprintable() or len(value.encode()) > maximum:
+        _fail()
+    return value
+
+
+def _schema_uuid(value):
+    if re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", _schema_text(value)) is None:
+        _fail()
+    return value
+
+
+def _schema_path(value):
+    value = _schema_text(value, 4096)
+    if not value.startswith("/") or ".." in value.split("/"):
+        _fail()
+
+
+class _JournalSchema:
+    """Closed passive metadata versions and their separate command namespace.
+
+    Only a validated bookkeeping dictionary's command_id receives an alternate
+    binding. Every other structured reference still traverses _bindings, and
+    every row still traverses the unchanged result/terminal classifier.
+    """
+    def __init__(self, session, native_run, model):
+        self.session, self.native_run, self.model = session, native_run, model
+        self.commands = {}
+
+    def _session_reference(self, value):
+        _schema_keys(value, {"kind", "id"})
+        if value["kind"] != "session" or _schema_uuid(value["id"]) != self.session:
+            _fail()
+
+    def _metadata(self, value):
+        _schema_keys(value, {"workspace_root", "provider_id", "model_id", "web_search_mode", "build", "tool_surface_version"})
+        _schema_path(value["workspace_root"])
+        if value["provider_id"] != "meta" or value["model_id"] != self.model:
+            _fail()
+        for key in ("web_search_mode", "tool_surface_version"):
+            _schema_text(value[key])
+        _schema_keys(value["build"], {"sha", "semver"})
+        for field in value["build"].values():
+            _schema_text(field)
+
+    def observe(self, row):
+        version = row.get("payload_schema_version", 1)
+        if type(version) is not int:
+            _fail()
+        payload, _, record = proof._parts(row)
+        namespace, kind = row.get("payload_type"), payload.get("kind")
+        expanded = {("runtime.session.route_facts", "route_facts"): 2,
+            ("runtime.command_intake.received", "command_intake"): 2,
+            ("runtime.session_start.intake_v3", "session_start_intake_v3"): 3,
+            ("runtime.session", "agent_tree_initialized"): 2}
+        if version != 1 and expanded.get((namespace, kind)) != version:
+            _fail()
+        if namespace == "runtime.session.route_facts":
+            if version not in (1, 2) or kind != "route_facts":
+                _fail()
+            _schema_keys(payload, {"kind", "record"}); _schema_keys(record, {"cwd", "pid", "terminal_title_identity"})
+            _schema_path(record["cwd"]); _schema_text(record["terminal_title_identity"])
+            if type(record["pid"]) is not int or not 2 <= record["pid"] <= 2**31 - 1:
+                _fail()
+        elif namespace in {"runtime.command_intake.received", "runtime.command_intake.session_name.received"}:
+            expected = "session_start" if namespace == "runtime.command_intake.received" else "session_name"
+            if kind != "command_intake" or version not in ((1, 2) if expected == "session_start" else (1,)):
+                _fail()
+            _schema_keys(payload, {"kind", "record"})
+            _schema_keys(record, {"kind", "command_id", "session_stream", "command"})
+            command_id = _schema_uuid(record["command_id"])
+            if record["kind"] != "received" or command_id == self.native_run or command_id in self.commands or len(self.commands) >= 256:
+                _fail()
+            self._session_reference(record["session_stream"])
+            command = record["command"]
+            if expected == "session_start":
+                _schema_keys(command, {"kind", "background_tasks", "session_metadata"})
+                if command["background_tasks"] != "keep":
+                    _fail()
+                self._metadata(command["session_metadata"])
+            else:
+                _schema_keys(command, {"kind", "authority_id", "task_id", "intent"})
+                _schema_uuid(command["authority_id"]); _schema_uuid(command["task_id"])
+                if command["intent"] != {"kind": "allocate"}:
+                    _fail()
+            if command["kind"] != expected:
+                _fail()
+            self.commands[command_id] = {"kind": expected, "stage": "received", "command": command}
+            return {id(record): command_id}
+        elif namespace == "runtime.session_start.intake_v3":
+            if kind != "session_start_intake_v3" or version != 3:
+                _fail()
+            _schema_keys(payload, {"kind", "command_id", "payload", "command_payload_fingerprint"})
+            command_id = _schema_uuid(payload["command_id"]); known = self.commands.get(command_id)
+            body = payload["payload"]
+            _schema_keys(body, {"schema_version", "session_stream", "background_tasks", "session_metadata", "activation_source"})
+            if (known is None or known["kind"] != "session_start" or known["stage"] != "received"
+                    or type(body["schema_version"]) is not int or body["schema_version"] != 3
+                    or body["background_tasks"] != "keep" or body["activation_source"] != "startup"
+                    or body["session_metadata"] != known["command"]["session_metadata"]
+                    or re.fullmatch(r"sha256:[0-9a-f]{64}", _schema_text(payload["command_payload_fingerprint"])) is None):
+                _fail()
+            self._session_reference(body["session_stream"]); self._metadata(body["session_metadata"])
+            known["stage"] = "intake"
+            return {id(payload): command_id}
+        elif namespace == "session.started" and kind == "session_started":
+            _schema_keys(payload, {"kind", "command_id", "previous_session_stream", "background_tasks"})
+            command_id = _schema_uuid(payload["command_id"]); known = self.commands.get(command_id)
+            if (known is None or known["kind"] != "session_start" or known["stage"] != "intake"
+                    or payload["previous_session_stream"] is not None or payload["background_tasks"] != "keep"):
+                _fail()
+            known["stage"] = "started"
+            return {id(payload): command_id}
+        elif namespace == "runtime.command_intake.settled":
+            if kind != "command_intake":
+                _fail()
+            _schema_keys(payload, {"kind", "record"}); _schema_keys(record, {"kind", "command_id", "outcome"})
+            command_id = _schema_uuid(record["command_id"]); known = self.commands.get(command_id)
+            if (record["kind"] != "settled" or record["outcome"] != {"kind": "accepted"} or known is None
+                    or known["stage"] != ("started" if known["kind"] == "session_start" else "received")):
+                _fail()
+            known["stage"] = "settled"
+            return {id(record): command_id}
+        elif kind == "agent_tree_initialized":
+            if namespace != "runtime.session" or version != 2:
+                _fail()
+            _schema_keys(payload, {"kind", "record"})
+            _schema_keys(record, {"schema_version", "writer_protocol", "root_agent_id", "root_session_id", "execution_capacity"})
+            if (type(record["schema_version"]) is not int or record["schema_version"] != 1
+                    or type(record["writer_protocol"]) is not int or record["writer_protocol"] != 1
+                    or _schema_uuid(record["root_session_id"]) != self.session
+                    or type(record["execution_capacity"]) is not int or not 1 <= record["execution_capacity"] <= 256):
+                _fail()
+            _schema_uuid(record["root_agent_id"])
+        return {}
+
+    def finish(self):
+        if any(command["stage"] != "settled" for command in self.commands.values()):
+            _fail()
 
 
 def _result(row):
@@ -210,6 +359,7 @@ def _journal(config, session, native_run, started):
             count = total = configured = sequence = bound = 0
             terminal = None
             metadata = {}
+            schema = _JournalSchema(session, native_run, config["model"])
             with os.fdopen(os.dup(fd), "rb", buffering=65536) as source:
                 while True:
                     line = source.readline(_FRAME + 2)
@@ -224,14 +374,13 @@ def _journal(config, session, native_run, started):
                         _fail()
                     if "schema_version" in row and (type(row["schema_version"]) is not int or row["schema_version"] != 1):
                         _fail()
-                    if "payload_schema_version" in row and (type(row["payload_schema_version"]) is not int or row["payload_schema_version"] != 1):
-                        _fail()
+                    command_slots = schema.observe(row)
                     if "sequence" in row:
                         if type(row["sequence"]) is not int or row["sequence"] <= sequence:
                             _fail()
                         sequence = row["sequence"]
                     payload, event, record = proof._parts(row)
-                    _bindings(row, session, native_run)
+                    _bindings(row, session, native_run, command_slots=command_slots)
                     if payload.get("kind") == "run" and payload.get("run_id") == native_run:
                         bound += 1
                     outcome = _result(row)
@@ -260,6 +409,7 @@ def _journal(config, session, native_run, started):
                                 if key in ("provider_id", "model_id") and value != ("meta" if key == "provider_id" else config["model"]):
                                     _fail()
                                 metadata[key] = value
+            schema.finish()
             if total != selected[5] or not bound or configured != 1 or metadata.get("provider_id") != "meta" or metadata.get("model_id") != config["model"]:
                 _fail()
             fence()
