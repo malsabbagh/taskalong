@@ -227,12 +227,19 @@ the actual repository/base again and review and test the proposed change.
 
 ## Bounds and retained evidence
 
-The default and maximum shared profile uses a 720-second local attempt,
+The default shared profile uses a 720-second local attempt,
 4 MiB combined output capture, 8,192 protocol records, 1 MiB per protocol record,
 64 KiB canonical decoded proposal, and one reserved controller submission.
 Codex's separate result file is also one protocol record: its raw JSON may use
 more than 64 KiB, while remaining within the 1 MiB record and combined capture
 limits. The decoded canonical object has its own 64 KiB limit.
+For a new longer task, select `format: configured-provider-profile/2` and set
+`limits.attempt_seconds` explicitly, through **1440 seconds (24 minutes)**.
+Version `/1` retains its 720-second ceiling. Both versions retain the 720-second
+default and preserve explicit shorter values. No capture, record or proposal
+limit grows with the deadline. For Antigravity also set its explicit
+`adapter_configuration.print_timeout_seconds`; the lower of that value and the
+remaining shared deadline applies. Codex and Claude use the shared owner deadline.
 Smaller supported finite limits may be selected; capture checkpoint capacity is
 also finite. The stdin packet is capped at 1 MiB. The generated patch has a separate
 1 MiB bound. A small unified diff can edit a preimage larger than 64 KiB without
@@ -263,6 +270,16 @@ It now streams through durable private capture and shares cancellation/reconcile
 controls through the same `RunService` facade. Native process ownership remains
 in its existing macOS route. Default context remains `include`; full exclusion
 fails and `native-only` remains partial.
+
+For a **new** longer Muse task, `capture_profile: large-task` selects the new
+`local-muse-provider/5` configuration. Set `attempt_seconds: 1440` (or a shorter
+finite value). Explicit `max_output_bytes`, `max_proposal_bytes` and
+`max_protocol_records` remain separate; for example 1048576, 12288 and 2048
+preserve a 1 MiB / 12 KiB / 2048-record packet. This profile caps those values at
+4 MiB / 64 KiB / 8192 records. Existing configurations and stored claims are not
+rewritten: fixed `implementation` profile `/4` remains exactly 720 seconds, and
+older timeout/capture successor cohorts do not gain a longer retry. Choosing a
+longer profile never authorizes redispatch of an already consumed task.
 
 Muse's explicitly selected `implementation` capture profile is fixed at
 720 seconds, 4 MiB, 8,192 protocol records, and a 64 KiB proposal; legacy profiles

@@ -534,6 +534,7 @@
     "tests/test_local_provider_cli.py",
     "tests/test_local_provider_contract.py",
     "tests/test_local_provider_controls.py",
+    "tests/test_local_provider_deadlines.py",
     "tests/test_local_provider_runtime.py",
     "tests/test_local_provider_streaming.py",
     "tests/test_local_provider_tasks.py",

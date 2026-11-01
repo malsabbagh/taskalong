@@ -77,6 +77,7 @@ def _view(config):
             "configuration_digest": config["digest"], "model": inner["model"],
             "reasoning_effort": inner.get("effort"), "context": inner["context"],
             "backend": inner.get("backend"), "activation_required": False,
+            "limits": config["limits"],
             "capabilities": _adapters().capabilities(_passive(config))}
 
 

@@ -54,6 +54,73 @@ PROPOSAL = {"bundle_digest": "c" * 64, "changes": {"new.txt": "hello\n"}}
 
 
 class LocalProviderAdapterTests(unittest.TestCase):
+    def test_profile_versions_preserve_defaults_shorter_limits_and_identity(self):
+        self.assertEqual(ProviderLimits().attempt_seconds, 720)
+        for provider in ("codex", "antigravity", "claude-code"):
+            for version in (1, 2):
+                for seconds in (13, 720):
+                    raw = configuration(provider)
+                    raw["format"] = f"configured-provider-profile/{version}"
+                    raw["limits"]["attempt_seconds"] = seconds
+                    normalized = normalize_configuration(provider, raw)
+                    self.assertEqual(normalized["format"], raw["format"])
+                    self.assertEqual(normalized["limits"], raw["limits"])
+                    self.assertEqual(normalize_configuration(provider, normalized), normalized)
+                    self.assertEqual(executable_descriptors(normalized), executable_descriptors(configuration(provider)))
+
+    def test_profile_one_retains_720_ceiling_and_two_permits_explicit_1440(self):
+        for provider in ("codex", "antigravity", "claude-code"):
+            for seconds in (721, 1440):
+                raw = configuration(provider)
+                raw["limits"]["attempt_seconds"] = seconds
+                with self.assertRaises(TaskAlongError):
+                    normalize_configuration(provider, raw)
+                raw["format"] = "configured-provider-profile/2"
+                self.assertEqual(normalize_configuration(provider, raw)["limits"]["attempt_seconds"], seconds)
+            for seconds in (1441, True, 1440.0):
+                raw = configuration(provider)
+                raw["format"] = "configured-provider-profile/2"
+                raw["limits"]["attempt_seconds"] = seconds
+                with self.subTest(provider=provider, seconds=seconds), self.assertRaises(TaskAlongError):
+                    normalize_configuration(provider, raw)
+
+    def test_profile_two_preserves_other_bounds_for_every_provider(self):
+        for provider in ("codex", "antigravity", "claude-code"):
+            raw = configuration(provider)
+            raw["format"] = "configured-provider-profile/2"
+            raw["limits"]["attempt_seconds"] = 1440
+            for field, value in (("max_output_bytes", 4 * 1024 * 1024 + 1),
+                    ("max_protocol_records", 8193), ("max_record_bytes", 1024 * 1024 + 1),
+                    ("max_proposal_bytes", 65537), ("max_controller_submissions", 2)):
+                with self.subTest(provider=provider, field=field), self.assertRaises(TaskAlongError):
+                    normalize_configuration(provider, raw | {"limits": raw["limits"] | {field: value}})
+
+    def test_all_providers_consume_explicit_1440_without_effort_translation(self):
+        for provider in ("codex", "antigravity", "claude-code"):
+            raw = configuration(provider)
+            raw["format"] = "configured-provider-profile/2"
+            raw["limits"]["attempt_seconds"] = 1440
+            if provider == "antigravity":
+                raw["adapter_configuration"]["print_timeout_seconds"] = 1440
+            b = binding(provider, "anthropic" if provider == "claude-code" else None)
+            b["remaining_budget"]["attempt_seconds"] = 1440
+            plan = adapter_invocation(raw, b, b"A scoped task\n")
+            d = decoder(raw, b, raw["limits"])
+            self.assertEqual(d.limits.attempt_seconds, 1440)
+            self.assertEqual(d.binding["requested_effort"], "high")
+            if provider == "codex":
+                self.assertIn('model_reasoning_effort="high"', plan["argv"])
+            else:
+                self.assertEqual(plan["argv"][plan["argv"].index("--effort") + 1], "high")
+            if provider == "antigravity":
+                position = plan["argv"].index("--print-timeout") + 1
+                self.assertEqual(plan["argv"][position], "1440s")
+                raw["adapter_configuration"]["print_timeout_seconds"] = 17
+                self.assertEqual(adapter_invocation(raw, b, b"Task")["argv"][position], "17s")
+            b["remaining_budget"]["attempt_seconds"] = 1441
+            with self.assertRaises(TaskAlongError):
+                adapter_invocation(raw, b, b"Task")
+
     def test_registry_is_closed_copies_config_and_does_no_io(self):
         with patch("builtins.open", side_effect=AssertionError("file I/O")), \
                 patch("subprocess.Popen", side_effect=AssertionError("process")), \

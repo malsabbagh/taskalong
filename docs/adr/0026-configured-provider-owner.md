@@ -2,6 +2,12 @@
 
 Status: proposed.
 
+The later explicit large-task option uses `configured-provider-profile/2` for a
+finite deadline through 1440 seconds. Version `/1` keeps its 720-second ceiling;
+defaults remain 720. Muse uses a distinct `local-muse-provider/5` `large-task`
+configuration, with separately retained raw/proposal/record limits. No historical
+claim, deadline or recovery cohort is extended by these new configuration formats.
+
 ## Context
 
 Configured Codex, Antigravity, and Claude Code need one usable local task path

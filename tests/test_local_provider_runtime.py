@@ -128,6 +128,15 @@ class ProviderOwnerTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, "provider_already_submitted")
             spawn.assert_not_called()
         self.assertEqual(self.service.result(first["run_id"])["controller_submissions"], 1)
+        config=owner._passive(self.service._store.setting("provider:codex"))
+        config["format"]="configured-provider-profile/2"
+        config["limits"]["attempt_seconds"]=1440
+        self.service.configure_provider("codex",config)
+        with patch.object(owner,"_process") as spawn:
+            with self.assertRaises(TaskAlongError) as caught:
+                self.service.run_provider("codex",request=self.request())
+            self.assertEqual(caught.exception.code,"provider_already_submitted")
+            spawn.assert_not_called()
 
     def test_model_free_preparation_and_budget_have_no_claim_or_native_effect(self):
         self.configure()

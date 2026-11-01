@@ -27,7 +27,7 @@ class LocalProviderContractTests(unittest.TestCase):
         defaults = ProviderLimits()
         self.assertEqual(ProviderLimits.from_dict(defaults.to_dict()), defaults)
         for field, values in {
-            "attempt_seconds": (True, 0, 721, float("inf")),
+            "attempt_seconds": (True, 0, 1441, float("inf")),
             "max_output_bytes": (False, 0, 64 * 1024 * 1024 + 1),
             "max_protocol_records": (0, 8193, 1.5),
             "max_record_bytes": (0, 1024 * 1024 + 1),

@@ -411,3 +411,4 @@ include tests/test_local_provider_controls.py
 include tests/test_local_provider_runtime.py
 include tests/test_local_provider_streaming.py
 include tests/test_local_provider_tasks.py
+include tests/test_local_provider_deadlines.py

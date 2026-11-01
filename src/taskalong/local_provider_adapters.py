@@ -28,6 +28,8 @@ from .executors.claude_local_protocol import response_schema
 from .executors.codex_protocol import CodexEventDecoder
 
 FORMAT = "configured-provider-profile/1"
+FORMAT_V2 = "configured-provider-profile/2"
+_ATTEMPT_CEILINGS = {FORMAT: 720, FORMAT_V2: 1440}
 PROVIDERS = frozenset({"codex", "antigravity", "claude-code"})
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 
@@ -84,7 +86,11 @@ def _closure(raw, provider, cfg):
 
 
 def normalize_configuration(provider, raw):
-    """Validate and copy a complete configured-provider-profile/1 document.
+    """Validate and copy a complete versioned configured-provider profile.
+
+    Version 1 retains its 720-second ceiling; version 2 permits an explicit
+    finite limit through 1440 seconds. Both preserve the shared default of 720
+    and the supplied format, with unchanged output and submission bounds.
 
     Claude uses its existing claude-local/1 mapping plus runtime_closure. Codex
     and Antigravity use format/executable/model/effort/context/runtime_closure;
@@ -94,9 +100,12 @@ def normalize_configuration(provider, raw):
     if type(provider) is not str or provider not in PROVIDERS:
         _fail("local_provider_unsupported")
     _object(raw, {"format", "provider", "adapter_configuration", "limits"})
-    if raw["format"] != FORMAT or raw["provider"] != provider:
+    if (type(raw["format"]) is not str or raw["format"] not in _ATTEMPT_CEILINGS
+            or raw["provider"] != provider):
         _fail()
     limits = _limits(raw["limits"])
+    if limits.attempt_seconds > _ATTEMPT_CEILINGS[raw["format"]]:
+        _fail("local_provider_limits_unsupported")
     inner = raw["adapter_configuration"]
     if type(inner) is not dict or "runtime_closure" not in inner:
         _fail("local_provider_runtime_closure_required")
@@ -127,7 +136,7 @@ def normalize_configuration(provider, raw):
             NativeAntigravityConfig(cfg["executable"]["path"], cfg["executable"]["sha256"],
                 cfg["model"], cfg["effort"], cfg["print_timeout_seconds"])
     cfg["runtime_closure"] = _closure(inner["runtime_closure"], provider, cfg)
-    result = {"format": FORMAT, "provider": provider, "adapter_configuration": cfg, "limits": limits.to_dict()}
+    result = {"format": raw["format"], "provider": provider, "adapter_configuration": cfg, "limits": limits.to_dict()}
     return loads(canonical_bytes(result))
 
 

@@ -46,7 +46,7 @@ class ProviderLimits:
     max_controller_submissions: int = 1
 
     def __post_init__(self):
-        _integer(self.attempt_seconds, 1, 720, "attempt_seconds")
+        _integer(self.attempt_seconds, 1, 1440, "attempt_seconds")
         _integer(self.max_output_bytes, 1, 64 * 1024 * 1024, "max_output_bytes")
         _integer(self.max_protocol_records, 1, 8192, "max_protocol_records")
         _integer(self.max_record_bytes, 1, min(self.max_output_bytes, 1024 * 1024), "max_record_bytes")
