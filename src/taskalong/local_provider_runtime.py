@@ -351,13 +351,32 @@ def run(store, provider, *, request, output=None):
     process = None
     closure = None
     decoder_error = None
+    workspace_receipt = None
+    workspace_bytes = None
+    workspace_observation = {}
     try:
         verify_task(plan, repository=request["repository"])
         _check_executables(config)
         _check_native_roots(store, config, native_binding)
+        if provider == "codex":
+            from .local_provider_workspace import prepare_owned_workspace, verify_owned_workspace
+            workspace_receipt = prepare_owned_workspace(plan, workspace=workspace, control_root=control,
+                remaining_seconds=(prepared["absolute_deadline"] - time.time()*1000)/1000)
+            workspace_bytes = canonical_bytes(workspace_receipt)
+            _write(control, "workspace.json", workspace_bytes)
+            verify_owned_workspace(plan, workspace=workspace, receipt=workspace_receipt,
+                remaining_seconds=(prepared["absolute_deadline"] - time.time()*1000)/1000)
+            # Bind the selected-file Git snapshot separately from the source base.
+            # No native trust exemption or source repository setting is changed.
+            workspace_observation["workspace_snapshot"] = {"format": workspace_receipt["format"],
+                "digest": workspace_receipt["digest"], "head": workspace_receipt["head"],
+                "tree": workspace_receipt["tree"], "source_base_commit": plan["base_commit"]}
+            verify_task(plan, repository=request["repository"])
+        if time.time()*1000 >= prepared["absolute_deadline"]:
+            _fail("provider_deadline_expired", "The local deadline expired during preparation; no provider submission was claimed.")
         _claim(store, record, plan)
         claimed = True
-        record = _event(store, record, root, "starting", controller_submissions=1, remote_usage="unknown")
+        record = _event(store, record, root, "starting", controller_submissions=1, remote_usage="unknown", **workspace_observation)
 
         def spawned(receipt):
             nonlocal record
@@ -366,6 +385,11 @@ def run(store, provider, *, request, output=None):
             verify_task(plan, repository=request["repository"])
             read_regular(control, "prompt.txt", max_bytes=len(prompt), expected_sha256=hashlib.sha256(prompt).hexdigest(),
                          private=True, expected_mode=0o400)
+            if workspace_receipt is not None:
+                verify_owned_workspace(plan, workspace=workspace, receipt=workspace_receipt,
+                    remaining_seconds=(prepared["absolute_deadline"] - time.time()*1000)/1000)
+                read_regular(control, "workspace.json", max_bytes=len(workspace_bytes),
+                    expected_sha256=hashlib.sha256(workspace_bytes).hexdigest(), private=True, expected_mode=0o400)
             if time.time()*1000 >= prepared["absolute_deadline"]:
                 _fail("provider_deadline_expired", "The local deadline expired before target gate release.")
             record = _event(store, record, root, "running", process_receipt=receipt.to_dict())

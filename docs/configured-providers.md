@@ -16,6 +16,24 @@ the proposed artifact. Adapters only project fixed invocations and decode their
 native protocols. Codex continues through the existing `CodexCLI.run` handoff.
 The implementation currently supports macOS and Linux for the shared route.
 
+Codex runs in a fresh controller-owned Git workspace containing only the task's
+declared read snapshots and existing writable-file snapshots. Newly declared
+files remain absent. The snapshot has its own HEAD/tree, recorded separately
+from the original source base; the source repository and its Git configuration
+are unchanged. No `--skip-git-repo-check`, global trust setting, remotes, source
+hooks or inherited Git configuration are added. The existing system Git is
+fingerprinted, runs fixed local plumbing commands with filters/hooks disabled,
+and has a 120-second aggregate setup budget with at most 15 seconds per command.
+This bounds those subprocesses rather than imposing an OS disk or memory quota.
+
+Preparation and verification precede the provider submission claim. A partial
+or expired setup fails without a provider dispatch and is retained for inspection.
+The selected-file, Git metadata and control-receipt identities are checked again
+at the native gate. Files are private/read-only; these observations do not prove
+isolation from another process running as the operator. Whether a particular
+native Codex build accepts the resulting repository remains a live qualification
+observation, not a bypass of native trust checks.
+
 ## Supported choices
 
 | Provider | Adapter format | Backend | Context choices | Proposal formats |

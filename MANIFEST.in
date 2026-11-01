@@ -419,3 +419,5 @@ include src/taskalong/muse_capture_recovery.py
 include tests/test_muse_capture_recovery.py
 include src/taskalong/muse_result_recovery.py
 include tests/test_muse_result_recovery.py
+include src/taskalong/local_provider_workspace.py
+include tests/test_local_provider_workspace.py
