@@ -908,6 +908,11 @@ packages = ["taskalong"]
             'test_foreground_experiment.ForegroundExperimentTests.test_tracking_failure_stays_separate_and_never_releases_a_refused_gate': 'Darwin foreground experiment tracking faults',
             'test_muse_capture_envelope.EnvelopeTests.test_four_mib_combined_bound_and_large_protocol_line': 'Real foreground owner is Darwin-only',
             'test_muse_capture_envelope.EnvelopeTests.test_real_python_callback_cancellation_without_provider': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_timeout_then_queued_second_task_stops_and_preserves_receipt': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_second_task_without_timeout_requests_owned_stop': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_valid_one_task_child_exits_normally': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_malformed_row_requests_owned_stop_without_callback_exception': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_record_budget_failure_retains_receipt_and_raw_capture': 'Real foreground owner is Darwin-only',
         }
         ordinary = 'test_ordinary.Case.test_required_behavior'
         schedule = qualifier.make_schedule([*required, ordinary])

@@ -406,6 +406,46 @@ replacement-only route additionally keeps its selected one-MiB aggregate output
 bound. All proposals still require human review and independent tests before
 manual application.
 
+## Explicit replacement of an interrupted Muse attempt
+
+An interrupted original Muse `/6` run has a separate successor decision:
+
+```text
+taskalong --state-dir EXISTING_STATE --json provider-successor-plan muse --predecessor INTERRUPTED_RUN --reason interrupted
+```
+
+This is an observation, not a submission. It validates the original claim,
+configuration, invocation, task, event history, incomplete private capture and
+stable native journal. Two conservative zero-signal probes must find the recorded
+owner PID and process group absent, with the evidence checked again between
+observations. This establishes current absence of that recorded PID/group only.
+It does not manufacture a missing original cleanup receipt, prove escaped
+descendants stopped, or settle accepted remote work. Completion, a committed
+response, contradictory evidence, a live/unknown owner, or a torn native frame
+prevents a replacement. A complete result requires its own recovery decision.
+
+An eligible plan can reserve one explicitly requested replacement using the same
+State, task, account, context and finite configuration:
+
+```text
+taskalong --state-dir EXISTING_STATE --json provider-successor muse --predecessor INTERRUPTED_RUN --reason interrupted --key REPLACEMENT_KEY --plan-digest PLAN_DIGEST --output FRESH_OUTPUT
+```
+
+The versioned `/4` lineage retains the old consumed claim and observations. Its
+shared exclusive anchor fences result recovery, concurrent calls, and copied or
+restored State. Reservation consumes the single replacement slot before native
+preflight; a failed or uncertain replacement is not permission for another call.
+The old run and its deadlines are never rewritten.
+
+This replacement observes native model-task lifecycle frames online and requests
+local shutdown on the first recognized model failure, timeout or cancellation,
+or a second recognized model task. Queued frames remain captured and counted.
+The actual owner result is saved independently before capture finalization.
+This is a local stop control, not an enforceable provider-internal retry cap:
+another request may already have been accepted before its event arrives. Native
+task counts are lower-bound observations, not paid-call counts. Remote usage,
+remote cancellation and complete descendant cessation remain unknown.
+
 These are controller byte and object bounds, not an OS disk quota or a measured
 RSS guarantee. Native subprocess memory, native result files while being written,
 account journals and remote usage remain outside them. Existing uncertainty about
