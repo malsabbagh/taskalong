@@ -10,7 +10,7 @@ import hashlib
 import json
 
 _MODEL = "model.meta.response"
-_EVENTS = {"proposed", "side_effect_intent", "started", "status", "completed",
+_EVENTS = {"proposed", "accepted", "scheduled", "side_effect_intent", "started", "status", "completed",
            "succeeded", "timed_out", "failed", "cancelled"}
 _MAX_TASKS = 256
 
@@ -219,19 +219,29 @@ class NativeModelTaskGuard:
             if info["phase"] or info["terminal"] or marker is None:
                 raise ValueError("proposed order")
             info.update(kind=marker, phase=1)
-        elif kind == "side_effect_intent":
-            if info["phase"] != 1 or info["terminal"] or marker is None or marker != info["kind"]:
-                raise ValueError("intent order")
+        elif kind == "accepted":
+            if info["phase"] != 1 or info["terminal"]:
+                raise ValueError("accept order")
             info["phase"] = 2
-        elif kind == "started":
-            if info["terminal"] or info["phase"] not in ((2,) if model else (1, 2)):
-                raise ValueError("start order")
+        elif kind == "scheduled":
+            if info["phase"] != 2 or info["terminal"]:
+                raise ValueError("schedule order")
             info["phase"] = 3
+        elif kind == "side_effect_intent":
+            # Accepted/scheduled are observed pre-intent phases. Preserve the
+            # existing shorter stream too; neither phase invents a model start.
+            if info["phase"] not in (1, 2, 3) or info["terminal"] or marker is None or marker != info["kind"]:
+                raise ValueError("intent order")
+            info["phase"] = 4
+        elif kind == "started":
+            if info["terminal"] or info["phase"] not in ((4,) if model else (1, 2, 3, 4)):
+                raise ValueError("start order")
+            info["phase"] = 5
         elif kind == "status":
             if not info["phase"] or info["terminal"]:
                 raise ValueError("status order")
         else:
-            if not info["phase"] or info["terminal"] or kind in {"completed", "succeeded"} and info["phase"] != 3:
+            if not info["phase"] or info["terminal"] or kind in {"completed", "succeeded"} and info["phase"] != 5:
                 raise ValueError("terminal order")
             info["terminal"] = True
         if model and kind in self._counts:

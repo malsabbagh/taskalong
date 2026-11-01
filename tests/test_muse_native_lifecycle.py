@@ -55,6 +55,94 @@ class NativeModelTaskGuardTests(unittest.TestCase):
         self.assertEqual(summary["model_tasks_side_effect_intent"], 1)
         self.assertEqual(summary["model_tasks_started"], 1)
 
+    def test_native_accepted_scheduled_metadata_prefix_before_model_intent(self):
+        # Corpus-free reproduction of the demonstrated native wrapper/order.
+        accepted_command = row(1)
+        accepted_command["payload_type"] = "runtime.command.accepted"
+        accepted_command["payload"] = {"kind": "command_accepted", "command_id": RUN}
+        linked = row(2)
+        linked["payload_type"] = "session.run.linked"
+        linked["payload"] = {"kind": "session_run_linked", "command_id": RUN,
+                             "run_stream": {"kind": "run", "id": RUN}}
+        guard = NativeModelTaskGuard(SESSION)
+        summary = self.feed(guard, [accepted_command, linked, row(3), row(4, "accepted"),
+                                    row(5, "scheduled"), row(6, "side_effect_intent"), row(7, "started")])
+        self.assertTrue(summary["protocol_valid"])
+        self.assertFalse(guard.stop_requested)
+        self.assertEqual(summary["model_tasks_observed"], 1)
+        self.assertEqual(summary["model_tasks_proposed"], 1)
+        self.assertEqual(summary["model_tasks_side_effect_intent"], 1)
+        self.assertEqual(summary["model_tasks_started"], 1)
+
+    def test_accepted_scheduled_status_and_completion_preserve_single_model(self):
+        for kinds in (("proposed", "accepted", "side_effect_intent", "started", "completed"),
+                      ("proposed", "accepted", "status", "scheduled", "status", "side_effect_intent", "started", "completed")):
+            with self.subTest(kinds=kinds):
+                guard = NativeModelTaskGuard(SESSION)
+                summary = self.feed(guard, [row(i, kind) for i, kind in enumerate(kinds, 1)])
+                self.assertTrue(summary["protocol_valid"])
+                self.assertFalse(guard.stop_requested)
+                self.assertEqual(summary["model_tasks_observed"], 1)
+                self.assertEqual(summary["model_tasks_started"], 1)
+
+    def test_nonmodel_accepted_scheduled_does_not_count_as_model_task(self):
+        guard = NativeModelTaskGuard(SESSION)
+        summary = self.feed(guard, [row(i, kind, OTHER, task_kind="session_name.allocate")
+                                    for i, kind in enumerate(("proposed", "accepted", "scheduled", "started", "completed"), 1)])
+        self.assertTrue(summary["protocol_valid"])
+        self.assertFalse(guard.stop_requested)
+        self.assertEqual(summary["model_tasks_observed"], 0)
+
+    def test_accepted_scheduled_duplicates_reordering_and_missing_intent_refuse(self):
+        invalid = [("accepted",), ("scheduled",), ("proposed", "scheduled"),
+                   ("proposed", "accepted", "accepted"),
+                   ("proposed", "accepted", "scheduled", "accepted"),
+                   ("proposed", "accepted", "scheduled", "scheduled"),
+                   ("proposed", "side_effect_intent", "accepted"),
+                   ("proposed", "side_effect_intent", "started", "scheduled"),
+                   ("proposed", "accepted", "scheduled", "started"),
+                   ("proposed", "accepted", "scheduled", "side_effect_intent", "started", "completed", "accepted")]
+        for kinds in invalid:
+            with self.subTest(kinds=kinds):
+                guard = NativeModelTaskGuard(SESSION)
+                summary = self.feed(guard, [row(i, kind) for i, kind in enumerate(kinds, 1)])
+                self.assertFalse(summary["protocol_valid"])
+                self.assertTrue(guard.stop_requested)
+
+    def test_accepted_scheduled_foreign_aliases_and_hidden_markers_refuse(self):
+        for kind in ("accepted", "scheduled"):
+            prefix = [row(1)] + ([row(2, "accepted")] if kind == "scheduled" else [])
+            for location in ("row", "payload", "event", "nested"):
+                for field, value in (("run_id", OTHER), ("session_id", OTHER), ("task_id", SECOND),
+                                     ("run_id", True), ("session_id", None), ("task_id", 1.5)):
+                    with self.subTest(kind=kind, location=location, field=field, value=value):
+                        item = row(len(prefix) + 1, kind)
+                        target = item if location == "row" else item["payload"] if location == "payload" else item["payload"]["event"]
+                        if location == "nested":
+                            target["details"] = {field: value}
+                        else:
+                            target[field] = value
+                        guard = NativeModelTaskGuard(SESSION)
+                        summary = self.feed(guard, prefix + [item])
+                        self.assertFalse(summary["protocol_valid"])
+            guard = NativeModelTaskGuard(SESSION)
+            item = row(len(prefix) + 1, kind)
+            item["payload"]["event"]["details"] = {"kind": kind, "task_id": TASK}
+            self.feed(guard, prefix + [item])
+            self.assertFalse(guard.summary()["protocol_valid"])
+
+    def test_accepted_scheduled_then_timeout_and_queued_second_keep_first_stop(self):
+        kinds = ("proposed", "accepted", "scheduled", "side_effect_intent", "started", "timed_out")
+        values = [row(i, kind) for i, kind in enumerate(kinds, 1)]
+        values += [row(i, kind, SECOND) for i, kind in enumerate(kinds[:-1], 7)]
+        guard = NativeModelTaskGuard(SESSION)
+        summary = self.feed(guard, values)
+        self.assertEqual(summary["first_stop_cause"], "model_task_timed_out")
+        self.assertEqual(summary["first_stop_sequence"], 6)
+        self.assertTrue(summary["protocol_valid"])
+        self.assertEqual(summary["model_tasks_observed"], 2)
+        self.assertEqual(summary["model_tasks_started"], 2)
+
     def test_timeout_then_queued_second_task_in_one_chunk_sticky_first_cause(self):
         guard = NativeModelTaskGuard(SESSION)
         values = start_rows() + [row(4, "timed_out"), row(5, task=SECOND),
