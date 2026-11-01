@@ -170,3 +170,20 @@ through copied or restored State. Reservation precedes local staging; uncertain
 local outcomes are observed instead of restaged. Recovered snapshots retain the
 original submission marker and cannot become a fresh inference route. Captured
 fragments alone never authorize this operation.
+
+### Interrupted-attempt reconciliation
+
+Explicit interrupted Muse `/6` replacements use plan, reservation and enrollment
+format `/4`. Original failed/timeout/capture contracts retain their previous
+formats. The new decision records current recorded-owner PID/group absence as a
+separate observation, bracketed by immutable history, capture, invocation and
+journal checks; it does not restamp missing cancellation evidence or unknown
+remote/descendant exposure. Complete or conflicting results veto redispatch.
+One shared exclusive lineage slot is reserved before preflight, preserving the
+old claim and fencing copied State and result-recovery races.
+
+The new replacement requires a bound online native-task stop policy. First
+recognized failure or a second recognized model task requests local cancellation
+while capture continues. The owner result is retained before capture closure.
+This reacts to observed events; it does not assert that native retries, remote
+acceptance, escaped descendants or paid usage are under a hard one-call limit.

@@ -368,7 +368,12 @@ def validate_test_accounting(schedule: dict, results: list[dict], system: str) -
                    'test_local_provider_streaming.LocalProviderStreamingTests.test_foreground_passes_live_raw_chunks_without_promoting_cessation': 'explicit Darwin foreground passthrough',
                    'test_local_provider_streaming.LocalProviderStreamingTests.test_foreground_sink_failure_returns_uncertainty_without_second_dispatch': 'explicit Darwin foreground failure passthrough',
                    'test_muse_capture_envelope.EnvelopeTests.test_four_mib_combined_bound_and_large_protocol_line': 'Real foreground owner is Darwin-only',
-                   'test_muse_capture_envelope.EnvelopeTests.test_real_python_callback_cancellation_without_provider': 'Real foreground owner is Darwin-only'}
+                   'test_muse_capture_envelope.EnvelopeTests.test_real_python_callback_cancellation_without_provider': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_timeout_then_queued_second_task_stops_and_preserves_receipt': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_second_task_without_timeout_requests_owned_stop': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_valid_one_task_child_exits_normally': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_malformed_row_requests_owned_stop_without_callback_exception': 'Real foreground owner is Darwin-only',
+                   'test_muse_native_stop_process.NativeStopProcessTests.test_record_budget_failure_retains_receipt_and_raw_capture': 'Real foreground owner is Darwin-only'}
         required = set(reasons) & set(expected)
         alias = 'test_store_migration.StoreMigrationTests.test_system_alias_and_directory_identity_cannot_hide_overlapping_targets'
         if any(r['test'] == alias for r in skipped):

@@ -390,6 +390,9 @@ def _material(store, predecessor, config, *, reason="timeout"):
     try:
         if type(reason) is not str:_fail("provider_successor_invalid")
         if reason=="capture":return _capture_material(store,predecessor,config)
+        if reason=="interrupted":
+            from .muse_interrupted_recovery import material
+            return material(store,predecessor,config)
         if reason!="timeout":_fail("provider_successor_invalid", "Select timeout or explicit capture recovery.")
         return _material_unchecked(store,predecessor,config)
     except (KeyError,TypeError,ValueError,AttributeError):
@@ -414,14 +417,16 @@ def _check(store, reservation, config):
             or store.setting("provider-successor-key:muse:"+reservation["key_digest"])!=reservation):
         _fail("provider_successor_history_changed")
     reason=reservation.get("reason","timeout")
-    if (type(reason) is not str or reason not in {"timeout","capture"}
-            or reservation.get("format") not in ({"manual-muse-successor/2", "manual-muse-successor/3"} if reason=="capture" else {"manual-muse-successor/1"})):
+    if (type(reason) is not str or reason not in {"timeout","capture","interrupted"}
+            or reservation.get("format") not in ({"manual-muse-successor/4"} if reason=="interrupted" else {"manual-muse-successor/2", "manual-muse-successor/3"} if reason=="capture" else {"manual-muse-successor/1"})):
         _fail("provider_successor_history_changed")
     if store.setting("provider:muse") != config:
         _fail("provider_successor_plan_changed")
     fresh, _, _, _=_material(store,reservation["predecessor_run_id"],config,reason=reason)
-    expected_format = "manual-muse-successor/3" if fresh["format"] == "manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason == "capture" else "manual-muse-successor/1"
+    expected_format = "manual-muse-successor/4" if reason == "interrupted" else "manual-muse-successor/3" if fresh["format"] == "manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason == "capture" else "manual-muse-successor/1"
     if reservation["format"] != expected_format:
+        _fail("provider_successor_history_changed")
+    if reason=="interrupted" and reservation.get("native_lifecycle_policy")!=fresh.get("native_lifecycle_policy"):
         _fail("provider_successor_history_changed")
     if fresh["digest"]!=reservation["plan_digest"]:
         _fail("provider_successor_plan_changed")
@@ -450,14 +455,14 @@ def inspect_reserved(store, run_id):
 
 def execute(store, *, predecessor, key, plan_digest, output, reason="timeout"):
     _id(predecessor);key_check(key);screen_sensitive(key)
-    if type(reason) is not str or reason not in {"timeout","capture"}:_fail("provider_successor_invalid")
+    if type(reason) is not str or reason not in {"timeout","capture","interrupted"}:_fail("provider_successor_invalid")
     if type(plan_digest) is not str or len(plan_digest)!=64 or any(c not in "0123456789abcdef" for c in plan_digest):
         _fail("provider_successor_invalid")
     target=pilot._root(output)
     key_digest=hashlib.sha256(key.encode()).hexdigest()
     existing=store.setting("provider-successor-key:muse:"+key_digest)
     identity={"predecessor_run_id":predecessor,"plan_digest":plan_digest,"output":str(target)}
-    if reason=="capture":identity["reason"]=reason
+    if reason in {"capture","interrupted"}:identity["reason"]=reason
     if existing is not None:
         if type(existing) is not dict or existing.get("digest")!=digest(existing) or existing.get("reason","timeout")!=reason or any(existing.get(k)!=v for k,v in identity.items()):_fail("provider_successor_key_conflict")
         return muse.inspect(store,existing["run_id"])
@@ -470,10 +475,11 @@ def execute(store, *, predecessor, key, plan_digest, output, reason="timeout"):
     pilot._destination(output)
     budget=muse._budget(config,pilot._prompt(manifest["request"],manifest["digest"]))
     if not budget["input_echoes_fit"]:_fail("provider_capture_budget_insufficient")
-    reservation={"format":"manual-muse-successor/3" if proof["format"]=="manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1",**identity,"run_id":identifier(),"key_digest":key_digest,
+    reservation={"format":"manual-muse-successor/4" if reason=="interrupted" else "manual-muse-successor/3" if proof["format"]=="manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1",**identity,"run_id":identifier(),"key_digest":key_digest,
         "root_run_id":proof["root_run_id"],"ordinal":proof["ordinal"],"predecessor_digest":parent["digest"],
         "bundle_digest":manifest["digest"],"configuration_digest":config["digest"],"attempt_seconds":proof["attempt_seconds"],
         "history":proof["history"]}
+    if reason=="interrupted":reservation["native_lifecycle_policy"]=proof["native_lifecycle_policy"]
     reservation["digest"]=digest(reservation)
     # Reserve before ANY native preflight. Denial, crash or other failure consumes
     # the logical slot. A repeated command only observes; it never resumes code.

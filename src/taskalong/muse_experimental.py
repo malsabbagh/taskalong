@@ -33,6 +33,18 @@ _MEGABYTE = "local-muse-provider/6"
 _MEGABYTE_RAW = 64 * 1048576
 _MEGABYTE_RECORDS = 131072
 _MEGABYTE_FRAME = 16 * 1048576
+_NATIVE_STOP_POLICY = "stop-on-first-model-failure-or-second-model-task/1"
+
+
+def _native_guard(successor, config, session):
+    # Old sealed operations retain their exact execution contract. The explicit
+    # interrupted successor adds a local observer, not a hard remote-call cap.
+    if successor is None or successor.get("format") != "manual-muse-successor/4":
+        return None
+    if successor.get("native_lifecycle_policy") != _NATIVE_STOP_POLICY:
+        _fail("provider_successor_invalid", "The interrupted successor requires its bound native stop policy.")
+    from .muse_native_lifecycle import NativeModelTaskGuard
+    return NativeModelTaskGuard(session, max_records=_max_records(config), max_frame_bytes=_MEGABYTE_FRAME)
 
 
 def _max_records(config):
@@ -788,13 +800,24 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
             record = _event(store, record, root, "running", process_receipt=receipt.to_dict())
         env = _environment(config, root)
         record_budget = _RecordBudget(_max_records(config)) if config["format"] in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE} else None
-        capture_options = {"on_stdout_line": record_budget.observe, "max_line_bytes": _MEGABYTE_FRAME if config["format"] == _MEGABYTE else config["max_output_bytes"]} if record_budget else {}
+        native_guard = _native_guard(_successor, config, session)
+        def observe_line(line):
+            if record_budget:
+                record_budget.observe(line)
+            if native_guard:
+                native_guard.observe(line)
+        capture_options = {"on_stdout_line": observe_line, "max_line_bytes": _MEGABYTE_FRAME if config["format"] == _MEGABYTE else config["max_output_bytes"]} if record_budget else {}
         if config["format"] == _MEGABYTE:
             capture_options["_retain_output"] = False
         result = run_foreground_experiment(argv, mode=FOREGROUND_EXPERIMENT, cwd=root/"workspace", env=env,
             timeout_seconds=config["attempt_seconds"], max_output_bytes=config["max_output_bytes"], signal_grace_seconds=.5,
-            on_spawn=spawned, cancel_requested=lambda:(root/"cancel-request.json").exists(),
+            on_spawn=spawned, cancel_requested=lambda:bool(native_guard and native_guard.stop_requested) or (root/"cancel-request.json").exists(),
             _on_output_chunk=capture.write, **capture_options)
+        if native_guard:
+            # Keep the actual owner's result independently of capture closure.
+            # A later disk/capture failure must not be reported as settlement.
+            pilot._write(root, "process-owner.json", canonical_bytes({**_summary(result),
+                "native_lifecycle": native_guard.summary(), "capture_finalized": False}))
         closure = capture.finalize()
         if config["format"] != _MEGABYTE:
             pilot._write(root,"stdout.bin",redact(result.stdout)); pilot._write(root,"stderr.bin",redact(result.stderr))
@@ -808,10 +831,12 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
         if record_budget:
             process.update(protocol_records_observed=record_budget.observed,
                            protocol_record_limit=record_budget.maximum, protocol_record_limited=record_budget.limited)
+        if native_guard:
+            process["native_lifecycle"] = native_guard.summary()
         pilot._write(root,"process.json",canonical_bytes(process))
-        if result.root_exit_code != 0 or result.timed_out or result.cancelled or result.output_limited or _owner_failed(result) or record_budget and record_budget.limited or config["format"] == _MEGABYTE and not process["process_stream_complete"]:
+        if result.root_exit_code != 0 or result.timed_out or result.cancelled or result.output_limited or _owner_failed(result) or record_budget and record_budget.limited or native_guard and native_guard.stop_requested or config["format"] == _MEGABYTE and not process["process_stream_complete"]:
             return _event(store,record,root,"failed",process=process,
-                          error="provider_protocol_record_limit" if record_budget and record_budget.limited else "provider_local_failure",remote_usage="unknown")
+                          error="provider_protocol_record_limit" if record_budget and record_budget.limited else "provider_native_lifecycle_stop" if native_guard and native_guard.stop_requested else "provider_local_failure",remote_usage="unknown")
         decode_options = {"megabyte": True} if config["format"] == _MEGABYTE else {}
         source = capture.iter_records("stdout", max_record_bytes=_MEGABYTE_FRAME) if config["format"] == _MEGABYTE else result.stdout
         response, native_run = _decode(source, session, max_proposal_bytes=config.get("max_proposal_bytes", 65536), max_records=_max_records(config), **decode_options)
