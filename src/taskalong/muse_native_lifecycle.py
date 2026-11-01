@@ -138,8 +138,54 @@ class NativeModelTaskGuard:
         if run is not None and "command_id" in payload:
             self._run = run
 
+    def _status_descriptor(self, row, payload, event):
+        """Recognize one closed diagnostic facet, never an activity wrapper."""
+        task = payload.get("task_id")
+        info = self._tasks.get(task) if type(task) is str else None
+        if (row["payload_type"] != "task.lifecycle.status" or payload.get("kind") != "task_lifecycle"
+                or type(event) is not dict or event.get("kind") != "status"):
+            return None
+        details = event.get("details")
+        if type(details) is not dict or details.get("phase") not in {"opening_stream", "stream_cancelled"}:
+            return None
+        if (task not in self._models or info is None or info["phase"] != 5 or info["terminal"]
+                or set(details) != {"phase", "facets"}):
+            raise ValueError("status descriptor wrapper")
+        phase, facets = details["phase"], details["facets"]
+        if type(facets) is not list or len(facets) != 2:
+            raise ValueError("status descriptor facets")
+        attempt, producer = facets
+        keys = {"kind", "system", "operation", "attempt", "max_attempts"}
+        if phase == "stream_cancelled":
+            keys.add("error_kind")
+        if (type(attempt) is not dict or set(attempt) != keys or attempt.get("kind") != "external_attempt"
+                or attempt.get("system") != "meta" or attempt.get("operation") != "model.response"
+                or type(attempt["attempt"]) is not int or type(attempt["max_attempts"]) is not int
+                or not 1 <= attempt["attempt"] <= attempt["max_attempts"] <= 10
+                or phase == "stream_cancelled" and attempt["error_kind"] != "stream_cancelled"
+                or type(producer) is not dict or set(producer) != {"kind", "detail"} or producer.get("kind") != "producer"):
+            raise ValueError("status attempt descriptor")
+        detail = producer["detail"]
+        keys = {"kind", "provider"}
+        if phase == "stream_cancelled":
+            keys.update(("request_id", "response_id", "model", "stream"))
+        if type(detail) is not dict or set(detail) != keys or detail.get("kind") != "provider" or detail.get("provider") != "meta":
+            raise ValueError("status producer descriptor")
+        if phase == "stream_cancelled":
+            for key in ("request_id", "response_id", "model"):
+                _identifier(detail[key])
+            stream = detail["stream"]
+            counters = {"bytes_read", "wire_events_seen", "eof_buffer_len", "time_to_first_event_ms", "bytes_before_first_event"}
+            if (type(stream) is not dict or set(stream) != counters | {"last_wire_event_type", "eof"}
+                    or type(stream["eof"]) is not bool
+                    or any(type(stream[key]) is not int or not 0 <= stream[key] <= 2**53 - 1 for key in counters)):
+                raise ValueError("status stream descriptor")
+            _identifier(stream["last_wire_event_type"])
+        return attempt
+
     def _hidden(self, row, payload, event):
         expected_task = _identifier(payload.get("task_id")) if payload.get("kind") == "task_lifecycle" else None
+        descriptor = self._status_descriptor(row, payload, event)
         if not row["payload_type"].startswith("task.lifecycle.") or payload.get("kind") != "task_lifecycle":
             event = None
         stack = [row]
@@ -154,7 +200,10 @@ class NativeModelTaskGuard:
                         or (kind in _EVENTS and "task_id" in part and part is not event)):
                     raise ValueError("hidden lifecycle")
                 for key in ("task_kind", "operation"):
-                    if (type(part.get(key)) is str and part[key].startswith("model.") and part is not event):
+                    # Exempt only this validated scalar; traverse the complete
+                    # descriptor and producer metadata for every other check.
+                    if (type(part.get(key)) is str and part[key].startswith("model.") and part is not event
+                            and not (key == "operation" and part is descriptor)):
                         raise ValueError("hidden model activity")
                 if "run_stream" in part:
                     self._bind_run(self._reference(part["run_stream"], "run"))

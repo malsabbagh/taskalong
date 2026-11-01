@@ -1,6 +1,9 @@
-"""Synthetic native wrappers only: no provider, process, State or filesystem I/O."""
+"""Synthetic native wrappers only: no provider, process, account or operator State."""
 import copy
 import json
+import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -38,6 +41,62 @@ def start_rows():
     return [row(1), row(2, "side_effect_intent"), row(3, "started")]
 
 
+def status_details(phase):
+    """Public protocol shapes with wholly invented diagnostic values."""
+    if phase == "retrying":
+        return {"phase": phase, "facets": [{"kind": "external_attempt", "system": "turn",
+            "operation": "retry", "attempt": 1, "next_attempt": 2, "max_attempts": 10,
+            "retry_delay_ms": 1, "error_kind": "model_stream_idle_timeout"}]}
+    attempt = {"kind": "external_attempt", "system": "meta", "operation": "model.response",
+               "attempt": 1, "max_attempts": 10}
+    producer = {"kind": "provider", "provider": "meta"}
+    if phase == "stream_cancelled":
+        attempt["error_kind"] = "stream_cancelled"
+        producer.update(request_id="synthetic-request", response_id="synthetic-response", model="synthetic-model",
+            stream={"bytes_read": 1, "wire_events_seen": 1, "last_wire_event_type": "keepalive",
+                    "eof": False, "eof_buffer_len": 0, "time_to_first_event_ms": 1, "bytes_before_first_event": 0})
+    return {"phase": phase, "facets": [attempt, {"kind": "producer", "detail": producer}]}
+
+
+def complete_native_rows():
+    """All 22 observed record shapes, without retained source text or identities."""
+    def metadata(sequence, kind, payload):
+        value = row(sequence)
+        value.update(payload_type=kind, payload=payload)
+        return value
+    binding = {"command_id": RUN, "run_stream": {"kind": "run", "id": RUN}}
+    values = [metadata(1, "runtime.command.accepted", {"kind": "command_accepted", "command_id": RUN,
+                   "client_id": None, "command_kind": "run"}),
+              metadata(2, "session.run.linked", {"kind": "session_run_linked", **binding}),
+              metadata(3, "run.model.configured", {"kind": "run_model_configured", **binding,
+                  "provider_id": "meta", "profile_id": "synthetic", "model_id": "synthetic-model",
+                  "display_label": "Synthetic model", "source": "synthetic"}),
+              metadata(4, "turn.input.user", {"kind": "turn_input_user", **binding, "prompt": "Synthetic input.\n"}),
+              metadata(5, "run.lifecycle.started", {"kind": "run_started", **binding, "prompt": "Synthetic input.\n"})]
+    for task in (TASK, SECOND):
+        values.append(metadata(len(values) + 1, "task.stream.linked", {"kind": "task_stream_linked", **binding,
+            "task_id": task, "task_stream": {"kind": "task", "id": task}}))
+        for kind in ("proposed", "accepted", "scheduled", "side_effect_intent", "started"):
+            value = row(len(values) + 1, kind, task)
+            if kind in {"scheduled", "side_effect_intent"}:
+                value["payload"]["event"]["idempotency_key"] = "synthetic-key"
+            if kind == "side_effect_intent":
+                value["payload"]["event"].update(policy_decision="synthetic-policy", cancellation_handle=None, parent_task_id=None)
+            values.append(value)
+        for phase in (("opening_stream", "stream_cancelled", "retrying") if task == TASK else ("opening_stream",)):
+            value = row(len(values) + 1, "status", task)
+            value["payload"]["event"].update(message="Synthetic status.", details=status_details(phase))
+            values.append(value)
+        if task == TASK:
+            values.append(row(len(values) + 1, "timed_out", task))
+    for value in values:
+        sequence = value["sequence"]
+        value.update(id=OTHER, recorded_at=sequence, causation_id=OTHER,
+            record_type="reconciliation" if sequence == 1 else "status" if sequence == 4 else "event",
+            durability="ephemeral" if sequence == 4 else "durable")
+    return values
+
+
 class NativeModelTaskGuardTests(unittest.TestCase):
     def feed(self, guard, values):
         for value in values:
@@ -54,6 +113,137 @@ class NativeModelTaskGuardTests(unittest.TestCase):
         self.assertEqual(summary["model_tasks_proposed"], 1)
         self.assertEqual(summary["model_tasks_side_effect_intent"], 1)
         self.assertEqual(summary["model_tasks_started"], 1)
+
+    def test_complete_native_grammar_preserves_timeout_and_queued_second_start(self):
+        values = complete_native_rows()
+        self.assertEqual(len(values), 22)
+        guard = NativeModelTaskGuard(SESSION)
+        summary = self.feed(guard, values)
+        self.assertTrue(summary["protocol_valid"])
+        self.assertEqual(summary["records_observed"], 22)
+        self.assertEqual(summary["first_stop_cause"], "model_task_timed_out")
+        self.assertEqual(summary["first_stop_sequence"], 15)
+        self.assertEqual(summary["model_tasks_observed"], 2)
+        self.assertEqual(summary["model_tasks_started"], 2)
+        self.assertEqual(summary["paid_call_count"], "unknown")
+        self.assertFalse(summary["hard_native_attempt_limit_enforced"])
+
+    def test_status_retry_descriptor_does_not_replace_actual_second_task_stop(self):
+        values = complete_native_rows()
+        values[14]["payload_type"] = "task.lifecycle.completed"
+        values[14]["payload"]["event"]["kind"] = "completed"
+        guard = NativeModelTaskGuard(SESSION)
+        summary = self.feed(guard, values)
+        self.assertTrue(summary["protocol_valid"])
+        self.assertEqual(summary["first_stop_cause"], "second_model_task_observed")
+        self.assertEqual(summary["first_stop_sequence"], 17)
+        self.assertEqual(summary["model_tasks_started"], 2)
+
+    def test_bounded_model_status_descriptors_do_not_invent_task_starts(self):
+        for phase in ("opening_stream", "stream_cancelled"):
+            for attempt, maximum in ((1, 1), (1, 10), (2, 10), (10, 10)):
+                item = row(4, "status")
+                item["payload"]["event"]["details"] = status_details(phase)
+                item["payload"]["event"]["details"]["facets"][0].update(attempt=attempt, max_attempts=maximum)
+                guard = NativeModelTaskGuard(SESSION)
+                with self.subTest(phase=phase, attempt=attempt, maximum=maximum):
+                    summary = self.feed(guard, start_rows() + [item])
+                    self.assertTrue(summary["protocol_valid"])
+                    self.assertFalse(guard.stop_requested)
+                    self.assertEqual(summary["model_tasks_started"], 1)
+
+    def test_status_descriptor_exemption_is_closed_typed_and_path_specific(self):
+        mutations = [lambda d: d.update(phase="unknown"), lambda d: d.update(response={}),
+            lambda d: d["facets"][0].update(system="other"),
+            lambda d: d["facets"][0].update(operation="model.meta.response"),
+            lambda d: d["facets"][0].update(operation="model.other"),
+            lambda d: d["facets"][0].update(operation=False), lambda d: d["facets"][0].update(operation=None),
+            lambda d: d["facets"][0].update(operation="retry"), lambda d: d["facets"][0].pop("operation"),
+            lambda d: d["facets"][0].update(attempt=False), lambda d: d["facets"][0].update(attempt=0),
+            lambda d: d["facets"][0].update(attempt=11), lambda d: d["facets"][0].update(max_attempts=11),
+            lambda d: d["facets"][0].update(attempt=2, max_attempts=1),
+            lambda d: d["facets"][0].update(max_attempts=0), lambda d: d["facets"][0].update(max_attempts=1.5),
+            lambda d: d["facets"].reverse(), lambda d: d["facets"].append({}),
+            lambda d: d.update(nested=d.pop("facets")),
+            lambda d: d["facets"][1]["detail"].update(provider="other"),
+            lambda d: d["facets"][1]["detail"].update(response={})]
+        for mutate in mutations:
+            details = status_details("opening_stream"); mutate(details)
+            item = row(4, "status"); item["payload"]["event"]["details"] = details
+            guard = NativeModelTaskGuard(SESSION)
+            with self.subTest(details=details):
+                self.assertFalse(self.feed(guard, start_rows() + [item])["protocol_valid"])
+
+    def test_status_descriptors_do_not_hide_activity_results_or_foreign_references(self):
+        for phase in ("opening_stream", "stream_cancelled"):
+            for location in ("details", "facet", "producer", "stream"):
+                if location == "stream" and phase != "stream_cancelled":
+                    continue
+                for extra in ({"kind": "task_lifecycle", "task_id": SECOND},
+                              {"kind": "run_terminal", "terminal": "completed"}, {"response": {}},
+                              {"run_id": OTHER}, {"session_id": OTHER}, {"command_id": OTHER},
+                              {"task_id": SECOND}, {"operation": "model.meta.response"}):
+                    details = status_details(phase)
+                    target = details if location == "details" else details["facets"][0] if location == "facet" else details["facets"][1]["detail"]
+                    if location == "stream": target = target["stream"]
+                    target["hidden"] = extra
+                    item = row(4, "status"); item["payload"]["event"]["details"] = details
+                    guard = NativeModelTaskGuard(SESSION)
+                    with self.subTest(phase=phase, location=location, extra=extra):
+                        self.assertFalse(self.feed(guard, start_rows() + [item])["protocol_valid"])
+
+    def test_stream_status_metadata_has_finite_strict_scalar_types(self):
+        for key in ("bytes_read", "wire_events_seen", "eof_buffer_len", "time_to_first_event_ms", "bytes_before_first_event"):
+            for invalid in (False, -1, 1.5, None, "1", 2**53):
+                details = status_details("stream_cancelled")
+                details["facets"][1]["detail"]["stream"][key] = invalid
+                item = row(4, "status"); item["payload"]["event"]["details"] = details
+                with self.subTest(key=key, value=invalid):
+                    self.assertFalse(self.feed(NativeModelTaskGuard(SESSION), start_rows() + [item])["protocol_valid"])
+        for key, values in (("request_id", (None, False, "", "x" * 257)),
+                            ("response_id", ({}, [], "\ud800")), ("model", (0, "x\n"))):
+            for invalid in values:
+                details = status_details("stream_cancelled"); details["facets"][1]["detail"][key] = invalid
+                item = row(4, "status"); item["payload"]["event"]["details"] = details
+                # ASCII escaping keeps a malformed surrogate a parser input.
+                guard = NativeModelTaskGuard(SESSION)
+                for value in start_rows(): guard.observe(raw(value))
+                guard.observe(json.dumps(item, ensure_ascii=True).encode())
+                with self.subTest(key=key, value=repr(invalid)):
+                    self.assertFalse(guard.summary()["protocol_valid"])
+        for key, invalid in (("eof", 0), ("last_wire_event_type", None), ("last_wire_event_type", "x" * 257)):
+            details = status_details("stream_cancelled"); details["facets"][1]["detail"]["stream"][key] = invalid
+            item = row(4, "status"); item["payload"]["event"]["details"] = details
+            self.assertFalse(self.feed(NativeModelTaskGuard(SESSION), start_rows() + [item])["protocol_valid"])
+
+    def test_model_status_descriptor_requires_started_bound_model_task(self):
+        for prefix in ([row(1)], [row(1), row(2, "accepted")], start_rows() + [row(4, "completed")],
+                       [row(1, task_kind="session_name.allocate"), row(2, "started", task_kind="session_name.allocate")]):
+            item = row(len(prefix) + 1, "status")
+            item["payload"]["event"]["details"] = status_details("opening_stream")
+            with self.subTest(prefix=prefix):
+                self.assertFalse(self.feed(NativeModelTaskGuard(SESSION), prefix + [item])["protocol_valid"])
+
+    @unittest.skipUnless(os.name == "posix", "Private descriptor capture requires POSIX")
+    def test_complete_synthetic_grammar_passes_all_interrupted_capture_gates(self):
+        from taskalong.local_provider_capture import PrivateCapture
+        from taskalong.muse_interrupted_recovery import _capture
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve(); root.chmod(0o700)
+            capture = PrivateCapture(root / "capture", schema_version="2.0", max_output_bytes=64 * 1048576, max_records=8192)
+            try:
+                capture.write("stdout", b"".join(raw(value) + b"\n" for value in complete_native_rows()))
+            finally:
+                capture.close()
+            native_run, summary = _capture(root, {"max_output_bytes": 64 * 1048576}, SESSION)
+        self.assertEqual(native_run, RUN)
+        self.assertEqual(summary["records_observed"], 22)
+        self.assertEqual(summary["status"], "incomplete")
+        self.assertFalse(summary["byte_closure"])
+        self.assertFalse(summary["observed_counts_complete"])
+        self.assertTrue(summary["native_lifecycle"]["protocol_valid"])
+        self.assertEqual(summary["native_lifecycle"]["first_stop_sequence"], 15)
+        self.assertEqual(summary["native_lifecycle"]["model_tasks_started"], 2)
 
     def test_native_accepted_scheduled_metadata_prefix_before_model_intent(self):
         # Corpus-free reproduction of the demonstrated native wrapper/order.
