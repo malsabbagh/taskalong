@@ -55,6 +55,9 @@ def _profile(value, expected):
 
 def _original(store, run_id):
     record, root = successor._read_run(store, run_id)
+    if record.get("format") == "local-provider-run/2":
+        from .muse_high_result_recovery import original
+        return original(store, record, root)
     process = record.get("process")
     config = _profile(store.setting("provider-config:" + record["configuration_digest"]), record["configuration_digest"])
     if (record.get("format") != "local-provider-run/1" or record.get("manual_successor") is not None
@@ -235,6 +238,12 @@ def _journal(material, native_run):
             records = total = sequence = phase = 0
             metadata = {}
             committed = None
+            schema = None
+            if "high_lineage" in material:
+                from .muse_interrupted_recovery import _JournalSchema
+                schema = _JournalSchema(session, native_run, config["model"])
+                from .muse_high_result_recovery import JournalTasks
+                tasks = JournalTasks(session, native_run)
             with os.fdopen(os.dup(fd), "rb", buffering=65536) as source:
                 while True:
                     line = source.readline(16777218)
@@ -257,8 +266,14 @@ def _journal(material, native_run):
                         if type(row["sequence"]) is not int or row["sequence"] <= sequence:
                             _fail()
                         sequence = row["sequence"]
-                    for binding in (row, payload, event, details):
-                        capture_proof._bindings(binding, session, native_run)
+                    if schema is not None:
+                        from .muse_interrupted_recovery import _bindings
+                        slots = schema.observe(row)
+                        tasks.observe(row)
+                        _bindings(row, session, native_run, command_slots=slots)
+                    else:
+                        for binding in (row, payload, event, details):
+                            capture_proof._bindings(binding, session, native_run)
                     markers = _activity_markers(row)
                     outcome = capture_proof._terminal(row)
                     if outcome is not None:
@@ -301,6 +316,9 @@ def _journal(material, native_run):
                                 if not (key == "reasoning_effort" and value is None) and (type(value) is not str or not 1 <= len(value.encode()) <= 256):
                                     _fail()
                                 metadata[key] = value
+            if schema is not None:
+                schema.finish()
+                tasks.finish(material["model_task_sha256"])
             if (phase not in (3, 4) or total != size or metadata.get("provider_id") != "meta" or metadata.get("model_id") != config["model"]):
                 _fail()
             guard()
@@ -407,7 +425,8 @@ def _material(store, run_id, reservation=None):
         if encoded != committed.encode() or len(encoded) > first["config"]["max_proposal_bytes"]:
             _fail("provider_result_recovery_response_limit")
         screen_sensitive(response)
-        patch, _ = pilot._proposal(first["manifest"], response)
+        options = {"replacement_profile": "megabyte-proposal/1"} if "high_lineage" in first else {}
+        patch, _ = pilot._proposal(first["manifest"], response, **options)
         _prefix(first, native_run, committed)
         second = _original(store, run_id)
         repeated, repeated_journal = _journal(second, native_run)
@@ -423,6 +442,11 @@ def _material(store, run_id, reservation=None):
             "model_free": True, "plan_authorizes_effects": False, "new_controller_submissions": 0, "original_state": "failed",
             "original_capture_status": "limited", "remote_usage": "unknown", "descendant_cessation": "unknown",
             "automatic_retry_allowed": False, "patch_applied": False, "acceptance_allowed": False, "provider_authenticity_proven": False}
+        if "high_lineage" in first:
+            value.update(format="muse-result-recovery-plan/2", original_capture_status="closed",
+                high_lineage=first["high_lineage"], validated_native_lifecycle=first["validated_native_lifecycle"],
+                model_task_sha256=first["model_task_sha256"],
+                replacement_profile="megabyte-proposal/1")
         return _seal(value), first, response
     except (TaskAlongError, OSError, ValueError, TypeError, KeyError, AttributeError, UnicodeError, RecursionError, OverflowError) as exc:
         if isinstance(exc, TaskAlongError) and exc.code.startswith("provider_result_recovery_"):
@@ -450,7 +474,8 @@ def _expected_output(proof, manifest, response, reservation):
     """Derive artifact bytes from the pinned response, never bless staged bytes."""
     target = Path(reservation["output"])
     encoded = canonical_bytes(response)
-    proposal, changes = pilot._proposal(manifest, response)
+    options = {"replacement_profile": "megabyte-proposal/1"} if proof.get("format") == "muse-result-recovery-plan/2" else {}
+    proposal, changes = pilot._proposal(manifest, response, **options)
     if (hashlib.sha256(encoded).hexdigest() != proof["response_sha256"] or len(encoded) != proof["response_bytes"]
             or len(encoded) > proof["original_proposal_limit"] or hashlib.sha256(proposal).hexdigest() != proof["patch_sha256"]
             or len(proposal) != proof["patch_bytes"] or manifest["digest"] != proof["bundle_digest"]):
@@ -460,7 +485,14 @@ def _expected_output(proof, manifest, response, reservation):
         "proposed_patch_sha256": proof["patch_sha256"], "changes": changes, "validation": "text_diff_against_supplied_snapshot",
         "base_commit": manifest["request"]["base_commit"], "repository_observed": False, "tests_run": False,
         "patch_applied": False, **pilot._FLAGS})
-    marker = canonical_bytes({"provider": "muse", "run_id": reservation["run_id"], "bundle_digest": manifest["digest"]})
+    if options:
+        report["replacement_profile"] = "megabyte-proposal/1"
+        report = _seal(report)
+    marker_value = {"provider": "muse", "run_id": reservation["run_id"], "bundle_digest": manifest["digest"]}
+    if options:
+        marker_value.update(predecessor_run_id=proof["high_lineage"]["predecessor_run_id"],
+                            reservation_digest=proof["high_lineage"]["reservation_digest"])
+    marker = canonical_bytes(marker_value)
     observation = _seal({"format": "muse-result-recovery-source-observation/1", "plan": proof,
         "reservation_digest": reservation["digest"], "original_state": "failed", "new_controller_submissions": 0,
         "original_submission_marker_sha256": hashlib.sha256(marker).hexdigest(),
@@ -492,7 +524,7 @@ def _check_output(root, expected):
             handle, name, fd, before, data = item
             handle.check()
             for info in (os.fstat(fd), os.stat(name, dir_fd=handle.fd, follow_symlinks=False)):
-                _regular(info, private=True, max_bytes=1048576)
+                _regular(info, private=True, max_bytes=max(1048576, len(data)))
                 if _file_state(info) != before or stat.S_IMODE(info.st_mode) != 0o400 or info.st_size != len(data):
                     _fail()
             if content:
@@ -547,7 +579,10 @@ def _observe(store, reservation, *, state_required=True):
                 or proof.get("state_scope") != _scope(store)):
             _fail()
         _, manifest = pilot._bundle(str(output / "snapshot-bundle"))
-        response = loads(read_regular(output, "proposal/response.json", max_bytes=65536, private=True, expected_mode=0o400))
+        response_limit = proof.get("original_proposal_limit")
+        if type(response_limit) is not int or not 1024 <= response_limit <= (1048576 if proof.get("format") == "muse-result-recovery-plan/2" else 65536):
+            _fail()
+        response = loads(read_regular(output, "proposal/response.json", max_bytes=response_limit, private=True, expected_mode=0o400))
         expected, report = _expected_output(proof, manifest, response, reservation)
         if receipt["artifacts"] != _check_output(output, expected) or receipt["proposal_digest"] != report["digest"]:
             _fail()
@@ -581,7 +616,9 @@ def _recover(store, *, run_id, key, plan_digest, output):
     proof, material, response = _material(store, run_id)
     if proof["digest"] != plan_digest:
         _fail("provider_result_recovery_plan_changed")
-    for protected in (original_root, pilot._root(record["bundle"]), anchor):
+    protected_roots = (original_root, pilot._root(record["bundle"]), anchor)
+    protected_roots += tuple(pilot._root(p) for p in material.get("protected_roots", ()))
+    for protected in protected_roots:
         if target.is_relative_to(protected) or protected.is_relative_to(target):
             _fail("provider_result_recovery_output_overlap")
     pilot._destination(output)
@@ -618,7 +655,8 @@ def _recover(store, *, run_id, key, plan_digest, output):
         pilot._write(copied, "provider-submission.json", material["marker"])
         pilot._write(copied, "prompt.txt", material["prompt"])
         pilot._write(copied, "bundle.json", canonical_bytes(material["manifest"]))
-        report = pilot.stage(bundle=str(copied), response=response, output=str(target / "proposal"))
+        options = {"replacement_profile": "megabyte-proposal/1"} if proof.get("format") == "muse-result-recovery-plan/2" else {}
+        report = pilot.stage(bundle=str(copied), response=response, output=str(target / "proposal"), **options)
         expected, expected_report = _expected_output(proof, material["manifest"], response, reservation)
         if report != expected_report:
             _fail()
