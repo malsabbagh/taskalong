@@ -434,3 +434,5 @@ include tests/test_muse_native_lifecycle.py
 include tests/test_muse_native_stop_process.py
 include src/taskalong/muse_high_result_recovery.py
 include tests/test_muse_high_result_recovery.py
+include tools/release_manifest.py
+include tools/tests/test_release_manifest.py
