@@ -1,5 +1,6 @@
 """Synthetic byte evidence only: no native providers or process effects."""
 import hashlib
+import errno
 import os
 from pathlib import Path
 import stat
@@ -37,6 +38,62 @@ class PrivateCaptureTests(unittest.TestCase):
         path.chmod(0o600)
         path.write_bytes(canonical_bytes(document))
         path.chmod(0o400)
+
+    def test_directory_close_attempts_each_fd_once_and_retains_first_error(self):
+        directory = capture_module._Directory(self.parent)
+        owned = tuple(directory.fds)
+        self.assertGreater(len(owned), 1)
+        original = os.close
+        attempted = []
+        first = OSError(errno.EIO, 'Synthetic close completed then reported failure')
+        second = OSError(errno.EINTR, 'Synthetic second close error')
+        def close(fd):
+            self.assertEqual(directory.fds, [])
+            attempted.append(fd)
+            original(fd)
+            if len(attempted) == 1:
+                raise first
+            if len(attempted) == 2:
+                raise second
+        with patch.object(capture_module.os, 'close', side_effect=close), self.assertRaises(OSError) as caught:
+            directory.close()
+        self.assertIs(caught.exception, first)
+        self.assertEqual(attempted, list(reversed(owned)))
+        for fd in owned:
+            with self.assertRaises(OSError) as closed:
+                os.fstat(fd)
+            self.assertEqual(closed.exception.errno, errno.EBADF)
+        with patch.object(capture_module.os, 'close', side_effect=AssertionError('uncertain descriptor retried')):
+            directory.close()
+
+    def test_directory_constructor_failure_closes_all_ancestors_after_close_error(self):
+        directory = capture_module._Directory.__new__(capture_module._Directory)
+        original_open, original_close = os.open, os.close
+        opened, attempted = [], []
+        first = OSError(errno.EIO, 'Synthetic constructor cleanup close error')
+        def open(path, flags, *args, **kwargs):
+            fd = original_open(path, flags, *args, **kwargs)
+            opened.append(fd)
+            return fd
+        def close(fd):
+            self.assertEqual(directory.fds, [])
+            attempted.append(fd)
+            original_close(fd)
+            if len(attempted) == 1:
+                raise first
+        with patch.object(capture_module.os, 'open', side_effect=open), patch.object(capture_module.os, 'close', side_effect=close), \
+                self.assertRaises(OSError) as caught:
+            directory.__init__(self.parent/'missing-native-directory')
+        self.assertIs(caught.exception, first)
+        self.assertGreater(len(opened), 1)
+        self.assertEqual(attempted, list(reversed(opened)))
+        self.assertEqual(directory.fds, [])
+        for fd in opened:
+            with self.assertRaises(OSError) as closed:
+                os.fstat(fd)
+            self.assertEqual(closed.exception.errno, errno.EBADF)
+        with patch.object(capture_module.os, 'close', side_effect=AssertionError('constructor descriptor retried')):
+            directory.close()
 
     def test_interleaved_combined_overflow_preserves_allowed_prefix(self):
         sink = self.capture(max_output_bytes=7)
