@@ -389,6 +389,7 @@ include src/taskalong/executors/claude_local.py
 include src/taskalong/executors/claude_local_config.py
 include src/taskalong/executors/claude_local_protocol.py
 include src/taskalong/executors/codex_protocol.py
+include src/taskalong/executors/codex_route.py
 include src/taskalong/local_provider_adapters.py
 include src/taskalong/local_provider_artifacts.py
 include src/taskalong/local_provider_capture.py
@@ -403,6 +404,8 @@ include tests/test_antigravity_native_protocol.py
 include tests/test_claude_local_config.py
 include tests/test_claude_local_protocol.py
 include tests/test_codex_protocol.py
+include tests/test_codex_route.py
+include tests/test_codex_route_profile.py
 include tests/test_local_provider_adapters.py
 include tests/test_local_provider_artifacts.py
 include tests/test_local_provider_capture.py

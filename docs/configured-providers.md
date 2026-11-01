@@ -551,3 +551,47 @@ uncertain local outcome. Missing, changed, conflicting or incomplete evidence
 refuses recovery. No automatic retry, application, acceptance or usage settlement
 is performed. The proposed patch still needs independent review and tests before
 manual application.
+
+
+### Explicit Codex endpoint selection
+
+Codex profile `configured-provider-profile/5` preserves profile `/4` limits and
+requires `native_roots` plus a closed `route` object. Legacy profiles keep their
+existing native routing; adding a route to them is rejected. Profile `/5` is
+currently supported only for the pinned Codex CLI `0.163.0` (including its
+fingerprinted Node launcher/native-binary closure).
+
+For the existing ChatGPT account route, use:
+
+```json
+{
+  "format": "codex-route/1",
+  "backend": "native-chatgpt",
+  "base_url": "https://chatgpt.com/backend-api/codex",
+  "auth_mode": "existing-native-account"
+}
+```
+
+For an already-configured Ollama Codex proxy, select backend
+`existing-ollama-proxy` and its explicit canonical loopback URL, such as
+`http://127.0.0.1:11434/api/codex/v1`. Only literal `127.0.0.1`, a port from 1 to
+65535 and that exact path are supported. Credentials, aliases, query strings and
+additional options are refused. This does not start, install or authenticate a
+proxy. Select the existing proxy's model separately; endpoint selection does not
+substitute a model.
+
+The invocation sets per-run `model_provider="openai"` and `openai_base_url`.
+The native route also sets the ancillary `chatgpt_base_url`. These are command
+arguments, with no global settings writes, forced login, authentication commands,
+new credentials or `--oss` substitution. Existing local context remains included;
+`CODEX_HOME` may be explicitly bound through `native_roots`. The normal read-only
+sandbox, approval policy and owned snapshot Git workspace remain in force.
+
+The route digest is sealed into dispatch preparation, and the run records
+`requested_route`. This records a requested endpoint, not verified account,
+inference-origin, model, effective effort or account-wide spending proof. The
+`existing-native-account` label is descriptive. Native refresh or ancillary
+service traffic is not fully controlled by these overrides. New runtime versions
+need their configuration semantics qualified before admission. Changing routes,
+profiles or limits cannot refund a consumed task intent or replay a failed call.
+Live qualification is separate from the offline route projection tests.

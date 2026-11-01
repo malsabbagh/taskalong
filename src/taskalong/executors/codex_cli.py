@@ -244,7 +244,7 @@ class CodexCLI:
         failures. It is not streaming crash persistence or a public result. The
         core owns durable capture references and any subsequent reconciliation.
         """
-        if self.profile.get("format") in {"configured-provider-profile/1", "configured-provider-profile/2", "configured-provider-profile/3", "configured-provider-profile/4"}:
+        if self.profile.get("format") in {"configured-provider-profile/1", "configured-provider-profile/2", "configured-provider-profile/3", "configured-provider-profile/4", "configured-provider-profile/5"}:
             # Separate experimental owner contract. Legacy production preflight
             # and start/resume refusals remain unchanged. A packet cannot select
             # an arbitrary driver: only the in-process durable owner supplies it.

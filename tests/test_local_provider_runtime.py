@@ -67,6 +67,66 @@ class ProviderOwnerTests(unittest.TestCase):
     def claims(self):
         return self.service._store.db.execute("SELECT count(*) FROM settings WHERE name LIKE 'configured-provider-claim:%'").fetchone()[0]
 
+    def route_configuration(self, backend="native-chatgpt"):
+        from test_codex_route_profile import route_profile
+        value = route_profile(backend)
+        value["adapter_configuration"]["executable"] = {"path":str(self.exe),"sha256":self.sha,"version":"0.163.0"}
+        return value
+
+    def test_explicit_native_route_uses_the_same_owner_and_persists_requested_not_proven_identity(self):
+        config = self.route_configuration()
+        view = self.service.configure_provider("codex",config)
+        self.assertEqual(view["requested_route"],config["route"])
+        self.assertEqual(view["capabilities"]["authenticated_account"],"unknown")
+        def process(configured, prepared, invocation, **callbacks):
+            self.assertIn('openai_base_url="https://chatgpt.com/backend-api/codex"',invocation["argv"])
+            self.assertEqual(prepared["route_digest"],digest(config["route"]))
+            self.assertNotIn("--ignore-user-config",invocation["argv"])
+            self.assertFalse(any("forced_login_method" in arg for arg in invocation["argv"]))
+            return self.process(configured,prepared,invocation,**callbacks)
+        with patch.object(owner,"_process",side_effect=process):
+            result = self.service.run_provider("codex",request=self.request())
+        self.assertEqual(result["state"],"proposal_ready")
+        self.assertEqual(result["requested_route"],config["route"])
+        self.assertEqual(result["remote_usage"],"unknown")
+        self.assertEqual(result["capture"]["schema_version"],"2.0")
+        self.assertIn("structured_result_reference",result["observation"])
+        self.assertEqual(self.claims(),1)
+
+    def test_explicit_proxy_route_binds_existing_native_roots_without_reading_auth(self):
+        config = self.route_configuration("existing-ollama-proxy")
+        native = self.root/"existing-native-root";native.mkdir()
+        (native/"auth.json").write_text("Synthetic sentinel; never read by the framework.\n")
+        config["native_roots"] = {"CODEX_HOME":str(native)}
+        self.service.configure_provider("codex",config)
+        def process(configured,prepared,invocation,**callbacks):
+            self.assertEqual(invocation["env_overrides"],{"CODEX_HOME":str(native)})
+            self.assertIn('openai_base_url="http://127.0.0.1:11434/api/codex/v1"',invocation["argv"])
+            self.assertNotIn("--oss",invocation["argv"])
+            self.assertNotIn("--local-provider",invocation["argv"])
+            return self.process(configured,prepared,invocation,**callbacks)
+        real_read = owner.read_regular
+        def reading(root,name,**options):
+            if Path(root)==native:self.fail("No native credential contents may be inspected")
+            return real_read(root,name,**options)
+        with patch.dict(os.environ,{"CODEX_HOME":"unselected ambient root"}), \
+                patch.object(owner,"read_regular",side_effect=reading),patch.object(owner,"_process",side_effect=process):
+            result = self.service.run_provider("codex",request=self.request())
+        self.assertEqual(result["state"],"proposal_ready")
+        self.assertEqual(result["requested_route"],config["route"])
+
+    def test_route_and_profile_change_do_not_refund_a_consumed_legacy_intent(self):
+        self.configure()
+        with patch.object(owner,"_process",side_effect=self.process):
+            original = self.service.run_provider("codex",request=self.request())
+        self.service.configure_provider("codex",self.route_configuration("existing-ollama-proxy"))
+        with patch.object(owner,"_process") as native,self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider("codex",request=self.request())
+        self.assertEqual(caught.exception.code,"provider_already_submitted")
+        self.assertEqual(self.claims(),1)
+        native.assert_not_called()
+        self.assertEqual(self.service._store.setting("provider-run:"+original["run_id"]),original)
+
     def test_codex_receives_only_declared_files_in_a_distinct_git_snapshot(self):
         self.configure()
         def process(config, prepared, invocation, **callbacks):
