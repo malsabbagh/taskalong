@@ -116,3 +116,27 @@ proposed decisions [ADR0022](0022-configured-experimental-provider.md),
 [ADR0023](0023-finite-manual-muse-successors.md), and
 [ADR0024](0024-bounded-implementation-capture.md) describe the legacy Muse path and
 its bounded successors.
+
+### Explicit larger response profiles
+
+Configured-provider profile `/4` and Muse `/6` add an opt-in one-MiB canonical
+proposal contract without reinterpreting earlier configurations or granting a
+new submission to a consumed task. The expanded ceilings are 64 MiB combined
+raw capture, 131072 protocol records, 16 MiB per frame, 4 MiB response-wire JSON,
+4 MiB generated review patch and the existing 1440-second deadline option.
+Authority JSON keeps its one-MiB ceiling. Large responses are separate immutable
+files referenced by small, verified hashes in run events and observations.
+
+The existing process owner can omit full transcript buffers only when a trusted
+live capture sink is present. Bounded per-frame decoders and held-file iteration
+consume the raw evidence, with independent raw and immutable-checkpoint fences
+at iterator exhaustion. Muse's postrun identity observation uses a separate
+64-MiB streamed journal reader, retaining only small identity fields and an
+observed request count. Startup context and earlier journal readers stay at their
+previous bounds. Neither reader authenticates vendor data cryptographically.
+
+These controls bound retained controller data rather than impose an OS quota or
+prove a peak RSS, provider cost, remote cancellation or descendant cessation.
+The expanded limits support representative framing and escaping, not every
+possible repetition pattern. Overflow and incomplete evidence remain failures;
+there is no adaptive cap growth, replay, automatic application or acceptance.

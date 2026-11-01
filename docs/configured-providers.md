@@ -361,6 +361,12 @@ protocol records. Set `max_proposal_bytes` between 1024 and 1048576 and
 1048576 and 720 respectively. Its protocol frame limit is 16 MiB and extracted
 response-wire limit is 4 MiB. The existing account, model, effort and context
 choices remain explicit; selecting a larger output profile does not change them.
+After a completed `/6` stream, the identity observer separately reads at most
+64 MiB of the selected native session journal, with the same record/frame
+ceilings. It retains only the configured-request count and final small identity
+fields, checks the held file and directory identities, and compares two streamed
+hashes. This is an observation read bound, not a quota on native journal growth.
+The legacy 4 MiB startup-context reader remains unchanged.
 
 Raw capture includes prompts echoed by a provider, progress, deltas, terminal
 records, stderr and the separately read Codex response. It is much larger than

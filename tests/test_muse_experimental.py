@@ -1,5 +1,6 @@
 """Configured provider integration with synthetic process fixtures; no inference."""
 import contextlib
+import copy
 import hashlib
 import io
 import json
@@ -67,10 +68,30 @@ class ExperimentalMuseTests(unittest.TestCase):
     def configure(self,**values):
         return self.service.configure_provider('muse',{'executable':str(self.binary),'account_home':str(self.home),'muse_home':str(self.data),**values})
 
-    def large_process(self, response, *, broken=None):
+    def journal_rows(self):
+        return [{'payload': {'kind': 'metadata', 'record': {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0'}}},
+                {'payload': {'kind': 'run', 'run_id': '11111111-1111-4111-8111-111111111111',
+                             'event': {'kind': 'model_request_configured'}}}]
+
+    def write_journal(self, rows, *, session='session', day=None):
+        day = day or muse.datetime.datetime.now().astimezone().date()
+        path = self.data / f'sessions/{day:%Y/%m/%d}' / session / 'session.jsonl'
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        with path.open('wb') as stream:
+            for row in rows:
+                stream.write(json.dumps(row, ensure_ascii=True, separators=(',', ':')).encode() + b'\n')
+        path.chmod(0o644)  # Existing native permission dialect remains readable.
+        return path
+
+    def large_process(self, response, *, broken=None, journal_padding=0):
         def process(argv, **options):
             result = self.process(argv, **options)
             session = argv[argv.index('--session-id') + 1]
+            def journal():
+                yield from self.journal_rows()
+                for _ in range(journal_padding):
+                    yield {'payload': {'kind': 'run', 'event': {'kind': 'output', 'text': 'x' * 1048576}}}
+            self.write_journal(journal(), session=session)
             raw = large_native_output(session, response)
             if broken == 'partial':
                 raw = raw[:-10]
@@ -291,10 +312,13 @@ class ExperimentalMuseTests(unittest.TestCase):
         self.configure(capture_profile='megabyte-proposal', attempt_seconds=1440)
         response = sized_response(self.manifest['digest'], 1048576)
         with patch.object(muse.sys, 'platform', 'darwin'), patch.object(muse, '_preflight', return_value={}), \
-                patch.object(muse, 'run_foreground_experiment', side_effect=self.large_process(response)), \
-                patch.object(muse, '_journal', return_value=([], [{}], {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0'})):
+                patch.object(muse, 'run_foreground_experiment', side_effect=self.large_process(response, journal_padding=5)), \
+                patch.object(muse, '_journal', side_effect=AssertionError('legacy postrun reader')):
             result = self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'large-output'))
         self.assertEqual(result['state'], 'proposal_ready')
+        self.assertEqual(result['execution']['configured_model_requests_observed'], 1)
+        journal = next(self.data.glob('sessions/*/*/*/*/session.jsonl'))
+        self.assertGreater(journal.stat().st_size, 4194304)
         self.assertLess(len(canonical_bytes(result)), 16384)
         self.assertEqual(result['response_ref']['bytes'], 1048576)
         self.assertEqual(result['response_ref']['path'], 'response.json')
@@ -315,6 +339,229 @@ class ExperimentalMuseTests(unittest.TestCase):
             self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'retry'))
         self.assertEqual(caught.exception.code, 'provider_already_submitted')
         native.assert_not_called()
+
+    def test_megabyte_journal_identity_streams_large_files_and_counts_actual_events(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        def rows():
+            yield from self.journal_rows()
+            yield self.journal_rows()[1]
+            for _ in range(5):
+                yield {'payload': {'kind': 'run', 'event': {'kind': 'output', 'text': 'x' * 1048576}}}
+            yield {'payload': {'kind': 'metadata', 'record': {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0',
+                                                           'reasoning_effort': 'high', 'unretained': 'private fixture'}}}
+        path = self.write_journal(rows())
+        self.assertGreater(path.stat().st_size, 4194304)
+        with patch.object(muse, '_journal_rows', side_effect=AssertionError('materialized journal')), \
+                patch.object(muse, '_journal_source', side_effect=AssertionError('legacy source')):
+            count, metadata = muse._journal_identity(config, 'session', native_run='11111111-1111-4111-8111-111111111111')
+        self.assertEqual(count, 2)
+        self.assertEqual(metadata, {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0', 'reasoning_effort': 'high'})
+        self.write_journal([self.journal_rows()[0]])
+        self.assertEqual(muse._journal_identity(config, 'session'), (0, {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0'}))
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config | {'format': 'local-muse-provider/5'}, 'session')
+
+    def test_megabyte_journal_refuses_bad_framing_identity_and_metadata_bounds(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        path = self.write_journal(self.journal_rows())
+        valid = path.read_bytes()
+        invalid = [valid[:-1], b'not-json\n', b'\n' + valid, b'{"payload":{},"payload":{}}\n', b'{"x":"\\ud800"}\n',
+                   json.dumps({'stream': {'kind': 'session', 'id': 'foreign'}, 'payload': {}}).encode() + b'\n',
+                   json.dumps({'payload': {'kind': 'metadata', 'record': {'session_id': 'foreign'}}}).encode() + b'\n',
+                   json.dumps({'payload': {'kind': 'run', 'run_id': 'foreign'}}).encode() + b'\n',
+                   json.dumps({'sequence': True, 'payload': {}}).encode() + b'\n',
+                   json.dumps({'payload': {'kind': 'metadata', 'record': {'padding': 'x' * 65536}}}).encode() + b'\n',
+                   json.dumps({'payload': {'kind': 'metadata', 'record': {'model_id': 'x' * 257}}}).encode() + b'\n']
+        for raw in invalid:
+            path.write_bytes(raw)
+            with self.subTest(prefix=raw[:30]), self.assertRaises(TaskAlongError) as caught:
+                muse._journal_identity(config, 'session', native_run='11111111-1111-4111-8111-111111111111')
+            self.assertEqual(caught.exception.code, 'provider_journal_invalid')
+        # Exactly 64 KiB of metadata is accepted; only identity fields are retained.
+        record = {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0', 'padding': ''}
+        record['padding'] = 'x' * (65536 - len(json.dumps(record, separators=(',', ':')).encode()))
+        self.write_journal([{'payload': {'kind': 'metadata', 'record': record}}])
+        self.assertEqual(muse._journal_identity(config, 'session')[0], 0)
+
+    def test_megabyte_journal_identity_keeps_original_types_and_utf8_byte_bounds(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        for field in ('provider_id', 'model_id', 'reasoning_effort'):
+            for value in (1.5, 1, True, [], {}):
+                rows = self.journal_rows()
+                rows[0]['payload']['record'][field] = value
+                self.write_journal(rows)
+                with self.subTest(field=field, value=value), self.assertRaises(TaskAlongError):
+                    muse._journal_identity(config, 'session')
+            for value, valid in (('é' * 128, True), ('é' * 128 + 'x', False)):
+                rows = self.journal_rows()
+                rows[0]['payload']['record'][field] = value
+                self.write_journal(rows)
+                if valid:
+                    self.assertEqual(muse._journal_identity(config, 'session')[1][field], value)
+                else:
+                    with self.assertRaises(TaskAlongError):
+                        muse._journal_identity(config, 'session')
+        for field in ('provider_id', 'model_id'):
+            rows = self.journal_rows()
+            rows[0]['payload']['record'][field] = None
+            self.write_journal(rows)
+            with self.assertRaises(TaskAlongError):
+                muse._journal_identity(config, 'session')
+        rows = self.journal_rows()
+        rows[0]['payload']['record'].update(reasoning_effort=None, duration=1.5)
+        rows[1]['payload']['event']['latency'] = 2.25
+        self.write_journal(rows)
+        count, metadata = muse._journal_identity(config, 'session')
+        self.assertEqual(count, 1)
+        self.assertIsNone(metadata['reasoning_effort'])
+        self.assertNotIn('duration', metadata)
+        # The journal-only numeric marker never changes native-frame semantics.
+        self.assertIs(type(muse._native_json(b'{"duration":1.5}', max_bytes=16777216)['duration']), str)
+
+    def test_megabyte_journal_optional_bindings_are_consistent_in_known_locations(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        expected = '11111111-1111-4111-8111-111111111111'
+        locations = ((), ('payload',), ('payload', 'record'), ('payload', 'event'))
+        references = {'run_stream': {'kind': 'run', 'id': expected}, 'session_stream': {'kind': 'session', 'id': 'session'}}
+        base = {'payload': {'kind': 'metadata', 'record': {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0'}, 'event': {}}}
+        def location(row, path):
+            for key in path:
+                row = row[key]
+            return row
+        for path in locations:
+            for key, value in ({'run_id': expected, 'session_id': 'session'} | references).items():
+                row = copy.deepcopy(base)
+                location(row, path)[key] = value
+                self.write_journal([row])
+                self.assertEqual(muse._journal_identity(config, 'session', native_run=expected)[0], 0)
+                invalid = [None, True, 1, 1.5, [], {}, 'foreign']
+                if key in references:
+                    kind = references[key]['kind']
+                    invalid += [{'kind': 'wrong', 'id': value['id']}, {'kind': kind, 'id': 'foreign'},
+                                {'kind': kind, 'id': 1.5}, {'kind': kind, 'id': None}]
+                for wrong in invalid:
+                    changed = copy.deepcopy(row)
+                    location(changed, path)[key] = wrong
+                    self.write_journal([changed])
+                    with self.subTest(path=path, key=key, wrong=wrong), self.assertRaises(TaskAlongError):
+                        muse._journal_identity(config, 'session', native_run=expected)
+        # Multiple simultaneous references agree; a contradictory nested one fails.
+        row = copy.deepcopy(base)
+        for path in locations:
+            location(row, path).update(run_id=expected, session_id='session', **references)
+        row['stream'] = {'kind': 'session', 'id': 'session'}
+        self.write_journal([row])
+        self.assertEqual(muse._journal_identity(config, 'session', native_run=expected)[0], 0)
+        row['payload']['record']['run_id'] = 'foreign'
+        self.write_journal([row])
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session', native_run=expected)
+
+    def test_megabyte_journal_refuses_path_alias_hardlink_and_ambiguous_dates(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        path = self.write_journal(self.journal_rows())
+        original = path.with_name('retained.jsonl')
+        path.rename(original)
+        path.symlink_to(original)
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        path.unlink()
+        os.link(original, path)
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        path.unlink()
+        original.rename(path)
+        directory = path.parent
+        retained = directory.with_name('retained-session')
+        directory.rename(retained)
+        directory.symlink_to(retained, target_is_directory=True)
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        directory.unlink()
+        retained.rename(directory)
+        self.write_journal(self.journal_rows(), day=muse.datetime.datetime.now().astimezone().date() + muse.datetime.timedelta(days=1))
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, '../session')
+
+    def test_megabyte_journal_refuses_observed_mutation_and_replacement(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        original = muse._native_json
+        for change in ('append', 'rewrite', 'chmod', 'replace'):
+            path = self.write_journal(self.journal_rows())
+            changed = []
+            def mutate(raw, **kwargs):
+                value = original(raw, **kwargs)
+                if not changed:
+                    changed.append(True)
+                    if change == 'append':
+                        with path.open('ab') as stream:
+                            stream.write(b'{"payload":{}}\n')
+                    elif change == 'rewrite':
+                        path.write_bytes(path.read_bytes().replace(b'meta', b'xxxx'))
+                    elif change == 'chmod':
+                        path.chmod(0o600)
+                    else:
+                        path.rename(path.with_name('old-' + change))
+                        path.write_bytes(b'{"payload":{}}\n')
+                return value
+            with patch.object(muse, '_native_json', side_effect=mutate), self.assertRaises(TaskAlongError) as caught:
+                muse._journal_identity(config, 'session')
+            self.assertEqual(caught.exception.code, 'provider_journal_invalid')
+
+    def test_megabyte_journal_bounds_before_parse_and_at_record_frame_limits(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        path = self.write_journal(self.journal_rows())
+        with path.open('wb') as stream:
+            stream.truncate(67108865)
+        with patch.object(muse, '_native_json', side_effect=AssertionError('oversized source parsed')), self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        path.write_bytes(b'{"payload":{}}\n' * 131072)
+        self.assertEqual(muse._journal_identity(config, 'session'), (0, {}))
+        with path.open('ab') as stream:
+            stream.write(b'{"payload":{}}\n')
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        frame = b'{"payload":{"padding":"' + b'x' * (16777216 - len(b'{"payload":{"padding":""}}')) + b'"}}'
+        self.assertEqual(len(frame), 16777216)
+        path.write_bytes(frame + b'\n')
+        self.assertEqual(muse._journal_identity(config, 'session'), (0, {}))
+        # Four full physical records sum to exactly 64 MiB; no all-file copy.
+        physical = frame[:-4] + frame[-3:] + b'\n'
+        self.assertEqual(len(physical), 16777216)
+        with path.open('wb') as stream:
+            for _ in range(4):
+                stream.write(physical)
+        self.assertEqual(path.stat().st_size, 67108864)
+        self.assertEqual(muse._journal_identity(config, 'session'), (0, {}))
+        path.write_bytes(frame[:-3] + b'x' + frame[-3:] + b'\n')
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+
+    def test_megabyte_journal_hash_pass_must_match_parsed_bytes(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        self.write_journal(self.journal_rows())
+        original = os.read
+        changed = []
+        def altered(fd, maximum):
+            chunk = original(fd, maximum)
+            if chunk and not changed:
+                changed.append(True)
+                return b'x' + chunk[1:]
+            return chunk
+        with patch.object(muse.os, 'read', side_effect=altered), self.assertRaises(TaskAlongError) as caught:
+            muse._journal_identity(config, 'session')
+        self.assertEqual(changed, [True])
+        self.assertEqual(caught.exception.code, 'provider_journal_invalid')
 
     def test_megabyte_partial_and_cancel_preserve_uncertain_claim_without_staging(self):
         self.configure(capture_profile='megabyte-proposal')

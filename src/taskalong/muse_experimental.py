@@ -15,7 +15,7 @@ import re
 import sys
 
 from . import supervised_pilot as pilot
-from .artifact_io import read_regular
+from .artifact_io import read_regular, _file_state, _parent, _regular, _unchanged_directories
 from .errors import TaskAlongError
 from .experimental_process import FOREGROUND_EXPERIMENT, run_foreground_experiment
 from .muse_production import _observe_file
@@ -189,7 +189,11 @@ def _argv(config, *, provider, workspace, prompt, session):
     return argv
 
 
-def _native_json(raw, *, max_bytes=None):
+class _JournalDecimal(str):
+    """Keep a decimal wire token distinguishable from an identity string."""
+
+
+def _native_json(raw, *, max_bytes=None, _journal_numbers=False):
     # Preserve native decimal observations as text, not invented rounded totals.
     # Only the new /6 frame path opts into expanded wire/object bounds. Legacy
     # journal/context readers retain their existing separately bounded dialect.
@@ -206,7 +210,10 @@ def _native_json(raw, *, max_bytes=None):
             if key in result: raise ValueError("duplicate native key")
             result[key] = value
         return result
-    value = json.loads(raw, object_pairs_hook=pairs, parse_float=str, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
+    if type(_journal_numbers) is not bool or _journal_numbers and max_bytes != _MEGABYTE_FRAME:
+        raise ValueError("journal numeric mode")
+    value = json.loads(raw, object_pairs_hook=pairs, parse_float=_JournalDecimal if _journal_numbers else str,
+                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
     if max_bytes is not None:
         if type(value) is not dict:
             raise ValueError("native frame root")
@@ -217,7 +224,7 @@ def _native_json(raw, *, max_bytes=None):
             nodes += 1
             if depth > 64 or nodes > 65536:
                 raise ValueError("native frame shape")
-            if type(item) is str:
+            if type(item) in (str, _JournalDecimal):
                 if len(item.encode("utf-8", errors="strict")) > max_bytes:
                     raise ValueError("native frame string")
             elif type(item) is int:
@@ -275,6 +282,159 @@ def _journal_rows(raw):
 def _journal(config, session):
     raw, _ = _journal_source(config, session)
     return _journal_rows(raw)
+
+
+def _journal_identity_path(home, session, days):
+    """Select one existing journal through held no-follow directory chains."""
+    candidates = []
+    for day in days:
+        relative = f"sessions/{day:%Y/%m/%d}/{session}/session.jsonl"
+        with _parent(home, relative, private=False, missing_ok=True) as (parent, name, links):
+            if parent is None:
+                continue
+            try:
+                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                _unchanged_directories(links)
+                continue
+            _regular(info, private=False, max_bytes=_MEGABYTE_RAW)
+            _unchanged_directories(links)
+            candidates.append((relative, _file_state(info)))
+    if len(candidates) != 1:
+        _fail("provider_journal_unavailable", "The newly created native session journal is unavailable or ambiguous; preserve captures.", outcome="uncertain")
+    return candidates[0]
+
+
+def _journal_identity(config, session, *, native_run=None, started_unix_ms=None):
+    """Observe /6 identity without retaining the journal or configured events.
+
+    The native journal has its own 64 MiB/131072-record/16 MiB-frame bounds.
+    Directory and exact file metadata remain fenced while a second streaming
+    hash pass verifies the bytes consumed by the first pass. This is an observed
+    stability check, not isolation from another process running as the operator.
+    Legacy context discovery continues through the separate four-MiB reader.
+    """
+    try:
+        if (config.get("format") != _MEGABYTE or type(session) is not str
+                or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session) is None):
+            raise ValueError("journal binding")
+        home = pilot._root(config["muse_home"])
+        if started_unix_ms is None:
+            instant = datetime.datetime.now(datetime.timezone.utc)
+        else:
+            if type(started_unix_ms) is not int or started_unix_ms <= 0:
+                raise ValueError("journal timestamp")
+            instant = datetime.datetime.fromtimestamp(started_unix_ms / 1000, datetime.timezone.utc)
+        dates = {instant.astimezone().date(), instant.date()}
+        days = {day + datetime.timedelta(days=n) for day in dates for n in (-1, 0, 1)}
+        relative, selected = _journal_identity_path(home, session, days)
+        journal_run = native_run
+        def check_run(value):
+            nonlocal journal_run
+            if type(value) is not str or not 1 <= len(value) <= 128 or not value.isprintable():
+                raise ValueError("journal run")
+            if journal_run is None:
+                journal_run = value
+            elif value != journal_run:
+                raise ValueError("journal run")
+        if native_run is not None:
+            check_run(native_run)
+        def check_bindings(binding):
+            if "session_id" in binding and (type(binding["session_id"]) is not str or binding["session_id"] != session):
+                raise ValueError("journal session")
+            if "run_id" in binding:
+                check_run(binding["run_id"])
+            for key, kind in (("run_stream", "run"), ("session_stream", "session")):
+                if key in binding:
+                    reference = binding[key]
+                    if type(reference) is not dict or type(reference.get("kind")) is not str or reference["kind"] != kind:
+                        raise ValueError("journal stream binding")
+                    if kind == "run":
+                        check_run(reference.get("id"))
+                    elif type(reference.get("id")) is not str or reference["id"] != session:
+                        raise ValueError("journal session")
+        with _parent(home, relative, private=False) as (parent, name, links):
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0), dir_fd=parent)
+            try:
+                def guard():
+                    held = os.fstat(fd)
+                    entry = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    _regular(held, private=False, max_bytes=_MEGABYTE_RAW)
+                    _regular(entry, private=False, max_bytes=_MEGABYTE_RAW)
+                    if _file_state(held) != selected or _file_state(entry) != selected:
+                        raise ValueError("journal changed")
+                    _unchanged_directories(links)
+                    return held.st_size
+                size = guard()
+                first_hash = hashlib.sha256()
+                records = total = configured = sequence = 0
+                metadata = {}
+                with os.fdopen(os.dup(fd), "rb", buffering=65536) as stream:
+                    while True:
+                        line = stream.readline(_MEGABYTE_FRAME + 2)
+                        if not line:
+                            break
+                        records += 1
+                        total += len(line)
+                        if (records > _MEGABYTE_RECORDS or total > _MEGABYTE_RAW
+                                or not line.endswith(b"\n") or not 1 <= len(line) - 1 <= _MEGABYTE_FRAME):
+                            raise ValueError("journal framing")
+                        first_hash.update(line)
+                        row = _native_json(line[:-1], max_bytes=_MEGABYTE_FRAME, _journal_numbers=True)
+                        # Older journal rows have no session-stream envelope;
+                        # any supplied native binding must still agree exactly.
+                        if "stream" in row:
+                            reference = row["stream"]
+                            if (type(reference) is not dict or reference != {"kind": "session", "id": session}
+                                    or type(reference.get("id")) is not str or type(reference.get("kind")) is not str):
+                                raise ValueError("journal session")
+                        if "sequence" in row:
+                            if type(row["sequence"]) is not int or row["sequence"] <= sequence:
+                                raise ValueError("journal sequence")
+                            sequence = row["sequence"]
+                        payload = row.get("payload", {})
+                        if (type(payload) is not dict or type(payload.get("event", {})) is not dict
+                                or type(payload.get("record", {})) is not dict):
+                            raise ValueError("journal payload")
+                        record = payload.get("record", {})
+                        for binding in (row, payload, record, payload.get("event", {})):
+                            check_bindings(binding)
+                        if payload.get("event", {}).get("kind") == "model_request_configured":
+                            configured += 1
+                        if payload.get("kind") == "metadata":
+                            if len(json.dumps(record, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")) > 65536:
+                                raise ValueError("journal metadata bound")
+                            metadata = {}
+                            for key in ("provider_id", "model_id", "reasoning_effort"):
+                                if key in record:
+                                    value = record[key]
+                                    if not (key == "reasoning_effort" and value is None) and (type(value) is not str
+                                            or not 1 <= len(value.encode("utf-8")) <= 256 or not value.isprintable()):
+                                        raise ValueError("journal identity")
+                                    metadata[key] = value
+                if not records or total != size:
+                    raise ValueError("journal length")
+                guard()
+                os.lseek(fd, 0, os.SEEK_SET)
+                final_hash = hashlib.sha256()
+                verified = 0
+                while verified <= size:
+                    chunk = os.read(fd, min(65536, size + 1 - verified))
+                    if not chunk:
+                        break
+                    verified += len(chunk)
+                    final_hash.update(chunk)
+                if verified != size or first_hash.digest() != final_hash.digest():
+                    raise ValueError("journal bytes changed")
+                guard()
+                if _journal_identity_path(home, session, days) != (relative, selected):
+                    raise ValueError("journal selection changed")
+                guard()
+                return configured, metadata
+            finally:
+                os.close(fd)
+    except (TaskAlongError, OSError, ValueError, TypeError, KeyError, AttributeError, UnicodeError, RecursionError, OverflowError):
+        _fail("provider_journal_invalid", "The new native journal identity observation is unavailable, changed or outside its finite bounds; preserve captures.", outcome="uncertain")
 
 
 def _personal(messages):
@@ -657,10 +817,15 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
         response, native_run = _decode(source, session, max_proposal_bytes=config.get("max_proposal_bytes", 65536), max_records=_max_records(config), **decode_options)
         replacement_options = {"replacement_profile": "megabyte-proposal/1"} if config["format"] == _MEGABYTE else {}
         screen_sensitive(response); pilot._proposal(manifest,response, **replacement_options)
-        _, events, metadata = _journal(config, session)
+        if config["format"] == _MEGABYTE:
+            configured_count, metadata = _journal_identity(config, session, native_run=native_run,
+                started_unix_ms=process.get("receipt", {}).get("started_unix_ms"))
+        else:
+            _, events, metadata = _journal(config, session)
+            configured_count = len(events)
         observations = {"requested_provider":"meta","requested_model":config["model"],"requested_effort":config["reasoning_effort"],
                         "reported_provider":metadata.get("provider_id"),"reported_model":metadata.get("model_id"),"reported_effort":metadata.get("reasoning_effort"),
-                        "configured_model_requests_observed":len(events),"native_run_id":native_run}
+                        "configured_model_requests_observed":configured_count,"native_run_id":native_run}
         if metadata.get("provider_id") != "meta" or metadata.get("model_id") != config["model"]:
             _fail("provider_response_identity_mismatch", "The native journal reports a different provider or model; inspect the captured output.", outcome="uncertain")
         response_bytes = canonical_bytes(response)
