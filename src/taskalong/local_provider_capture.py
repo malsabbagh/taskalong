@@ -126,9 +126,16 @@ class _Directory:
         return result
 
     def close(self):
-        for fd in reversed(self.fds):
-            os.close(fd)
-        self.fds = []
+        owned, self.fds = self.fds, []
+        first_error = None
+        for fd in reversed(owned):
+            try:
+                os.close(fd)
+            except OSError as exc:
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
 
 def _entry(directory, name, fd, maximum, mode):
