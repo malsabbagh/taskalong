@@ -1,7 +1,7 @@
 # TaskAlong
 
-Experimental local CLI for durable development tasks and configured Muse coding
-runs on macOS. Provider output is staged for manual patch review. This candidate
+Experimental local CLI for durable development tasks and configured provider
+coding runs. Provider output is staged for manual patch review. This candidate
 is not a package-registry release.
 
 TaskAlong exposes `taskalong.api.RunService` and the `taskalong` console command.
@@ -19,6 +19,11 @@ ReviewSensei results govern acceptance; worker output cannot grant authority.
   It is experimental and requires no separate production activation.
 - Offline production Muse preparation/lifecycle contracts remain distinct from
   the configured experimental provider route.
+- Configured experimental Codex, Antigravity and Claude Code adapters (including
+  the existing Ollama backend) share source-bound task preparation, durable
+  capture, cancellation and manual patch validation. See the
+  [configured providers guide](docs/configured-providers.md) for supported
+  configurations and the separate native qualification limitations.
 - Installed read-only guides: `taskalong guide`, `taskalong guide operations`,
   `taskalong guide contracts` and `taskalong guide qualification`.
 - Explicit Codex, Claude, Cursor and Antigravity synthetic driver projections sharing one supervisor,

@@ -378,3 +378,37 @@ include tools/release_bundle.py
 include tools/release_version.py
 include tools/tests/test_release_bundle.py
 include tools/tests/test_release_version.py
+
+# Configured provider owner, adapters and offline conformance.
+include docs/adr/0026-configured-provider-owner.md
+include docs/configured-providers.md
+include src/taskalong/executors/antigravity_native.py
+include src/taskalong/executors/antigravity_native_protocol.py
+include src/taskalong/executors/claude_local.py
+include src/taskalong/executors/claude_local_config.py
+include src/taskalong/executors/claude_local_protocol.py
+include src/taskalong/executors/codex_protocol.py
+include src/taskalong/local_provider_adapters.py
+include src/taskalong/local_provider_artifacts.py
+include src/taskalong/local_provider_capture.py
+include src/taskalong/local_provider_contract.py
+include src/taskalong/local_provider_controls.py
+include src/taskalong/local_provider_runtime.py
+include src/taskalong/local_provider_tasks.py
+include tests/fixtures/claude_local/README.txt
+include tests/fixtures/claude_local/proposal.jsonl
+include tests/test_antigravity_native.py
+include tests/test_antigravity_native_protocol.py
+include tests/test_claude_local_config.py
+include tests/test_claude_local_protocol.py
+include tests/test_codex_protocol.py
+include tests/test_local_provider_adapters.py
+include tests/test_local_provider_artifacts.py
+include tests/test_local_provider_capture.py
+include tests/test_local_provider_cli.py
+include tests/test_local_provider_contract.py
+include tests/test_local_provider_controls.py
+include tests/test_local_provider_runtime.py
+include tests/test_local_provider_streaming.py
+include tests/test_local_provider_tasks.py
+include tests/test_local_provider_deadlines.py

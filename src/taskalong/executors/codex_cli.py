@@ -23,6 +23,7 @@ from ..process import ProcessBoundaryError, fingerprint, minimal_environment, ru
 from ..validation import canonical_bytes, digest, loads, validate
 from .base import (ExecutionHandle, ExecutionLookup, ExecutionObservation,
                    ExecutionRequest, ExecutorCapabilities, OperationResult, ResumeRequest)
+from .codex_protocol import CodexEventDecoder, valid_thread_id
 
 
 PINNED_RUNTIME_VERSION = "0.163.0"
@@ -216,7 +217,7 @@ class CodexCLI:
                    result_path: str | Path, mode: str = "start", thread_id: str | None = None) -> list[str]:
         config = self._config_args(workspace=workspace, git_common_dir=git_common_dir, control_dir=control_dir)
         if mode == "native_resume":
-            if not thread_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", thread_id):
+            if not valid_thread_id(thread_id):
                 _reject("native_resume_unavailable", "Native resume requires the exact observed runtime thread ID")
             # Resume has a distinct parser: CWD is the subprocess CWD; no -C flag.
             return [self.profile["executable_path"], "--no-daemon", "exec", "resume", thread_id,
@@ -234,7 +235,27 @@ class CodexCLI:
             git_common_dir: str | Path | None = None, control_dir: str | Path | None = None,
             cancel_requested: Callable[[], bool] | None = None,
             heartbeat: Callable[[], None] | None = None,
-            on_spawn: Callable | None = None, mode: str = "start", thread_id: str | None = None) -> dict:
+            on_spawn: Callable | None = None, mode: str = "start", thread_id: str | None = None,
+            capture_private_output: Callable[[bytes, bytes], None] | None = None,
+            _configured_owner: Callable | None = None) -> dict:
+        """Run under the existing owner; optionally retain bounded pipe originals.
+
+        The trusted private sink runs after process cleanup, including protocol
+        failures. It is not streaming crash persistence or a public result. The
+        core owns durable capture references and any subsequent reconciliation.
+        """
+        if self.profile.get("format") in {"configured-provider-profile/1", "configured-provider-profile/2"}:
+            # Separate experimental owner contract. Legacy production preflight
+            # and start/resume refusals remain unchanged. A packet cannot select
+            # an arbitrary driver: only the in-process durable owner supplies it.
+            from ..local_provider_runtime import _execute_codex
+            return _execute_codex(self.profile, packet, workspace=workspace,
+                output_dir=output_dir, owner=_configured_owner, mode=mode,
+                thread_id=thread_id)
+        if _configured_owner is not None:
+            _reject("runtime_owner_invalid", "Configured ownership requires its versioned profile.")
+        if capture_private_output is not None and not callable(capture_private_output):
+            _reject("runtime_capture_invalid", "Private output capture requires a trusted callable.")
         budget = packet["remaining_budget"]
         self.preflight(qualification=packet["qualification"], budget=budget)
         validate("worker-packet", packet)
@@ -249,58 +270,11 @@ class CodexCLI:
             _reject("stale_output", "Each executor invocation requires a fresh result path")
         common = git_common_dir or Path(workspace) / ".git"
         control = control_dir or directory.parent
-        observed_thread = None
-        terminal = None
-        usage = {"input_tokens": None, "output_tokens": None, "cost_usd": None}
-        diagnostics: dict[str, int] = {}
+        decoder = CodexEventDecoder(mode=mode, thread_id=thread_id)
         protocol_errors: list[str] = []
 
-        def consume(line: bytes) -> None:
-            nonlocal observed_thread, terminal
-            if protocol_errors:
-                return
-            try:
-                event = loads(line)
-                if not isinstance(event, dict) or not isinstance(event.get("type"), str):
-                    raise ValueError("event shape")
-                event_type = event["type"]
-                if len(event_type) > 128:
-                    raise ValueError("event type")
-                if event_type == "thread.started":
-                    value = event.get("thread_id")
-                    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
-                        raise ValueError("thread identity")
-                    if mode == "native_resume" and value != thread_id:
-                        # A fresh or foreign thread is a restart, never proof of
-                        # continuing the exact authorized checkpoint. Do not
-                        # retain it as a resumable handle after this failure.
-                        protocol_errors.append("native_resume_thread_mismatch")
-                        return
-                    if observed_thread is not None and observed_thread != value:
-                        raise ValueError("thread changed")
-                    observed_thread = value
-                elif event_type in ("turn.completed", "turn.failed", "error"):
-                    if terminal is not None:
-                        raise ValueError("duplicate terminal event")
-                    terminal = event_type
-                    reported = event.get("usage", {})
-                    if not isinstance(reported, dict):
-                        raise ValueError("usage shape")
-                    for key in ("input_tokens", "output_tokens"):
-                        value = reported.get(key)
-                        if value is not None and (type(value) is not int or value < 0):
-                            raise ValueError("usage value")
-                        usage[key] = value
-                elif event_type in ("turn.started", "item.started", "item.updated", "item.completed"):
-                    pass
-                else:
-                    # Provider strings are not copied into public events.
-                    diagnostics["unknown_event_count"] = diagnostics.get("unknown_event_count", 0) + 1
-            except (ValueError, UnicodeError, TaskAlongError):
-                protocol_errors.append("runtime_protocol_invalid")
-
         def should_cancel() -> bool:
-            return bool(protocol_errors) or bool(cancel_requested and cancel_requested())
+            return decoder.error_code is not None or bool(cancel_requested and cancel_requested())
 
         schema = resources.files("taskalong.resources").joinpath("schemas/v1/worker-result.schema.json")
         with resources.as_file(schema) as schema_path:
@@ -311,7 +285,7 @@ class CodexCLI:
                     timeout_seconds=budget["attempt_seconds"], max_output_bytes=budget["max_output_bytes"],
                     env=minimal_environment(runtime_parent=True), cancel_requested=should_cancel,
                     heartbeat=heartbeat, on_spawn=(lambda receipt: on_spawn(receipt.to_dict())) if on_spawn else None,
-                    on_stdout_line=consume)
+                    on_stdout_line=decoder.consume, _capture_private_output=capture_private_output)
             except ProcessBoundaryError as exc:
                 if (exc.code == "cancel_pending" and exc.effect_outcome == "not_sent"
                         and exc.process_result is not None and exc.process_result.termination_confirmed):
@@ -321,6 +295,9 @@ class CodexCLI:
                     raise TaskAlongError(exc.code, "The owned runtime process boundary could not complete safely",
                         exit_code=3 if exc.effect_outcome == "not_sent" else 5,
                         effect_outcome=exc.effect_outcome) from exc
+        if decoder.error_code is not None:
+            protocol_errors.insert(0, decoder.error_code)
+        observed_thread, terminal, usage = decoder.thread_id, decoder.terminal, decoder.usage
         summary = process.to_dict()
         summary.pop("stdout", None)
         # Even stderr is only a private bounded diagnostic, never event payload.
@@ -371,7 +348,7 @@ class CodexCLI:
         self._observations[handle.invocation_id] = ExecutionObservation(state, self._now(), handle=handle,
             error_code=error, usage_json=canonical_bytes(usage))
         return {"state": state, "result": result, "thread_id": observed_thread, "usage": usage,
-                "process": summary, "error": error, "diagnostics": diagnostics,
+                "process": summary, "error": error, "diagnostics": decoder.diagnostics,
                 "checkpoint": {"thread_id": observed_thread, "runtime_profile_digest": self.profile["digest"]} if observed_thread else None}
 
     def doctor(self, *, workspace: str | Path | None = None,

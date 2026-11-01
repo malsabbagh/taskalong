@@ -54,6 +54,7 @@ def run_foreground_experiment(
     heartbeat: Callable[[], None] | None = None,
     on_spawn: Callable[[ProcessReceipt], None] | None = None,
     on_stdout_line: Callable[[bytes], None] | None = None,
+    _on_output_chunk: Callable[[str, bytes], None] | None = None,
     secrets: Sequence[str | bytes] = (), signal_grace_seconds: float = .5,
 ) -> ForegroundExperimentResult:
     """Run once through the existing gate, bounds, cancellation and group owner.
@@ -78,6 +79,7 @@ def run_foreground_experiment(
         result = run_bounded(argv, cwd=cwd, stdin=stdin, timeout_seconds=timeout_seconds,
             max_output_bytes=max_output_bytes, max_line_bytes=max_line_bytes, env=env, cancel_requested=cancel_requested,
             heartbeat=heartbeat, on_spawn=on_spawn, on_stdout_line=on_stdout_line,
+            _on_output_chunk=_on_output_chunk,
             secrets=secrets, signal_grace_seconds=signal_grace_seconds,
             _lifetime_observations=observations)
     except ProcessBoundaryError as error:

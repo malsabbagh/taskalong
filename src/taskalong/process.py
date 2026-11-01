@@ -368,6 +368,7 @@ def run_bounded(
     heartbeat: Callable[[], None] | None = None,
     on_spawn: Callable[[ProcessReceipt], None] | None = None,
     on_stdout_line: Callable[[bytes], None] | None = None,
+    _on_output_chunk: Callable[[str, bytes], None] | None = None,
     _capture_private_output: Callable[[bytes, bytes], None] | None = None,
     secrets: Sequence[str | bytes] = (), max_line_bytes: int = 1024 * 1024,
     signal_grace_seconds: float = 0.5,
@@ -447,6 +448,7 @@ def run_bounded(
     timed_out = cancelled = output_limited = False
     protocol_error = None
     callback_error: BaseException | None = None
+    raw_capture_failed = False
     termination_started: float | None = None
     forced_wrapper_stop_at: float | None = None
     gate_release_attempted = False
@@ -589,6 +591,16 @@ def run_bounded(
                     pipe.close()
                     continue
                 total += len(chunk)
+                # A trusted owner can durably retain the original chunks while
+                # the process is alive. Sink failure uses the same owned
+                # cancellation/cleanup path as every other callback failure.
+                # Continue draining after failure without replaying the sink.
+                if _on_output_chunk is not None and not raw_capture_failed:
+                    try:
+                        _on_output_chunk(name, chunk)
+                    except BaseException as exc:
+                        raw_capture_failed = True
+                        callback_error = exc
                 remaining = max(0, max_output_bytes - sum(len(x) for x in buffers.values()))
                 buffers[name].extend(chunk[:remaining])
                 if total > max_output_bytes:

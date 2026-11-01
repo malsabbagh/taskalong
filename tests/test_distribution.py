@@ -799,6 +799,37 @@ class DistributionTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 qualifier.validate_test_accounting(schedule, bad, 'darwin')
 
+    def test_linux_streaming_skips_match_exact_darwin_test_decorators(self):
+        source = Path(__file__).with_name('test_local_provider_streaming.py')
+        spec = importlib.util.spec_from_file_location('streaming_skip_contract_probe', source)
+        module = importlib.util.module_from_spec(spec)
+        with mock.patch.object(sys, 'platform', 'linux'):
+            spec.loader.exec_module(module)
+        names = ('test_foreground_passes_live_raw_chunks_without_promoting_cessation',
+                 'test_foreground_sink_failure_returns_uncertainty_without_second_dispatch')
+        required = {}
+        for name in names:
+            method = getattr(module.LocalProviderStreamingTests, name)
+            self.assertTrue(method.__unittest_skip__)
+            required['test_local_provider_streaming.LocalProviderStreamingTests.' + name] = method.__unittest_skip_why__
+        ordinary = 'test_ordinary.Case.test_required_behavior'
+        for version in (2, 3):
+            schedule = qualifier.make_schedule([*required, ordinary], format_version=version)
+            results = [{'test_ids': batch,
+                'outcomes': {i: 'skipped' if i in required else 'passed' for i in batch},
+                'skipped_platform_cases': [{'test': i, 'reason': required[i], 'required_platform': 'Darwin'}
+                                           for i in batch if i in required]}
+                for batch in schedule['batches']]
+            with self.subTest(version=version):
+                self.assertEqual(qualifier.validate_test_accounting(schedule, results, 'linux')[0], 1)
+                with self.assertRaises(ValueError):
+                    qualifier.validate_test_accounting(schedule, results, 'darwin')
+                bad = copy.deepcopy(results)
+                case = next(r for r in bad if r['skipped_platform_cases'])['skipped_platform_cases'][0]
+                case['reason'] = 'optional'
+                with self.assertRaises(ValueError):
+                    qualifier.validate_test_accounting(schedule, bad, 'linux')
+
     def test_child_main_keeps_fixture_observations_out_of_terminal_stdout(self):
         value = qualifier.phase_receipt({'phase': 'probe'}, {'ok': True})
         def noisy_child(args):

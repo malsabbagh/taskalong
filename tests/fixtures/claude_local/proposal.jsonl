@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"22222222-2222-4222-8222-222222222222","model":"synthetic-model","tools":[]}
+{"type":"result","subtype":"success","is_error":false,"session_id":"22222222-2222-4222-8222-222222222222","permission_denials":[],"structured_output":{"bundle_digest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","changes":{"src/app.py":"pass\n"}}}

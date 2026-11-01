@@ -41,13 +41,19 @@ class RunService:
     def configure_provider(self, provider, configuration):
         """Local configuration enables the provider's experimental task route."""
         if provider != "muse":
-            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+            from .local_provider_runtime import configure
+            return configure(self._store, provider, configuration)
         from .muse_experimental import configure
         return configure(self._store, configuration)
 
     def providers(self):
         from .muse_experimental import providers
-        return providers(self._store)
+        from .local_provider_runtime import providers as configured
+        return {"providers": providers(self._store)["providers"] + configured(self._store)}
+
+    def prepare_provider_task(self, provider, *, request):
+        from .local_provider_runtime import prepare
+        return prepare(self._store, provider, request=request)
 
     def provider_context(self, provider="muse", *, output):
         """Private local-only startup snapshot, without a remote model request."""
@@ -59,13 +65,17 @@ class RunService:
     def provider_budget(self, provider="muse", *, request):
         """Measure the explicit task's native echo lower bound without dispatch."""
         if provider != "muse":
-            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+            from .local_provider_runtime import budget
+            return budget(self._store, provider, request=request)
         from .muse_experimental import budget
         return budget(self._store, request=request)
 
     def run_provider(self, provider="muse", *, bundle=None, request=None, output=None):
         if provider != "muse":
-            raise TaskAlongError("provider_unavailable", "This provider has no implemented local task adapter.", exit_code=3)
+            if bundle is not None or request is None:
+                raise TaskAlongError("provider_task_invalid", "Use a scoped repository request for this provider.", exit_code=3)
+            from .local_provider_runtime import run
+            return run(self._store, provider, request=request, output=output)
         from .muse_experimental import run
         return run(self._store, bundle=bundle, request=request, output=output)
 
@@ -152,6 +162,10 @@ class RunService:
         return view(self._store)
 
     def inspect(self, run_id):
+        from .local_provider_runtime import inspect as configured
+        current = configured(self._store, run_id)
+        if current is not None:
+            return current
         from .muse_experimental import inspect as provider_run
         experimental = provider_run(self._store, run_id)
         if experimental is not None:
@@ -198,6 +212,10 @@ class RunService:
         provider views include private capture paths for local review; do not publish
         those records as public artifacts.
         """
+        from .local_provider_runtime import inspect as configured
+        current = configured(self._store, run_id)
+        if current is not None:
+            return current
         from .muse_experimental import inspect as provider_run
         experimental = provider_run(self._store, run_id)
         if experimental is not None:
@@ -286,12 +304,18 @@ class RunService:
         return self._store.events(run_id, after_seq, limit)
 
     def cancel(self, run_id, *, operation_key, expected_revision):
+        if self._store.setting("provider-run:" + run_id) is not None:
+            from .local_provider_controls import request_cancel
+            return request_cancel(self._store, run_id, operation_key=operation_key, expected_revision=expected_revision)
         return self._workflow.cancel(run_id, operation_key=operation_key, expected_revision=expected_revision)
 
     def retire_workspace(self, run_id, *, operation_key, expected_revision):
         return self._workflow.retire_workspace(run_id, operation_key=operation_key, expected_revision=expected_revision)
 
     def reconcile(self, run_id, *, operation_key, expected_revision):
+        if self._store.setting("provider-run:" + run_id) is not None:
+            from .local_provider_controls import reconcile
+            return reconcile(self._store, run_id, operation_key=operation_key, expected_revision=expected_revision)
         return self._workflow.reconcile(run_id, operation_key=operation_key, expected_revision=expected_revision)
 
     def resume(self, run_id, *, mode, operation_key, expected_revision, authority_id=None):
