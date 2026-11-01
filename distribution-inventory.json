@@ -623,9 +623,11 @@
     "tools/qualify_portable.py",
     "tools/qualify_runtime.py",
     "tools/release_bundle.py",
+    "tools/release_manifest.py",
     "tools/release_version.py",
     "tools/sync_guides.py",
     "tools/tests/test_release_bundle.py",
+    "tools/tests/test_release_manifest.py",
     "tools/tests/test_release_version.py"
   ]
 }
