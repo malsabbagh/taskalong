@@ -22,7 +22,7 @@ def interrupted_fixture(effort="max"):
         def configure(self, **changes):
             self.c.request["reasoning_effort"] = effort
             return super().configure(**{"reasoning_effort": effort, **changes})
-    fixture = OriginalEffortFixture("test_plan_retains_unknowns_incomplete_capture_and_historical_starts")
+    fixture = OriginalEffortFixture()
     fixture.setUp()
     return fixture
 
@@ -53,6 +53,33 @@ class MuseHighSuccessorTests(unittest.TestCase):
         self.fixture.c.assert_original()
         self.assertEqual(self.store.setting("provider:muse"), self.original_config)
         self.assertEqual(self.store.setting("provider-config:" + self.original_config["digest"]), self.original_config)
+
+    def test_guard_rejects_malformed_requests_before_history_lookup(self):
+        invalid = [None, False, [], "request", {"provider": "muse", "reasoning_effort": "high"}]
+        for model in (None, False, [], {}, ""):
+            invalid.append({**self.high_manifest["request"], "model": model})
+        for request in invalid:
+            with self.subTest(request=request), patch.object(self.store, "setting", side_effect=AssertionError("no history lookup")), self.assertRaises(TaskAlongError) as caught:
+                successor.guard_effort_replay(self.store, request)
+            self.assertEqual(caught.exception.code, "pilot_request_invalid")
+            self.assertEqual(caught.exception.effect_outcome, "not_sent")
+        self.assert_original()
+
+    def test_public_malformed_high_requests_refuse_before_guard_preflight_or_output(self):
+        self.fixture.configure(reasoning_effort="high")
+        requests = []
+        missing = copy.deepcopy(self.high_manifest["request"]); missing.pop("model"); requests.append(missing)
+        requests.extend({**self.high_manifest["request"], "model": value} for value in (None, False, [], {}))
+        for index, request in enumerate(requests):
+            output = self.root / f"invalid-high-{index}"
+            with self.subTest(index=index), patch.object(successor, "guard_effort_replay", side_effect=AssertionError("validated requests only")), \
+                    patch.object(muse, "_preflight", side_effect=AssertionError("no preflight")), \
+                    patch.object(muse, "run_foreground_experiment", side_effect=AssertionError("no provider")), self.assertRaises(TaskAlongError) as caught:
+                self.service.run_provider(request=request, output=str(output))
+            self.assertEqual(caught.exception.code, "pilot_request_invalid")
+            self.assertFalse(output.exists())
+        self.fixture.configure()
+        self.assert_original()
 
     def test_plan_binds_only_explicit_high_amendment_without_storing_or_dispatching(self):
         with patch.object(muse, "run_foreground_experiment", side_effect=AssertionError("model-free plan")):

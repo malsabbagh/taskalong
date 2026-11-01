@@ -453,6 +453,9 @@ def guard_effort_replay(store, request):
     linked correction even before an anchor exists. This is bounded lookup,
     never a history scan.
     """
+    # Public run/bundle paths already validate this boundary. Keep the guard
+    # independently fail-closed for transactional callers and future reuse.
+    pilot._request(request)
     if request.get("provider") != "muse" or request.get("reasoning_effort") != "high":
         return
     for model in _model_spellings(request["model"]):
