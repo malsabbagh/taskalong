@@ -97,9 +97,12 @@ def main(argv: list[str] | None = None) -> int:
         target_argv = values[2:]
         if gate_fd < 3 or status_fd < 3 or gate_fd == status_fd:
             return 125
-        if not os.path.isabs(target_argv[0]) or any(not value or "\0" in value for value in target_argv):
+        if (not isinstance(target_argv[0], str) or not target_argv[0] or not os.path.isabs(target_argv[0])
+                or any(not isinstance(value, str) or "\0" in value for value in target_argv)):
             _write_status(status_fd, {"ready": False, "error": "lifetime_unsupported"})
             return 125
+        for value in target_argv:
+            value.encode("utf-8", errors="strict")
     except (ValueError, IndexError):
         return 125
 

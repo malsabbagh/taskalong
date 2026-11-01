@@ -1,5 +1,6 @@
 """Actual bounded Darwin processes; no vendor CLI, authentication or inference."""
 import os
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -23,6 +24,26 @@ class ForegroundExperimentTests(unittest.TestCase):
         self.assertEqual(result.descendant_cessation, 'unknown')
         for field in ('production_dispatch_allowed', 'workspace_reuse_allowed', 'acceptance_allowed'):
             self.assertFalse(result.to_dict()[field])
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'Darwin foreground experiment processes')
+    def test_empty_argument_is_preserved_through_foreground_owner(self):
+        expected = ['--tools', '', '--following', 'value', '']
+        with tempfile.TemporaryDirectory() as root:
+            result = run_foreground_experiment([sys.executable, '-c',
+                'import json,sys;print(json.dumps(sys.argv[1:]))', *expected], cwd=root,
+                mode=FOREGROUND_EXPERIMENT, timeout_seconds=2, max_output_bytes=8192)
+        self.assertEqual(result.root_exit_code, 0)
+        self.assertEqual(json.loads(result.stdout), expected)
+        self.assert_experimental(result)
+
+    def test_invalid_arguments_refuse_before_foreground_spawn_or_release(self):
+        for argv in ([], [''], [sys.executable, None], [sys.executable, 'nul\0byte'], [sys.executable, '\ud800']):
+            with self.subTest(argv=repr(argv)), patch('taskalong.experimental_process.sys.platform', 'darwin'), \
+                    patch.object(process.subprocess, 'Popen') as spawn, patch.object(process.os, 'write') as release:
+                with self.assertRaises(process.ProcessBoundaryError) as caught:
+                    run_foreground_experiment(argv, cwd='.', mode=FOREGROUND_EXPERIMENT)
+                self.assertEqual(caught.exception.effect_outcome, 'not_sent')
+                spawn.assert_not_called(); release.assert_not_called()
 
     def test_explicit_mode_and_platform_refuse_before_launch(self):
         with patch.object(process.subprocess, 'Popen') as spawn:

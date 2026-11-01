@@ -26,6 +26,31 @@ from taskalong.process import ProcessBoundaryError, run_bounded
 HELPER = Path(taskalong.__file__).resolve().parent / "_linux_lifetime.py"
 
 
+class LifetimeArgumentValidationTests(unittest.TestCase):
+    def test_empty_nonfirst_arguments_pass_validation_without_releasing_closed_gate(self):
+        from taskalong import _linux_lifetime as lifetime
+        with patch.object(lifetime, '_become_subreaper', return_value=True), \
+                patch.object(lifetime.signal, 'signal'), patch.object(lifetime.os, 'read', return_value=b'') as gate, \
+                patch.object(lifetime.os, 'close'), patch.object(lifetime, '_descendants_stopped', return_value=True), \
+                patch.object(lifetime, '_write_status') as status, patch.object(lifetime.os, 'fork') as fork:
+            result = lifetime.main(['10', '11', sys.executable, '--tools', '', '--following', 'value', ''])
+        self.assertEqual(result, 0)
+        gate.assert_called_once_with(10, 1)
+        fork.assert_not_called()
+        self.assertEqual(status.call_args_list[0].args, (11, {'ready': True}))
+        self.assertEqual(status.call_args_list[-1].args[1]['dispatch_state'], 'not_released')
+
+    def test_invalid_target_arguments_never_read_gate_or_initialize_subreaper(self):
+        from taskalong import _linux_lifetime as lifetime
+        for target in ([], [''], ['relative'], [None], [sys.executable, None], [sys.executable, b''],
+                       [sys.executable, 'nul\0byte'], [sys.executable, '\ud800'], [sys.executable, '\udcff']):
+            with self.subTest(target=repr(target)), patch.object(lifetime, '_become_subreaper') as initialize, \
+                    patch.object(lifetime.os, 'read') as gate, patch.object(lifetime.os, 'fork') as fork, \
+                    patch.object(lifetime, '_write_status'):
+                self.assertEqual(lifetime.main(['10', '11', *target]), 125)
+                initialize.assert_not_called(); gate.assert_not_called(); fork.assert_not_called()
+
+
 class LifetimeChild:
     def __init__(self, target: list[str] | Callable[[int, int], list[str]]):
         self.gate_read, self.gate_write = os.pipe()
@@ -100,6 +125,18 @@ class LinuxLifetimeTests(unittest.TestCase):
             self.assert_final(child, 0, True)
             child.process.wait(timeout=3)
             self.assertTrue(marker.exists())
+
+    def test_real_linux_helper_preserves_empty_arguments_and_following_positions(self):
+        expected = ['--tools', '', '--following', 'value', '', '雪', '']
+        child = LifetimeChild([sys.executable, '-I', '-S', '-c',
+            'import json,sys;print(json.dumps(sys.argv[1:],ensure_ascii=False))', *expected])
+        self.addCleanup(child.close)
+        self.assertEqual(child.read_status(), {'protocol_version': 2, 'ready': True})
+        child.release()
+        self.assert_final(child, 0, True)
+        output, error = child.process.communicate(timeout=3)
+        self.assertEqual(json.loads(output), expected)
+        self.assertEqual(error, b'')
 
     def test_gate_eof_reports_no_target_only_after_complete_owned_protocol(self):
         with tempfile.TemporaryDirectory() as directory:

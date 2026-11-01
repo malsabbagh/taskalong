@@ -362,6 +362,7 @@ def validate_test_accounting(schedule: dict, results: list[dict], system: str) -
                    'test_supervisor.ProcessTests.test_final_signal_denial_does_not_replace_primary_observation_failure': 'Darwin final cleanup fault campaign',
                    'test_claude_driver.ClaudeDriverBoundaryTests.test_malformed_provider_with_denied_signal_is_typed_failure_even_after_cessation': 'Darwin actual driver signal denial',
                    'test_foreground_experiment.ForegroundExperimentTests.test_fork_wait_rapid_exit_and_session_escape_keep_descendants_unknown': 'Darwin foreground experiment processes',
+                   'test_foreground_experiment.ForegroundExperimentTests.test_empty_argument_is_preserved_through_foreground_owner': 'Darwin foreground experiment processes',
                    'test_foreground_experiment.ForegroundExperimentTests.test_timeout_cancellation_and_output_limit_use_owned_cleanup': 'Darwin foreground experiment processes',
                    'test_foreground_experiment.ForegroundExperimentTests.test_tracking_failure_stays_separate_and_never_releases_a_refused_gate': 'Darwin foreground experiment tracking faults',
                    'test_local_provider_streaming.LocalProviderStreamingTests.test_foreground_passes_live_raw_chunks_without_promoting_cessation': 'explicit Darwin foreground passthrough',
