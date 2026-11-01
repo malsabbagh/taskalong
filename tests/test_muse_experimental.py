@@ -335,7 +335,8 @@ class ExperimentalMuseTests(unittest.TestCase):
         review = loads((self.root/'large-output/proposal/review.json').read_bytes())
         self.assertEqual(review['replacement_profile'], 'megabyte-proposal/1')
         self.configure(capture_profile='megabyte-proposal', max_proposal_bytes=1024)
-        with patch.object(muse, 'run_foreground_experiment') as native, self.assertRaises(TaskAlongError) as caught:
+        with patch.object(muse.sys, 'platform', 'darwin'), \
+                patch.object(muse, 'run_foreground_experiment') as native, self.assertRaises(TaskAlongError) as caught:
             self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'retry'))
         self.assertEqual(caught.exception.code, 'provider_already_submitted')
         native.assert_not_called()
