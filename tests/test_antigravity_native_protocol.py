@@ -10,6 +10,107 @@ from taskalong.executors.antigravity_native_protocol import NativeAntigravityDec
 
 
 class NativeAntigravityProtocolTests(unittest.TestCase):
+    def finish_steps(self):
+        """Original minimal examples of the observed native 1.4.12 transition."""
+        init = self.init | {"init": self.init["init"] | {"tools": ["write_to_file", "finish"]}}
+        active = self.step(index=7, state="ACTIVE", tool_name="finish", tool_info={
+            "name": "finish", "parameters": {"answer": 42}})
+        done = self.step(index=7, kind="finish", duration_seconds=0.01)
+        return init, active, done
+
+    def test_native_finish_completion_requires_the_separate_structured_result(self):
+        init, active, done = self.finish_steps()
+        for extended in (False, True):
+            with self.subTest(extended_wire=extended):
+                decoder = self.decoder(extended_wire=extended)
+                raw = self.wire(init, active, done, self.result)
+                for offset in range(0, len(raw), 13):
+                    decoder.feed(raw[offset:offset + 13])
+                turn = decoder.finish(exit_code=0)
+                self.assertTrue(turn.successful)
+                self.assertEqual(json.loads(turn.structured_output_json), {"answer": 42})
+                self.assertEqual(json.loads(turn.reported_usage_json)["input_tokens"], 100)
+                self.assertEqual(turn.stdout_sha256, hashlib.sha256(raw).hexdigest())
+                self.assertIsNone(turn.observation()["effective_effort"])
+                self.assertFalse(turn.observation()["production_dispatch_allowed"])
+
+    def test_native_finish_completion_cannot_close_an_unrelated_or_unobserved_step(self):
+        init, active, done = self.finish_steps()
+        no_parameters = copy.deepcopy(active)
+        no_parameters["step_update"].pop("tool_info")
+        for events in ([done], [self.step(index=7, state="ACTIVE"), done],
+                       [self.step(index=7, kind="checkpoint"), done], [no_parameters, done],
+                       [active, self.step(index=8, kind="finish")],
+                       [active, self.step(index=7, kind="finish", state="ACTIVE")],
+                       [active, self.step(index=7, kind="finish", tool_name="finish")],
+                       [active, self.step(index=7, kind="finish", tool_info={})],
+                       [active, self.step(index=7, kind="finish", conversation_id="different")]):
+            with self.subTest(events=events):
+                self.failure(init, *events, self.result)
+
+    def test_native_finish_duplicate_and_conflicting_completions_fail_stickily(self):
+        init, active, done = self.finish_steps()
+        other_result = self.result | {"result": self.result["result"] | {"status": "ERROR", "response": ""}}
+        for events, code in (([active, done, done], "agy_native_step_transition_invalid"),
+                             ([active, done, active], "agy_native_step_transition_invalid"),
+                             ([active, done, self.result, self.result], "agy_native_event_after_terminal"),
+                             ([active, done, self.result, other_result], "agy_native_event_after_terminal"),
+                             ([active, done, self.result, done], "agy_native_event_after_terminal")):
+            with self.subTest(code=code, events=events):
+                decoder = self.decoder()
+                with self.assertRaises(TaskAlongError) as first:
+                    decoder.feed(self.wire(init, *events))
+                self.assertEqual(first.exception.code, code)
+                with self.assertRaises(TaskAlongError) as second:
+                    decoder.finish(exit_code=0)
+                self.assertIs(first.exception, second.exception)
+                self.assertEqual(first.exception.effect_outcome, "uncertain")
+
+    def test_native_finish_incomplete_or_invalid_endings_never_supply_a_result(self):
+        init, active, done = self.finish_steps()
+        for events in ([init, active], [init, active, done]):
+            with self.subTest(events=events):
+                self.failure(*events, code="agy_native_stream_incomplete")
+        self.failure(init, active, self.result, code="agy_native_step_pending")
+        missing = copy.deepcopy(self.result)
+        missing["result"].pop("structured_output")
+        self.failure(init, active, done, missing, code="agy_native_result_inconsistent")
+        invalid = self.result | {"result": self.result["result"] | {"structured_output": {"answer": "wrong"}}}
+        self.failure(init, active, done, invalid, code="agy_native_structured_output_invalid")
+        decoder = self.decoder()
+        decoder.feed(self.wire(init, active, done, self.result)[:-1])
+        with self.assertRaises(TaskAlongError) as caught:
+            decoder.finish(exit_code=0)
+        self.assertEqual(caught.exception.code, "agy_native_truncated_frame")
+
+    def test_native_finish_cannot_erase_denials_exit_failure_or_diagnostics(self):
+        init, active, done = self.finish_steps()
+        for change in ({"permission_denied": True}, {"error": {"type": "denied", "message": "private"}}):
+            denied = copy.deepcopy(active)
+            denied["step_update"]["tool_info"].update(change)
+            decoder = self.decoder()
+            decoder.feed(self.wire(init, denied, done, self.result))
+            turn = decoder.finish(exit_code=0)
+            self.assertFalse(turn.successful)
+            self.assertEqual(turn.error_code, "agy_native_tool_failed")
+        for options, code in (({"exit_code": 1}, "agy_native_exit_failed"),
+                              ({"exit_code": 0, "stderr": b"unclassified"}, "agy_native_diagnostics_unqualified")):
+            decoder = self.decoder()
+            decoder.feed(self.wire(init, active, done, self.result))
+            turn = decoder.finish(**options)
+            self.assertFalse(turn.successful)
+            self.assertEqual(turn.error_code, code)
+
+    def test_native_finish_completion_preserves_extended_parameter_accounting(self):
+        init, active, done = self.finish_steps()
+        active["step_update"]["tool_info"]["parameters"] = {
+            "p": "x" * (1048576 - len(json.dumps({"p": ""}, separators=(",", ":")).encode()))}
+        decoder = self.decoder(extended_wire=True)
+        decoder.feed(self.wire(init, active, done))
+        with self.assertRaises(TaskAlongError) as caught:
+            decoder.feed(self.wire(self.step(index=8, state="ACTIVE")))
+        self.assertEqual(caught.exception.code, "agy_native_metadata_limit")
+
     def test_extended_frames_have_total_node_container_depth_and_unicode_bounds(self):
         values = ([[0] * 4096 for _ in range(17)], [0] * 4097, {str(i): 0 for i in range(4097)}, "\ud800")
         nested = 0

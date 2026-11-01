@@ -300,7 +300,7 @@ class NativeAntigravityDecoder:
         index, state, kind = step["step_index"], step["state"], step["step_type"]
         if (type(index) is not int or not 0 <= index <= 2**31 - 1
                 or type(state) is not str or state not in {"ACTIVE", "DONE"}
-                or type(kind) is not str or kind not in {"user_input", "agent_response", "tool", "checkpoint"}):
+                or type(kind) is not str or kind not in {"user_input", "agent_response", "tool", "checkpoint", "finish"}):
             self._fail("agy_native_step_invalid")
         if "duration_seconds" in step:
             self._duration(step["duration_seconds"])
@@ -308,6 +308,16 @@ class NativeAntigravityDecoder:
             self._usage(step["usage"])
         if "text_delta" in step and (type(step["text_delta"]) is not str or kind != "agent_response"):
             self._fail("agy_native_step_invalid")
+        if kind == "finish":
+            # Native 1.4.12 completes an ACTIVE finish tool as finish/DONE,
+            # without repeating tool_info. It is a step, never a result source.
+            previous = self._steps.get(index)
+            if (state != "DONE" or previous is None or previous[:2] != ("tool", "finish")
+                    or previous[2] is None or previous[3] != "ACTIVE"
+                    or "tool_name" in step or "tool_info" in step):
+                self._fail("agy_native_step_transition_invalid")
+            self._steps[index] = (*previous[:3], "DONE")
+            return
         tool, parameters = None, None
         if kind == "tool":
             tool = step.get("tool_name")
