@@ -53,6 +53,35 @@ owner currently accepts only `auth_mode: existing-account`; `api-key` fails befo
 claiming a submission because selected key-source handling is not implemented.
 No ambient Anthropic key is forwarded to the Ollama route.
 
+For Codex with an existing custom `CODEX_HOME`, select
+`format: configured-provider-profile/3` and add the required outer field
+`native_roots: {"CODEX_HOME": "/absolute/existing/native-root"}`. Profile `/3`
+is Codex-only; the map accepts only `CODEX_HOME`. Its value must be a bounded,
+normalized absolute path to an existing operator-owned directory, without
+user-controlled symlink components (standard OS-controlled macOS aliases remain
+supported). No native configuration or authentication file is opened to validate
+the root. The selected path becomes part of the configuration digest and is the
+only native-root environment variable forwarded; an ambient `CODEX_HOME` never
+overrides this explicit selection. API keys, tokens, proxies, and arbitrary
+environment overrides are not forwarded.
+
+Use `native_roots: {}` in profile `/3` for the normal HOME-based native discovery
+when `CODEX_HOME` is absent. Profiles `/1` and `/2` retain their exact shape and
+budget behavior. For any of these profiles without an explicit root, the presence
+of ambient `CODEX_HOME`, including an empty or invalid value, causes a typed
+`provider_native_root_unsupported` refusal before a submission claim; it never
+silently selects HOME instead. No profile format is rewritten automatically.
+
+Explicit configure records sealed directory identity observations and selects
+the current observation for that configuration. Run binds a copy before claiming
+a submission and rechecks the directory identity before claim and target release.
+A missing, unsafe, or replaced directory refuses. After a legitimate replacement,
+explicitly configure again: this selects a new observation while retaining all
+old observations, run bindings, and consumed or uncertain submission claims.
+Reconfiguration cannot redispatch an already claimed task. These checks establish
+directory selection and metadata, not the actual native account, loaded context,
+or runtime isolation. They do not change the existing Muse route.
+
 The following Python builds JSON-compatible **synthetic examples only**. Every
 path, version, model, and hash is a placeholder. They do not describe an observed
 installation and must not be submitted as real runtime identity evidence.
@@ -235,7 +264,8 @@ more than 64 KiB, while remaining within the 1 MiB record and combined capture
 limits. The decoded canonical object has its own 64 KiB limit.
 For a new longer task, select `format: configured-provider-profile/2` and set
 `limits.attempt_seconds` explicitly, through **1440 seconds (24 minutes)**.
-Version `/1` retains its 720-second ceiling. Both versions retain the 720-second
+Version `/3` permits the same 1440-second ceiling for Codex with explicit native
+roots. Version `/1` retains its 720-second ceiling. All versions retain the 720-second
 default and preserve explicit shorter values. No capture, record or proposal
 limit grows with the deadline. For Antigravity also set its explicit
 `adapter_configuration.print_timeout_seconds`; the lower of that value and the

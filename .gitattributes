@@ -1,0 +1,4 @@
+# The distribution auditor binds the approved notice's exact bytes.
+LICENSE text eol=lf
+# npm bin-links rewrites CRLF shebangs during installation.
+packages/npm/cli/bin/taskalong.js text eol=lf

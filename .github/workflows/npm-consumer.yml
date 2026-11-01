@@ -33,6 +33,18 @@ jobs:
         with:
           node-version: 24.18.0
       - run: python -m pip install --isolated --disable-pip-version-check --require-hashes -r requirements-dev.lock
+      - name: Verify approved license bytes before build
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          from tools.check_dist import APPROVED_LICENSE_SHA256
+          data = Path("LICENSE").read_bytes()
+          digest = hashlib.sha256(data).hexdigest()
+          print(json.dumps({"license_sha256": digest, "bytes": len(data), "crlf_count": data.count(b"\r\n")}))
+          if digest != APPROVED_LICENSE_SHA256:
+              raise SystemExit("source LICENSE differs from the approved MIT notice before build")
+          PY
       - run: python -m build --no-isolation --wheel --sdist
       - run: python tools/normalize_sdist.py dist/*.tar.gz
       - run: python tools/check_dist.py --dist-dir dist
@@ -52,6 +64,14 @@ jobs:
       - env:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          data = Path("packages/npm/cli/bin/taskalong.js").read_bytes()
+          print(json.dumps({"npm_launcher_sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "crlf_count": data.count(b"\r\n")}))
+          if not data.startswith(b"#!/usr/bin/env node\n") or b"\r\n" in data:
+              raise SystemExit("npm launcher must use LF before packing; npm rewrites CRLF shebangs during installation")
+          PY
           mkdir -p "$NPM_CONFIG_CACHE" npm-dist receipts
           npm pack ./packages/npm/cli --offline --ignore-scripts --pack-destination npm-dist
       - run: python tools/release_bundle.py audit-npm --root . --archive npm-dist/taskalong-cli-0.1.0-alpha.1.tgz > receipts/audit.json

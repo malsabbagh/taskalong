@@ -1,5 +1,6 @@
 # File-by-file distribution allowlist. No source discovery patterns.
 global-exclude *
+include .gitattributes
 include LICENSE
 include CONTRIBUTING.md
 include MANIFEST.in
