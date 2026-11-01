@@ -361,7 +361,10 @@ include src/taskalong/supervised_muse_runner.py
 include tests/test_supervised_muse_runner.py
 include docs/adr/0021-supervised-muse-protocol.md
 include src/taskalong/muse_experimental.py
+include src/taskalong/muse_effort_amendment.py
 include tests/test_muse_experimental.py
+include tests/test_muse_effort_amendment.py
+include tests/test_muse_high_successor.py
 include docs/adr/0022-configured-experimental-provider.md
 include src/taskalong/muse_successor.py
 include tests/test_muse_successor.py

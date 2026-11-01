@@ -453,6 +453,43 @@ provider-internal retries, effective effort, remote cancellation and descendants
 is preserved. Offline boundary tests establish parser and lifecycle behavior;
 they do not qualify an account or prove a live provider will complete the task.
 
+
+### One explicit High correction after an interrupted Max attempt
+
+Use `provider-successor-plan muse --predecessor RUN --reason interrupted-high`
+for the narrow Max-to-High correction. It requires the unchanged original `/6`
+configuration, task, consumed claim and interrupted history. It supports only
+this effort change, with the same model, account, context, tools, source files,
+1440-second ceiling and selected capture/proposal bounds. Changing the global
+configuration or editing the sealed original request is unnecessary and refused
+by this route.
+
+The model-free `/5` plan binds both original and derived configuration/bundle
+digests and the `muse-effort-amendment/1` document. Review its requested High
+value, then use `provider-successor` with the same predecessor, reason, plan
+digest, key and an unoccupied output. This uses the original exclusive anchor
+and its one unspent slot; it is not another ladder or a budget refund. A prior
+reservation or a prior High submission under either accepted model spelling
+prevents another allocation.
+
+At reservation, TaskAlong stores a detached High configuration image and a
+claim alias pointing to that same successor run. The active global configuration
+and every original Max record, invocation, request, capture and claim remain
+unchanged. Only this authenticated successor selects the derived image. Its new
+prompt/request and native `--reasoning-effort` argument request High. A repeated
+key only observes; preflight failure still consumes the slot. Ordinary High
+request replay, including after a State restore, is fenced by the retained
+original evidence. An ordinary High request matching an interrupted Max task
+is refused even before a successor anchor exists; use the explicit linked
+correction. This check is repeated when allocating the submission claim.
+No automatic retry, fallback or patch application occurs.
+
+High is a requested setting, not proof of effective provider effort or price.
+Historical remote usage, internal native retries and escaped descendants remain
+unknown. This correction does not authorize Max dispatch or relax any context,
+process-absence, evidence-stability or result-veto check.
+
+
 ## Explicit recovery after a limited capture
 
 Changing capture limits does not release a consumed task claim. The newer

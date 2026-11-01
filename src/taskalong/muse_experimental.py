@@ -39,7 +39,7 @@ _NATIVE_STOP_POLICY = "stop-on-first-model-failure-or-second-model-task/1"
 def _native_guard(successor, config, session):
     # Old sealed operations retain their exact execution contract. The explicit
     # interrupted successor adds a local observer, not a hard remote-call cap.
-    if successor is None or successor.get("format") != "manual-muse-successor/4":
+    if successor is None or successor.get("format") not in {"manual-muse-successor/4", "manual-muse-successor/5"}:
         return None
     if successor.get("native_lifecycle_policy") != _NATIVE_STOP_POLICY:
         _fail("provider_successor_invalid", "The interrupted successor requires its bound native stop policy.")
@@ -719,6 +719,10 @@ def _event(store, record, root, state, **values):
 def _claim(store, bundle_root, manifest, record):
     key = "provider-claim:muse:" + manifest["digest"]
     with store.transaction() as db:
+        # Recheck under the same write lock as claim allocation: an interrupted
+        # Max history/anchor may have appeared during model-free preflight.
+        from .muse_successor import guard_effort_replay
+        guard_effort_replay(store, manifest["request"])
         if db.execute("SELECT 1 FROM settings WHERE name=?", (key,)).fetchone():
             _fail("provider_already_submitted", "This prepared task already reserved a provider submission. Inspect its existing result; automatic redispatch is forbidden.")
         db.execute("INSERT INTO settings VALUES (?,?)", (key, canonical_bytes({"run_id":record["run_id"],"bundle_digest":manifest["digest"],"output":record["output"]}).decode()))
@@ -734,7 +738,8 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
     if config["context"] == "exclude":
         _fail("provider_context_exclusion_unsupported", "This Muse version cannot fully exclude personal context with the existing login. Include is the default; native-only is partial exclusion. No provider request was sent.")
     if _successor is not None:
-        from .muse_successor import _check
+        from .muse_successor import _check, configuration_for_successor
+        config = configuration_for_successor(store, _successor)
         _check(store, _successor, config)
         if output != _successor["output"] or bundle is not None:
             _fail("provider_successor_invalid", "Use the exact reserved successor output and original task.")
@@ -751,6 +756,9 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
         bundle_root = root / "bundle"; manifest, _ = pilot._manifest(request)
         if _successor is None and store.setting("provider-claim:muse:" + manifest["digest"]):
             _fail("provider_already_submitted", "This task already reserved a submission; inspect existing evidence or use an eligible explicit successor.")
+    if _successor is None:
+        from .muse_successor import guard_effort_replay
+        guard_effort_replay(store, manifest["request"])
     _task_model(config, manifest["request"])
     if _successor is not None and manifest["digest"] != _successor["bundle_digest"]:
         _fail("provider_successor_invalid", "The successor must keep the original task intent unchanged.")

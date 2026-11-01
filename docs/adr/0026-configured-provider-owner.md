@@ -187,3 +187,15 @@ recognized failure or a second recognized model task requests local cancellation
 while capture continues. The owner result is retained before capture closure.
 This reacts to observed events; it does not assert that native retries, remote
 acceptance, escaped descendants or paid usage are under a hard one-call limit.
+
+
+The `/5` manual Muse successor is the explicit effort-only Max-to-High amendment
+of an interrupted `/6` original. A fresh detached request/configuration is bound
+to the immutable original through a versioned amendment; no original record or
+active configuration pointer is rewritten. The same root anchor and ordinal-one
+allocation fence both formats and copied/restored State. Both accepted High
+model spellings are checked before planning and atomically at reservation. A
+claim alias refers to the same reserved run, closing ordinary High replay rather
+than granting a second submission. The original/native usage and cessation
+unknowns are preserved; requested High does not establish price or effective
+effort. Other amendments and paid/provider fallbacks are unsupported.

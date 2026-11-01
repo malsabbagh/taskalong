@@ -390,9 +390,9 @@ def _material(store, predecessor, config, *, reason="timeout"):
     try:
         if type(reason) is not str:_fail("provider_successor_invalid")
         if reason=="capture":return _capture_material(store,predecessor,config)
-        if reason=="interrupted":
+        if reason in {"interrupted", "interrupted-high"}:
             from .muse_interrupted_recovery import material
-            return material(store,predecessor,config)
+            return material(store,predecessor,config,effort="high" if reason=="interrupted-high" else None)
         if reason!="timeout":_fail("provider_successor_invalid", "Select timeout or explicit capture recovery.")
         return _material_unchecked(store,predecessor,config)
     except (KeyError,TypeError,ValueError,AttributeError):
@@ -408,6 +408,90 @@ def plan(store, *, predecessor, reason="timeout"):
     return value
 
 
+def _dispatch_configuration(store, original_config, proof):
+    """Derive the attempt's configuration without changing the active pointer."""
+    if proof["format"] != "manual-muse-successor-plan/5":
+        return original_config
+    from .muse_effort_amendment import derive
+    original, _ = _read_run(store, proof["root_run_id"])
+    _, manifest = pilot._bundle(original["bundle"])
+    candidate, amended, amendment = derive(original_config, manifest, "high")
+    if (candidate["digest"] != proof["configuration_digest"] or amended["digest"] != proof["bundle_digest"]
+            or amendment != proof.get("amendment")):
+        _fail("provider_successor_plan_changed")
+    return muse._checked_configuration(candidate)
+
+
+def configuration_for_successor(store, reservation):
+    """Read a reserved High image; _check authenticates it before any effect."""
+    if type(reservation) is not dict:
+        _fail("provider_successor_history_changed")
+    if reservation.get("format") != "manual-muse-successor/5":
+        return muse._configuration(store)
+    identity = reservation.get("configuration_digest")
+    if type(identity) is not str or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
+        _fail("provider_successor_history_changed")
+    config = store.setting("provider-config:" + identity)
+    return muse._checked_configuration(config)
+
+
+def _model_spellings(model):
+    return ("wonder-full", "muse-wonder-full-1.0") if model in {"wonder-full", "muse-wonder-full-1.0"} else (model,)
+
+
+def _effort_claim_digests(manifest):
+    """At most two equivalent High request identities, without normalization."""
+    return tuple(pilot._manifest({**manifest["request"], "model": model})[0]["digest"]
+                 for model in _model_spellings(manifest["request"]["model"]))
+
+
+def guard_effort_replay(store, request):
+    """A restored State must not bypass the High slot via an ordinary run.
+
+    Reconstruct only the two known Max spelling variants, then consult their
+    original retained evidence. Interrupted originals require the explicit
+    linked correction even before an anchor exists. This is bounded lookup,
+    never a history scan.
+    """
+    if request.get("provider") != "muse" or request.get("reasoning_effort") != "high":
+        return
+    for model in _model_spellings(request["model"]):
+        original_request = {**request, "reasoning_effort": "max", "model": model}
+        original_manifest, _ = pilot._manifest(original_request)
+        claim = store.setting("provider-claim:muse:" + original_manifest["digest"])
+        if claim is None:
+            continue
+        if type(claim) is not dict:
+            _fail("provider_successor_history_changed")
+        original, _ = _read_run(store, _id(claim.get("run_id")))
+        if claim != {"run_id": original["run_id"], "bundle_digest": original_manifest["digest"],
+                     "output": original["output"]} or original.get("bundle_digest") != original_manifest["digest"]:
+            _fail("provider_successor_history_changed")
+        previous = store.setting("provider-config:" + original["configuration_digest"])
+        muse._checked_configuration(previous)
+        muse._task_model(previous, original_request)
+        if previous["format"] == "local-muse-provider/6":
+            if original.get("state") == "interrupted":
+                _fail("provider_successor_link_required", "This High task matches an interrupted Max submission. Use its explicit interrupted-high successor; an ordinary run cannot allocate an unrelated submission.")
+            anchor = _anchor(original)
+            if (anchor.exists() or anchor.is_symlink()
+                    or store.setting("provider-successor-root:muse:" + original["run_id"]) is not None):
+                _fail("provider_successor_reserved", "This High task belongs to a retained explicit lineage. Inspect it; do not submit it through an ordinary run.")
+
+
+def _configuration_matches(store, reservation, config):
+    current = store.setting("provider:muse")
+    if reservation.get("format") != "manual-muse-successor/5":
+        return current == config
+    amendment = reservation.get("effort_amendment")
+    return (type(amendment) is dict and type(current) is dict
+            and type(config) is dict and type(current.get("digest")) is str and type(config.get("digest")) is str
+            and current.get("digest") == amendment.get("original_configuration_digest")
+            and store.setting("provider-config:" + current["digest"]) == current
+            and config.get("digest") == amendment.get("configuration_digest")
+            and store.setting("provider-config:" + config["digest"]) == config)
+
+
 def _check(store, reservation, config):
     if (type(reservation) is not dict or not {"predecessor_run_id","run_id","key_digest","plan_digest"}.issubset(reservation)
             or any(type(reservation[k]) is not str for k in ("predecessor_run_id","run_id","key_digest","plan_digest"))
@@ -417,17 +501,23 @@ def _check(store, reservation, config):
             or store.setting("provider-successor-key:muse:"+reservation["key_digest"])!=reservation):
         _fail("provider_successor_history_changed")
     reason=reservation.get("reason","timeout")
-    if (type(reason) is not str or reason not in {"timeout","capture","interrupted"}
-            or reservation.get("format") not in ({"manual-muse-successor/4"} if reason=="interrupted" else {"manual-muse-successor/2", "manual-muse-successor/3"} if reason=="capture" else {"manual-muse-successor/1"})):
+    if (type(reason) is not str or reason not in {"timeout","capture","interrupted","interrupted-high"}
+            or reservation.get("format") not in ({"manual-muse-successor/5"} if reason=="interrupted-high" else {"manual-muse-successor/4"} if reason=="interrupted" else {"manual-muse-successor/2", "manual-muse-successor/3"} if reason=="capture" else {"manual-muse-successor/1"})):
         _fail("provider_successor_history_changed")
-    if store.setting("provider:muse") != config:
+    if not _configuration_matches(store, reservation, config):
         _fail("provider_successor_plan_changed")
-    fresh, _, _, _=_material(store,reservation["predecessor_run_id"],config,reason=reason)
-    expected_format = "manual-muse-successor/4" if reason == "interrupted" else "manual-muse-successor/3" if fresh["format"] == "manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason == "capture" else "manual-muse-successor/1"
+    original_config = muse._configuration(store) if reason == "interrupted-high" else config
+    fresh, _, _, _=_material(store,reservation["predecessor_run_id"],original_config,reason=reason)
+    expected_format = "manual-muse-successor/5" if reason == "interrupted-high" else "manual-muse-successor/4" if reason == "interrupted" else "manual-muse-successor/3" if fresh["format"] == "manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason == "capture" else "manual-muse-successor/1"
     if reservation["format"] != expected_format:
         _fail("provider_successor_history_changed")
-    if reason=="interrupted" and reservation.get("native_lifecycle_policy")!=fresh.get("native_lifecycle_policy"):
+    if reason in {"interrupted", "interrupted-high"} and reservation.get("native_lifecycle_policy")!=fresh.get("native_lifecycle_policy"):
         _fail("provider_successor_history_changed")
+    if reason == "interrupted-high" and (reservation.get("effort_amendment") != fresh.get("amendment")
+            or _dispatch_configuration(store, original_config, fresh) != config
+            or store.setting("provider-claim:muse:" + fresh["bundle_digest"]) != {
+                "run_id": reservation["run_id"], "bundle_digest": fresh["bundle_digest"], "output": reservation["output"]}):
+        _fail("provider_successor_plan_changed")
     if fresh["digest"]!=reservation["plan_digest"]:
         _fail("provider_successor_plan_changed")
     return fresh
@@ -437,7 +527,7 @@ def claim_submission(store, bundle_root, manifest, record, reservation, config):
     _check(store,reservation,config)
     with store.transaction() as db:
         current=store.setting("provider-run:"+reservation["predecessor_run_id"])
-        if current is None or current.get("digest")!=reservation["predecessor_digest"] or store.setting("provider:muse")!=config:
+        if current is None or current.get("digest")!=reservation["predecessor_digest"] or not _configuration_matches(store,reservation,config):
             _fail("provider_successor_plan_changed")
         pilot._write(bundle_root,"provider-submission.json",canonical_bytes({"provider":"muse","run_id":record["run_id"],
             "bundle_digest":manifest["digest"],"predecessor_run_id":reservation["predecessor_run_id"],"reservation_digest":reservation["digest"]}))
@@ -455,31 +545,33 @@ def inspect_reserved(store, run_id):
 
 def execute(store, *, predecessor, key, plan_digest, output, reason="timeout"):
     _id(predecessor);key_check(key);screen_sensitive(key)
-    if type(reason) is not str or reason not in {"timeout","capture","interrupted"}:_fail("provider_successor_invalid")
+    if type(reason) is not str or reason not in {"timeout","capture","interrupted","interrupted-high"}:_fail("provider_successor_invalid")
     if type(plan_digest) is not str or len(plan_digest)!=64 or any(c not in "0123456789abcdef" for c in plan_digest):
         _fail("provider_successor_invalid")
     target=pilot._root(output)
     key_digest=hashlib.sha256(key.encode()).hexdigest()
     existing=store.setting("provider-successor-key:muse:"+key_digest)
     identity={"predecessor_run_id":predecessor,"plan_digest":plan_digest,"output":str(target)}
-    if reason in {"capture","interrupted"}:identity["reason"]=reason
+    if reason in {"capture","interrupted","interrupted-high"}:identity["reason"]=reason
     if existing is not None:
         if type(existing) is not dict or existing.get("digest")!=digest(existing) or existing.get("reason","timeout")!=reason or any(existing.get(k)!=v for k,v in identity.items()):_fail("provider_successor_key_conflict")
         return muse.inspect(store,existing["run_id"])
     config=muse._configuration(store)
     proof,parent,parent_root,manifest=_material(store,predecessor,config,reason=reason)
     if proof["digest"]!=plan_digest:_fail("provider_successor_plan_changed")
+    dispatch_config = _dispatch_configuration(store, config, proof)
     original,original_root=_read_run(store,proof["root_run_id"])
     for protected in (parent_root,pilot._root(parent["bundle"]),original_root,pilot._root(original["bundle"]),_anchor(original)):
         if target.is_relative_to(protected) or protected.is_relative_to(target):_fail("provider_successor_output_overlap")
     pilot._destination(output)
-    budget=muse._budget(config,pilot._prompt(manifest["request"],manifest["digest"]))
+    budget=muse._budget(dispatch_config,pilot._prompt(manifest["request"],manifest["digest"]))
     if not budget["input_echoes_fit"]:_fail("provider_capture_budget_insufficient")
-    reservation={"format":"manual-muse-successor/4" if reason=="interrupted" else "manual-muse-successor/3" if proof["format"]=="manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1",**identity,"run_id":identifier(),"key_digest":key_digest,
+    reservation={"format":"manual-muse-successor/5" if reason=="interrupted-high" else "manual-muse-successor/4" if reason=="interrupted" else "manual-muse-successor/3" if proof["format"]=="manual-muse-successor-plan/3" else "manual-muse-successor/2" if reason=="capture" else "manual-muse-successor/1",**identity,"run_id":identifier(),"key_digest":key_digest,
         "root_run_id":proof["root_run_id"],"ordinal":proof["ordinal"],"predecessor_digest":parent["digest"],
-        "bundle_digest":manifest["digest"],"configuration_digest":config["digest"],"attempt_seconds":proof["attempt_seconds"],
+        "bundle_digest":manifest["digest"],"configuration_digest":dispatch_config["digest"],"attempt_seconds":proof["attempt_seconds"],
         "history":proof["history"]}
-    if reason=="interrupted":reservation["native_lifecycle_policy"]=proof["native_lifecycle_policy"]
+    if reason in {"interrupted", "interrupted-high"}:reservation["native_lifecycle_policy"]=proof["native_lifecycle_policy"]
+    if reason=="interrupted-high":reservation["effort_amendment"]=proof["amendment"]
     reservation["digest"]=digest(reservation)
     # Reserve before ANY native preflight. Denial, crash or other failure consumes
     # the logical slot. A repeated command only observes; it never resumes code.
@@ -493,6 +585,19 @@ def execute(store, *, predecessor, key, plan_digest, output, reason="timeout"):
         enrollment_key="provider-successor-root:muse:"+proof["root_run_id"]
         prior=store.setting(enrollment_key)
         if prior is not None and prior!=proof["enrollment"]:_fail("provider_successor_history_changed")
+        if reason == "interrupted-high":
+            derived_claim_key = "provider-claim:muse:" + manifest["digest"]
+            if any(store.setting("provider-claim:muse:" + value) is not None
+                   for value in _effort_claim_digests(manifest)):
+                _fail("provider_successor_effort_already_submitted")
+            image_key = "provider-config:" + dispatch_config["digest"]
+            saved = store.setting(image_key)
+            if saved is not None and saved != dispatch_config:_fail("provider_successor_history_changed")
+            db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)",(image_key,canonical_bytes(dispatch_config).decode()))
+            # This is an alias fence for this SAME reserved run, not another
+            # controller allocation. It also closes ordinary request replay.
+            db.execute("INSERT INTO settings VALUES (?,?)", (derived_claim_key, canonical_bytes({
+                "run_id": reservation["run_id"], "bundle_digest": manifest["digest"], "output": str(target)}).decode()))
         anchor=_anchor_view(store,original,proof["enrollment"])
         if prior is None:
             # Exclusive directory creation arbitrates even a copy made before
