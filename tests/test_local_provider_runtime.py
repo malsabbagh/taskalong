@@ -67,6 +67,52 @@ class ProviderOwnerTests(unittest.TestCase):
     def claims(self):
         return self.service._store.db.execute("SELECT count(*) FROM settings WHERE name LIKE 'configured-provider-claim:%'").fetchone()[0]
 
+    def test_codex_receives_only_declared_files_in_a_distinct_git_snapshot(self):
+        self.configure()
+        def process(config, prepared, invocation, **callbacks):
+            workspace = Path(prepared["workspace"])
+            self.assertEqual((workspace / "reference.txt").read_text(), "Public reference.\n")
+            self.assertFalse((workspace / "new.py").exists())
+            head = subprocess.run(["git", "-C", str(workspace), "rev-parse", "HEAD"],
+                capture_output=True, check=True, timeout=15).stdout.decode().strip()
+            self.assertNotEqual(head, self.base)
+            self.assertNotIn("--skip-git-repo-check", invocation["argv"])
+            return self.process(config, prepared, invocation, **callbacks)
+        with patch.object(owner, "_process", side_effect=process):
+            result = self.service.run_provider("codex", request=self.request())
+        self.assertEqual(result["state"], "proposal_ready")
+        self.assertEqual(result["workspace_snapshot"]["source_base_commit"], self.base)
+        self.assertNotEqual(result["workspace_snapshot"]["head"], self.base)
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.base)
+        self.assertEqual(self.git("status", "--porcelain=v1"), "")
+
+    def test_owned_workspace_failure_precedes_provider_claim_and_dispatch(self):
+        from taskalong import local_provider_workspace as owned
+        self.configure()
+        failure = TaskAlongError("provider_workspace_invalid", "Synthetic setup failure.", effect_outcome="not_sent")
+        with patch.object(owned, "prepare_owned_workspace", side_effect=failure), \
+                patch.object(owner, "_process") as native, self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider("codex", request=self.request())
+        self.assertEqual(caught.exception.effect_outcome, "not_sent")
+        self.assertEqual(self.claims(), 0)
+        native.assert_not_called()
+
+    def test_owned_workspace_tampering_keeps_native_gate_closed_and_claim_retained(self):
+        self.configure()
+        reached = []
+        def process(config, prepared, invocation, **callbacks):
+            path = Path(prepared["workspace"]) / "reference.txt"
+            path.chmod(0o600)
+            path.write_text("Changed after preparation.\n")
+            callbacks["spawned"](ProcessReceipt("synthetic-invocation", 100, 100, 101, 1234567, self.sha))
+            reached.append(True)
+            self.fail("Native gate must remain closed")
+        with patch.object(owner, "_process", side_effect=process), self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider("codex", request=self.request())
+        self.assertEqual(caught.exception.effect_outcome, "uncertain")
+        self.assertEqual(self.claims(), 1)
+        self.assertEqual(reached, [])
+
     def test_legacy_and_empty_roots_refuse_any_ambient_codex_home_before_claim(self):
         for version in (1, 2, 3):
             fields = {"format": f"configured-provider-profile/{version}"}
