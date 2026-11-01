@@ -168,6 +168,50 @@ def _activity_markers(row):
     return marked
 
 
+def _session_end(row, session, native_run, config):
+    """Accept only a bound durable session closure, never trailing activity."""
+    payload = row.get("payload", {})
+    if (row.get("payload_type") != "session.end" or payload.get("kind") != "session_end"
+            or set(payload) != {"kind", "record"} or type(payload.get("record")) is not dict
+            or row.get("stream") != {"kind": "session", "id": session}
+            or row.get("record_type") != "event" or row.get("durability") != "durable"
+            or type(row.get("schema_version")) is not int or row["schema_version"] != 1
+            or type(row.get("sequence")) is not int or row["sequence"] < 1
+            or type(row.get("payload_schema_version")) is not int or row["payload_schema_version"] != 1
+            or len(json.dumps(payload["record"], ensure_ascii=False, separators=(",", ":")).encode()) > 65536):
+        _fail()
+    # Reuse the existing passive-metadata policy, while retaining the exact
+    # session.end wrapper above. Closure metadata cannot replace the response.
+    passive = {**row, "payload": {"kind": "metadata", "record": payload["record"]}}
+    if not capture_proof._trailing_metadata(passive):
+        _fail()
+    pending = [row]
+    active_keys = {"event", "task", "task_id", "task_stream", "task_kind", "operation",
+                   "tool_call", "tool_calls", "tool_name", "toolset", "reminder_roster"}
+    while pending:
+        part = pending.pop()
+        if type(part) is dict:
+            capture_proof._bindings(part, session, native_run)
+            if "stream" in part:
+                reference = part["stream"]
+                if (type(reference) is not dict or set(reference) != {"kind", "id"}
+                        or reference.get("kind") not in ("session", "run")
+                        or reference.get("id") != (session if reference["kind"] == "session" else native_run)):
+                    _fail()
+            if part.get("kind") in ("session", "run") and "id" in part:
+                if set(part) != {"kind", "id"} or part["id"] != (session if part["kind"] == "session" else native_run):
+                    _fail()
+            if (active_keys.intersection(part) or part.get("kind") in {"task", "task_lifecycle", "model.meta.response"}
+                    or type(part.get("payload_type")) is str and part["payload_type"].startswith(("run.", "task.", "turn.input."))
+                    or "command_id" in part and part["command_id"] != native_run
+                    or "provider_id" in part and part["provider_id"] != "meta"
+                    or "model_id" in part and part["model_id"] != config["model"]):
+                _fail()
+            pending.extend(part.values())
+        elif type(part) is list:
+            pending.extend(part)
+
+
 def _journal(material, native_run):
     """Observe one complete commit/completion in a fully fenced native journal."""
     record, config, session = material["record"], material["config"], material["session"]
@@ -202,6 +246,8 @@ def _journal(material, native_run):
                         _fail()
                     hashed.update(line)
                     row = muse._native_json(line[:-1], max_bytes=16777216, _journal_numbers=True)
+                    if phase == 4:
+                        _fail()
                     payload, event, details = capture_proof._parts(row)
                     if "stream" in row and row["stream"] != {"kind": "session", "id": session}:
                         _fail()
@@ -224,6 +270,12 @@ def _journal(material, native_run):
                     if markers and (len(markers) != 1 or markers[0] is not event
                             or event.get("kind") not in ("model_request_configured", "assistant_message_committed")):
                         _fail()
+                    if row.get("payload_type") == "session.end" or payload.get("kind") == "session_end":
+                        if phase != 3:
+                            _fail()
+                        _session_end(row, session, native_run, config)
+                        phase = 4
+                        continue
                     if phase == 3 and not capture_proof._trailing_metadata(row):
                         _fail()
                     if event.get("kind") == "model_request_configured":
@@ -249,7 +301,7 @@ def _journal(material, native_run):
                                 if not (key == "reasoning_effort" and value is None) and (type(value) is not str or not 1 <= len(value.encode()) <= 256):
                                     _fail()
                                 metadata[key] = value
-            if (phase != 3 or total != size or metadata.get("provider_id") != "meta" or metadata.get("model_id") != config["model"]):
+            if (phase not in (3, 4) or total != size or metadata.get("provider_id") != "meta" or metadata.get("model_id") != config["model"]):
                 _fail()
             guard()
             os.lseek(fd, 0, os.SEEK_SET)

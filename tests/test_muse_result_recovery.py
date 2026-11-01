@@ -144,6 +144,86 @@ class CompleteResultTests(unittest.TestCase):
             'record': {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0', 'duration': 1.5}}}])
         self.assertEqual(self.plan()['journal']['records'], 5)
 
+    def session_end(self, **changes):
+        invocation = json.loads((Path(self.original['output'])/'invocation.json').read_bytes())
+        return {'schema_version':1, 'payload_schema_version':1, 'sequence':64,
+                'stream':{'kind':'session','id':invocation['session_id']},
+                'record_type':'event', 'durability':'durable', 'payload_type':'session.end',
+                'payload':{'kind':'session_end','record':{'session_id':invocation['session_id'],
+                            'reason':'normal', **changes}}}
+
+    def test_bound_durable_session_end_after_completion_supports_local_recovery(self):
+        self.journal(lambda rows: rows+[self.session_end()])
+        # This completes the disposable input evidence before recovery observes it.
+        self.c.original_native = self.c.original_journal.read_bytes()
+        proof = self.plan()
+        self.assertEqual(proof['journal']['records'], 5)
+        self.assertEqual(proof['response_sha256'], hashlib.sha256(self.committed.encode()).hexdigest())
+        result = self.execute(proof)
+        self.assertEqual(result['state'], 'recovered_proposal_ready')
+        self.assertEqual(result['new_controller_submissions'], 0)
+        self.c.assert_original()
+
+    def test_session_end_requires_exact_wrapper_binding_and_durable_event(self):
+        original = self.c.original_journal.read_bytes()
+        good = self.session_end()
+        variants = [good|{'durability':'ephemeral'}, good|{'record_type':'status'},
+                    good|{'payload_type':'session.metadata'}, good|{'payload_schema_version':True},
+                    good|{'stream':{'kind':'session','id':'foreign'}},
+                    good|{'payload':good['payload']|{'event':{}}},
+                    good|{'payload':{'kind':'session_end','record':[]}},
+                    self.session_end(session_id='foreign'), self.session_end(run_id='foreign'),
+                    self.session_end(command_id='foreign'), self.session_end(provider_id='other'),
+                    self.session_end(model_id='other')]
+        for value in variants:
+            self.c.original_journal.write_bytes(original)
+            self.journal(lambda rows: rows+[value])
+            with self.subTest(value=value), self.assertRaises(TaskAlongError):
+                self.plan()
+
+    def test_session_end_cannot_hide_post_terminal_activity_or_results(self):
+        original = self.c.original_journal.read_bytes()
+        values = [{'kind':'model_request_configured'}, {'kind':'assistant_message_committed'},
+                  {'kind':'run_output_delta'}, {'kind':'task_lifecycle'},
+                  {'task_kind':'model.meta.response'}, {'operation':'model.meta.response'},
+                  {'payload_type':'run.model.configured'}, {'text':'unsealed'},
+                  {'result':{}}, {'response':{}}, {'changes':{}},
+                  {'event':{'kind':'started'}}, {'run_id':'foreign'}, {'session_id':'foreign'},
+                  {'stream':{'kind':'session','id':'foreign'}}, {'stream':{'kind':'run','id':'foreign'}},
+                  {'stream':{'kind':'task','id':'foreign'}}, {'stream':None},
+                  {'stream':{'kind':'run','id':self.native_run,'extra':True}},
+                  {'kind':'session','id':'foreign'}, {'kind':'run','id':'foreign'}]
+        for value in values:
+            self.c.original_journal.write_bytes(original)
+            end = self.session_end(details=[value])
+            self.journal(lambda rows: rows+[end])
+            with self.subTest(value=value), self.assertRaises(TaskAlongError):
+                self.plan()
+        self.c.original_journal.write_bytes(original)
+        end = self.session_end()|{'hidden':{'kind':'task_lifecycle','operation':'model.meta.response'}}
+        self.journal(lambda rows:rows+[end])
+        with self.assertRaises(TaskAlongError):self.plan()
+
+    def test_session_end_matching_nested_references_are_passive_metadata(self):
+        session = self.session_end()['stream']['id']
+        end = self.session_end(details=[{'stream':{'kind':'session','id':session}},
+            {'stream':{'kind':'run','id':self.native_run}}, {'kind':'run','id':self.native_run}])
+        self.journal(lambda rows:rows+[end])
+        self.assertEqual(self.plan()['journal']['records'],5)
+
+    def test_session_end_is_optional_once_and_final_after_completed_terminal(self):
+        original = self.c.original_journal.read_bytes()
+        good = self.session_end()
+        variants = [lambda rows:rows[:-1]+[good]+rows[-1:],
+                    lambda rows:rows+[good,good|{'sequence':65}],
+                    lambda rows:rows+[good,{'payload':{'kind':'metadata','record':{'duration':1}}}],
+                    lambda rows:rows+[good,{'payload':{'kind':'run','run_id':self.native_run,
+                       'event':{'kind':'model_request_configured'}}}]]
+        for number, transform in enumerate(variants):
+            self.c.original_journal.write_bytes(original)
+            self.journal(transform)
+            with self.subTest(variant=number), self.assertRaises(TaskAlongError):self.plan()
+
     def test_committed_response_must_match_all_deltas(self):
         self.journal(lambda rows: [row if n != 2 else {'payload': row['payload'] | {'event': row['payload']['event'] | {'text': self.committed.replace('xxxx', 'yyyy', 1)}}} for n,row in enumerate(rows)])
         with self.assertRaises(TaskAlongError): self.plan()

@@ -459,6 +459,12 @@ model observations must match the original configuration, and the response must
 pass the original task's proposal, source, schema and sensitive-data checks.
 An empty declared toolset does not prove absence of all unknown native activity.
 
+A bound durable `session.end` event may close the journal after completion. It
+must use the native session-end wrapper and carry only bounded passive metadata;
+foreign identities, hidden model/tool/result activity, duplicate closure and any
+record after closure are refused. Session closure does not establish remote
+settlement, account provenance or complete descendant cessation.
+
 Journal observation has separate local read ceilings of 64 MiB, 131,072 records
 and 16 MiB per frame. Committed response wire text is capped at 4 MiB, while its
 canonical proposal must still fit the original `/5` limit of at most 64 KiB.
