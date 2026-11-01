@@ -288,6 +288,41 @@ class ProviderOwnerTests(unittest.TestCase):
         self.assertFalse(observed["root_exit_observed"])
         run.assert_called_once()
 
+    def test_deadline_expiring_during_running_event_keeps_target_gate_closed(self):
+        self.configure()
+        original_process, original_event = owner._process, owner._event
+        clock = {"time": __import__('time').time()}
+        marker = self.root / "must-not-run-after-deadline"
+        attempts = []
+        def delayed_event(store, record, root, state, **values):
+            value = original_event(store, record, root, state, **values)
+            if state == "running":
+                clock["time"] += 721
+            return value
+        def stdlib_process(config, prepared, invocation, **callbacks):
+            attempts.append(prepared["run_id"])
+            code = "from pathlib import Path;Path(" + repr(str(marker)) + ").touch()"
+            return original_process(config, prepared,
+                invocation | {"argv": [sys.executable, "-I", "-c", code]}, **callbacks)
+        with patch.object(owner.time, "time", side_effect=lambda: clock["time"]), \
+             patch.object(owner, "_event", side_effect=delayed_event), \
+             patch.object(owner, "_process", side_effect=stdlib_process):
+            result = self.service.run_provider("codex", request=self.request())
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(result["process"]["failure_code"], "provider_deadline_expired")
+        self.assertFalse(result["process"]["root_exit_observed"])
+        self.assertTrue(result["process"]["group_termination_confirmed"])
+        self.assertFalse(marker.exists())
+        self.assertEqual(result["controller_submissions"], 1)
+        self.assertEqual(result["remote_usage"], "unknown")
+        self.assertEqual(self.service.inspect(result["run_id"])["process"], result["process"])
+        with patch.object(owner, "_process") as dispatch:
+            with self.assertRaises(TaskAlongError) as caught:
+                self.service.run_provider("codex", request=self.request())
+            self.assertEqual(caught.exception.code, "provider_already_submitted")
+            dispatch.assert_not_called()
+        self.assertEqual(attempts, [result["run_id"]])
+
 
 if __name__ == "__main__":
     unittest.main()

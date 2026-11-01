@@ -310,6 +310,8 @@ def run(store, provider, *, request, output=None):
             record = _event(store, record, root, "running", process_receipt=receipt.to_dict())
             if _cancelled(store, record, control):
                 _fail("cancel_pending", "Cancellation was requested before target gate release.")
+            if time.time()*1000 >= prepared["absolute_deadline"]:
+                _fail("provider_deadline_expired", "The local deadline expired before target gate release.")
 
         def chunk(stream, data):
             nonlocal decoder_error

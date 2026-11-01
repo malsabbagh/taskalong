@@ -64,7 +64,9 @@ use local or cloud inference; preserve the explicit route distinction without
 claiming authenticated local-only execution. Native Anthropic live qualification
 is not established by the offline protocol or configuration tests.
 
-Use finite shared limits: at most 720 seconds, 4 MiB combined captured output,
+Use finite shared limits: a default of 720 seconds and that same ceiling for
+profile `/1`; profile `/2` permits an explicit deadline through 1440 seconds.
+Both versions retain 4 MiB combined captured output,
 8,192 protocol records, 1 MiB per protocol record, 64 KiB canonical proposal, and
 one reserved controller submission. The owner uses an absolute deadline;
 bounded cleanup and evidence finalization may extend briefly beyond it. Keep
