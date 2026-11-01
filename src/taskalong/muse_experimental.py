@@ -272,7 +272,7 @@ def _budget(config, prompt):
         for kind in ("turn.input.user", "run.lifecycle.started"))
     maximum = config["max_output_bytes"]
     value = {"provider": "muse", "model_free": True, "controller_submissions": 0,
-            "attempt_seconds": config["attempt_seconds"],
+            "attempt_seconds": config.get("attempt_seconds"),
             "prompt_bytes": len(prompt), "input_echo_contract": "muse-session-input-echo/1",
             "minimum_input_echo_bytes": minimum, "max_output_bytes": maximum,
             "max_proposal_bytes": config.get("max_proposal_bytes", 65536),
