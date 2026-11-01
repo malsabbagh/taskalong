@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from taskalong.api import RunService
 from taskalong.errors import TaskAlongError
@@ -310,6 +310,36 @@ class ProviderOwnerTests(unittest.TestCase):
                                               expected_revision=result["revision"])
                 self.assertEqual(receipt["status"], "observation_only")
         self.assertEqual(len(self.calls), 3)
+
+    def test_megabyte_response_is_separate_and_reference_is_verified(self):
+        self.configure(format="configured-provider-profile/4", native_roots={}, limits={
+            **configuration()["limits"], "attempt_seconds": 1440,
+            "max_proposal_bytes": 1048576, "max_record_bytes": 4194304})
+        plan = self.service.prepare_provider_task("codex", request=self.request())
+        response = {"bundle_digest": plan["digest"], "changes": {"new.py": "\n"}}
+        remaining = 1048576 - len(canonical_bytes(response))
+        response["changes"]["new.py"] = "x" * remaining + "\n"
+        self.assertEqual(len(canonical_bytes(response)), 1048576)
+        decoder = Mock()
+        decoder.finish.return_value = {"terminal_status": "completed", "protocol_errors": [],
+                                       "structured_result": response}
+        with patch.object(owner._adapters(), "decoder", return_value=decoder), \
+                patch.object(owner, "_process", side_effect=self.process):
+            result = self.service.run_provider("codex", request=self.request())
+        self.assertEqual(result["state"], "proposal_ready")
+        self.assertLess(len(canonical_bytes(result)), 1048576)
+        self.assertIsNone(result["observation"]["structured_result"])
+        reference = result["observation"]["structured_result_reference"]
+        self.assertEqual(reference["bytes"], 1048576)
+        path = Path(result["output"]) / reference["path"]
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), reference["sha256"])
+        self.assertEqual(self.service.inspect(result["run_id"])["state"], "proposal_ready")
+        path.chmod(0o600)
+        path.write_bytes(b"{}")
+        path.chmod(0o400)
+        with self.assertRaises(TaskAlongError):
+            self.service.inspect(result["run_id"])
+        self.assertEqual(self.claims(), 1)
 
     def test_changed_budget_or_transport_does_not_redispatch_consumed_intent(self):
         self.configure()

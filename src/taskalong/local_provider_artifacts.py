@@ -15,7 +15,8 @@ from .errors import TaskAlongError
 from .local_provider_tasks import MAX_SNAPSHOT_BYTES, validate_plan
 from .validation import MAX_DOCUMENT_BYTES, canonical_bytes, digest
 
-_MAX_PATCH_BYTES = 1048576
+_MAX_PATCH_BYTES = 4 * 1024 * 1024
+_MAX_OUTPUT_FILE_BYTES = 2 * 1024 * 1024
 _HUNK = re.compile(rb"@@ -([0-9]{1,7})(?:,([0-9]{1,7}))? \+([0-9]{1,7})(?:,([0-9]{1,7}))? @@(?: [^\n]*)?\n")
 _INDEX = re.compile(rb"index ([a-f0-9]{7,40})\.\.([a-f0-9]{7,40})(?: (100644|100755))?\n")
 _NO_LF = b"\\ No newline at end of file\n"
@@ -109,18 +110,30 @@ def _replacement_hunks(before, after, budget):
     return result
 
 
-def _replacements(plan, response, budget):
+def _remaining_output(after, remaining):
+    """Account reconstructed bytes separately from canonical JSON and patch bytes."""
+    size = 0 if after is None else len(after)
+    if size > _MAX_OUTPUT_FILE_BYTES:
+        _fail("A reconstructed output file exceeds its finite byte limit.")
+    if size > remaining:
+        _fail("Combined reconstructed outputs exceed their finite byte limit.")
+    return remaining - size
+
+
+def _replacements(plan, response, budget, result_limit):
     changes = response["changes"]
     if type(changes) is not dict or not 1 <= len(changes) <= 32:
         _fail("A proposal must contain a bounded nonempty change map.")
     results = []
     remaining = budget
+    remaining_output = result_limit
     for path in sorted(changes):
         if path not in plan["writable_outputs"]:
             _fail("A changed path is outside the declared writable outputs.")
         snapshot = plan["writable_outputs"][path]
         before = _snapshot(snapshot)
         after = None if changes[path] is None else _text(changes[path], complete=True)
+        remaining_output = _remaining_output(after, remaining_output)
         if before == after:
             _fail("Each declared change must change file presence or content.")
         mode = "100644" if snapshot is None else snapshot["git_mode"]
@@ -246,6 +259,7 @@ def _diff(plan, response, budget, result_limit):
         _fail("A nonempty LF-terminated patch within the patch limit is required.")
     lines, i, results, seen = raw.splitlines(keepends=True), 0, [], set()
     remaining = budget
+    remaining_output = result_limit
     while i < len(lines):
         named = None
         mode_header = index = None
@@ -301,13 +315,14 @@ def _diff(plan, response, budget, result_limit):
         if not has_headers and i < len(lines) and lines[i].startswith(b"@@ "):
             _fail("Text hunks require both conventional unified path headers.")
         start_i = i
-        i, after, hunks = _hunks(lines, i, before, result_limit, remaining)
+        i, after, hunks = _hunks(lines, i, before, min(_MAX_OUTPUT_FILE_BYTES, remaining_output), remaining)
         if has_headers and i == start_i:
             _fail("Text path headers require at least one complete unified hunk.")
         if new is None:
             if after != b"":
                 _fail("A deletion must remove the exact complete preimage.")
             after = None
+        remaining_output = _remaining_output(after, remaining_output)
         if before == after:
             _fail("Each patch entry must change file presence or content.")
         if index is not None:
@@ -326,6 +341,11 @@ def _diff(plan, response, budget, result_limit):
 def validate_response(plan, response, *, max_proposal_bytes=65536, max_patch_bytes=1048576):
     """Validate atomically and return review bytes; perform no IO or application.
 
+    The legacy defaults remain 64 KiB canonical proposal and 1 MiB patch.
+    Callers may explicitly select up to 1 MiB canonical proposal and 4 MiB patch;
+    this does not expand the shared authority-document JSON limit. Reconstructed
+    outputs are capped at 2 MiB each and source snapshot allowance plus the
+    selected proposal allowance in aggregate.
     Unified hunks are normalized with exact bounded context for Git review.
     Decoded JSON objects cannot retain duplicate keys: callers decoding wire JSON
     must use the project's strict ``validation.loads`` before calling this API.
@@ -342,10 +362,11 @@ def validate_response(plan, response, *, max_proposal_bytes=65536, max_patch_byt
         _fail("The canonical proposal exceeds its explicit byte limit.")
     if type(response["bundle_digest"]) is not str or response["bundle_digest"] != plan["digest"]:
         _fail("The proposal does not bind to the exact task plan.")
+    result_limit = MAX_SNAPSHOT_BYTES + max_proposal_bytes
     if plan["artifact_format"] == "file-replacements/1":
-        results = _replacements(plan, response, max_patch_bytes)
+        results = _replacements(plan, response, max_patch_bytes, result_limit)
     else:
-        results = _diff(plan, response, max_patch_bytes, MAX_SNAPSHOT_BYTES + max_proposal_bytes)
+        results = _diff(plan, response, max_patch_bytes, result_limit)
     patch = b"".join(item[4] for item in results)
     manifest = {"format": "configured-provider-artifact/1", "artifact_format": plan["artifact_format"],
                 "plan_digest": plan["digest"], "intent_digest": plan["intent_digest"],

@@ -10,6 +10,7 @@ import re
 
 from ..errors import TaskAlongError
 from ..validation import loads
+from ..provider_wire import loads_wire
 
 
 MAX_PROTOCOL_RECORDS = 65536
@@ -31,16 +32,20 @@ class CodexEventDecoder:
     """
 
     def __init__(self, *, mode="start", thread_id=None,
-                 max_records=MAX_PROTOCOL_RECORDS, max_line_bytes=MAX_LINE_BYTES):
+                 max_records=MAX_PROTOCOL_RECORDS, max_line_bytes=MAX_LINE_BYTES, extended_wire=False):
         if (type(mode) is not str or mode not in {"start", "restart", "native_resume"}
                 or mode == "native_resume" and not valid_thread_id(thread_id)
                 or mode != "native_resume" and thread_id is not None):
             raise TaskAlongError("codex_decoder_binding_invalid", "Select an exact Codex execution mode and resume thread.")
-        if (type(max_records) is not int or not 1 <= max_records <= MAX_PROTOCOL_RECORDS
-                or type(max_line_bytes) is not int or not 1 <= max_line_bytes <= MAX_LINE_BYTES):
+        if (type(extended_wire) is not bool
+                or type(max_records) is not int
+                or not 1 <= max_records <= (131072 if extended_wire else MAX_PROTOCOL_RECORDS)
+                or type(max_line_bytes) is not int
+                or not 1 <= max_line_bytes <= (16 * MAX_LINE_BYTES if extended_wire else MAX_LINE_BYTES)):
             raise TaskAlongError("codex_decoder_limits_invalid", "Codex protocol limits must be finite bounded integers.")
         self._mode, self._expected_thread = mode, thread_id
         self._max_records, self._max_line_bytes = max_records, max_line_bytes
+        self._loads = loads_wire if extended_wire else loads
         self._records = self._unknown_events = 0
         self._thread = self._terminal = self._error = None
         self._usage = {"input_tokens": None, "output_tokens": None, "cost_usd": None}
@@ -75,7 +80,7 @@ class CodexEventDecoder:
         try:
             if type(line) is not bytes or len(line) > self._max_line_bytes:
                 raise ValueError("record bound")
-            event = loads(line, max_bytes=self._max_line_bytes)
+            event = self._loads(line, max_bytes=self._max_line_bytes)
             pending = [(event, 0)]
             while pending:
                 value, depth = pending.pop()

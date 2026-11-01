@@ -370,6 +370,7 @@ def run_bounded(
     on_stdout_line: Callable[[bytes], None] | None = None,
     _on_output_chunk: Callable[[str, bytes], None] | None = None,
     _capture_private_output: Callable[[bytes, bytes], None] | None = None,
+    _retain_output: bool = True,
     secrets: Sequence[str | bytes] = (), max_line_bytes: int = 1024 * 1024,
     signal_grace_seconds: float = 0.5,
     _lifetime_observations: dict | None = None,
@@ -398,6 +399,9 @@ def run_bounded(
         raise ProcessBoundaryError("invalid output budget")
     if not isinstance(stdin, bytes) or len(stdin) > 1024 * 1024:
         raise ProcessBoundaryError("stdin exceeds packet limit")
+    if (type(_retain_output) is not bool or not _retain_output and
+            (not callable(_on_output_chunk) or _capture_private_output is not None)):
+        raise ProcessBoundaryError("stream-only capture requires one trusted live sink")
     started = time.monotonic()
     digest = fingerprint(argv[0])
     child_env = dict(env) if env is not None else minimal_environment()
@@ -601,8 +605,9 @@ def run_bounded(
                     except BaseException as exc:
                         raw_capture_failed = True
                         callback_error = exc
-                remaining = max(0, max_output_bytes - sum(len(x) for x in buffers.values()))
-                buffers[name].extend(chunk[:remaining])
+                remaining = max(0, max_output_bytes - (total - len(chunk)))
+                if _retain_output:
+                    buffers[name].extend(chunk[:remaining])
                 if total > max_output_bytes:
                     output_limited = True
                 if name == "stdout" and on_stdout_line and not callback_error and not protocol_error:

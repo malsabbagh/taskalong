@@ -1,5 +1,7 @@
 """Configured provider integration with synthetic process fixtures; no inference."""
 import contextlib
+import copy
+import hashlib
 import io
 import json
 import os
@@ -13,7 +15,7 @@ from taskalong.api import RunService
 from taskalong import muse_experimental as muse
 from taskalong import supervised_pilot as pilot
 from taskalong.errors import TaskAlongError
-from taskalong.validation import canonical_bytes, validate
+from taskalong.validation import canonical_bytes, validate, digest, loads
 
 
 def request(model='muse-wonder-full-1.0'):
@@ -25,6 +27,31 @@ def native_output(session,response,*,terminal='completed',run='11111111-1111-411
     rows=[base|{'sequence':1,'payload_type':'session.run.linked','payload':{'kind':'session_run_linked','run_stream':{'kind':'run','id':run}}},
           base|{'sequence':2,'payload_type':'run.terminal.'+terminal,'payload':{'kind':'run_terminal','run_stream':{'kind':'run','id':run},'terminal':terminal,'text':response}}]
     return b''.join(canonical_bytes(v)+b'\n' for v in rows)
+
+
+def large_native_records(session, response, *, count=2, padding=0, ascii_response=False):
+    """Wire fixture deliberately bypasses the one-MiB authority serializer."""
+    reference = {'kind': 'run', 'id': '11111111-1111-4111-8111-111111111111'}
+    def row(sequence, kind, payload):
+        value = {'schema_version': 1, 'stream': {'kind': 'session', 'id': session},
+                 'sequence': sequence, 'payload_type': kind, 'payload': {'run_stream': reference, **payload}}
+        return json.dumps(value, ensure_ascii=True, separators=(',', ':')).encode() + b'\n'
+    text = response if type(response) is str else json.dumps(response, ensure_ascii=ascii_response, separators=(',', ':'))
+    yield row(1, 'session.run.linked', {'kind': 'session_run_linked'})
+    for i in range(2, count):
+        yield row(i, 'run.output.delta', {'kind': 'run_output_delta', 'text': ''})
+    yield row(count, 'run.terminal.completed', {'kind': 'run_terminal', 'terminal': 'completed', 'text': text, 'padding': 'x' * padding})
+
+
+def large_native_output(session, response, **options):
+    return b''.join(large_native_records(session, response, **options))
+
+
+def sized_response(bundle_digest, size, *, unicode=False):
+    value = {'bundle_digest': bundle_digest, 'changes': {'greeting.txt': '\n'}}
+    extra = size - len(canonical_bytes(value))
+    value['changes']['greeting.txt'] = ('é' * (extra // 2) + 'x' * (extra % 2) if unicode else 'x' * extra) + '\n'
+    return value
 
 
 @unittest.skipUnless(os.name=='posix','Private descriptor staging requires POSIX')
@@ -40,6 +67,538 @@ class ExperimentalMuseTests(unittest.TestCase):
 
     def configure(self,**values):
         return self.service.configure_provider('muse',{'executable':str(self.binary),'account_home':str(self.home),'muse_home':str(self.data),**values})
+
+    def journal_rows(self):
+        return [{'payload': {'kind': 'metadata', 'record': {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0'}}},
+                {'payload': {'kind': 'run', 'run_id': '11111111-1111-4111-8111-111111111111',
+                             'event': {'kind': 'model_request_configured'}}}]
+
+    def write_journal(self, rows, *, session='session', day=None):
+        day = day or muse.datetime.datetime.now().astimezone().date()
+        path = self.data / f'sessions/{day:%Y/%m/%d}' / session / 'session.jsonl'
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+        with path.open('wb') as stream:
+            for row in rows:
+                stream.write(json.dumps(row, ensure_ascii=True, separators=(',', ':')).encode() + b'\n')
+        path.chmod(0o644)  # Existing native permission dialect remains readable.
+        return path
+
+    def large_process(self, response, *, broken=None, journal_padding=0):
+        def process(argv, **options):
+            result = self.process(argv, **options)
+            session = argv[argv.index('--session-id') + 1]
+            def journal():
+                yield from self.journal_rows()
+                for _ in range(journal_padding):
+                    yield {'payload': {'kind': 'run', 'event': {'kind': 'output', 'text': 'x' * 1048576}}}
+            self.write_journal(journal(), session=session)
+            raw = large_native_output(session, response)
+            if broken == 'partial':
+                raw = raw[:-10]
+            options['_on_output_chunk']('stdout', raw)
+            for line in raw.splitlines():
+                options['on_stdout_line'](line)
+            result.stdout = b'' if options.get('_retain_output') is False else raw
+            summary = result.to_dict() | {'output_bytes': len(raw)}
+            if broken == 'cancelled':
+                result.cancelled = True
+                summary['cancelled'] = True
+            result.to_dict = lambda: summary
+            return result
+        return process
+
+    def test_megabyte_profile_is_explicit_fixed_envelope_and_preserves_timeouts(self):
+        configured = self.configure(capture_profile='megabyte-proposal')
+        self.assertEqual((configured['attempt_seconds'], configured['max_output_bytes'], configured['max_proposal_bytes'], configured['max_protocol_records']),
+                         (720, 67108864, 1048576, 131072))
+        sealed = muse._configuration(self.service._store)
+        self.assertEqual(sealed['format'], 'local-muse-provider/6')
+        self.assertEqual(sealed['digest'], digest(sealed))
+        self.assertEqual(muse._checked_configuration(sealed), sealed)
+        self.assertEqual(muse._budget(sealed, b'prompt')['response_fit_guaranteed'], False)
+        with self.assertRaises(TaskAlongError) as caught:
+            muse._budget(sealed, b'x' * 1048577)
+        self.assertEqual(caught.exception.code, 'provider_prompt_too_large')
+        for seconds in (1, 360, 720, 1440):
+            for proposal in (1024, 1048576):
+                value = self.configure(capture_profile='megabyte-proposal', attempt_seconds=seconds, max_proposal_bytes=proposal)
+                self.assertEqual((value['attempt_seconds'], value['max_proposal_bytes']), (seconds, proposal))
+        for field, value in (('attempt_seconds', True), ('attempt_seconds', 1441), ('attempt_seconds', 0),
+                ('max_proposal_bytes', True), ('max_proposal_bytes', 1023), ('max_proposal_bytes', 1048577),
+                ('max_output_bytes', 4194304), ('max_protocol_records', 8192), ('max_protocol_records', True)):
+            with self.subTest(field=field, value=value), self.assertRaises(TaskAlongError):
+                self.configure(capture_profile='megabyte-proposal', **{field: value})
+            altered = sealed | {field: value}
+            altered['digest'] = digest(altered)
+            with self.assertRaises(TaskAlongError):
+                muse._checked_configuration(altered)
+        for old_format in ('local-muse-provider/3', 'local-muse-provider/4', 'local-muse-provider/5'):
+            altered = sealed | {'format': old_format}
+            altered['digest'] = digest(altered)
+            with self.assertRaises(TaskAlongError):
+                muse._checked_configuration(altered)
+
+    def test_megabyte_canonical_exact_bound_and_escaped_transport_are_independent(self):
+        response = sized_response('a' * 64, 1048576, unicode=True)
+        raw = large_native_output('session', response, ascii_response=True)
+        self.assertGreater(len(raw), 1048576)
+        self.assertLess(len(raw), 4194304)
+        with patch.object(muse, '_session_records', side_effect=AssertionError('materialized legacy decoder')):
+            self.assertEqual(muse._decode(raw, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)[0], response)
+        self.assertEqual(len(canonical_bytes(response)), 1048576)
+        response['changes']['greeting.txt'] += 'x'
+        with self.assertRaises(TaskAlongError) as caught:
+            muse._decode(large_native_output('session', response), 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+        self.assertEqual(caught.exception.code, 'provider_proposal_too_large')
+        with self.assertRaises(TaskAlongError):
+            canonical_bytes(response)  # Global authority JSON ceiling is unchanged.
+
+    def test_megabyte_wire_byte_and_record_boundaries(self):
+        response = {'bundle_digest': 'a' * 64, 'changes': {'greeting.txt': 'x\n'}}
+        first, terminal = large_native_output('session', response).splitlines(keepends=True)
+        final = json.loads(terminal)
+        final['sequence'] = 6
+        terminal = json.dumps(final, separators=(',', ':')).encode() + b'\n'
+        delta = final | {'payload_type': 'run.output.delta', 'payload': {'text': ''}}
+        def padded(sequence, size):
+            row = delta | {'sequence': sequence}
+            empty = json.dumps(row, separators=(',', ':')).encode() + b'\n'
+            row['payload'] = {'text': 'x' * (size - len(empty))}
+            return json.dumps(row, separators=(',', ':')).encode() + b'\n'
+        sizes = [16777216] * 3 + [16777216 - len(first) - len(terminal)]
+        def records(extra=False):
+            yield first[:-1]
+            for i, size in enumerate(sizes):
+                yield padded(i + 2, size)[:-1]
+            yield terminal[:-1]
+            if extra:
+                yield b''
+        self.assertEqual(len(first) + sum(sizes) + len(terminal), 67108864)
+        self.assertEqual(muse._decode(records(), 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)[0], response)
+        with self.assertRaises(TaskAlongError):
+            muse._decode(records(extra=True), 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+        # Per-frame count excludes its terminating LF, independently of aggregate.
+        for extra in (0, 1):
+            raw = large_native_output('session', response)
+            terminal_size = len(raw.splitlines()[-1])
+            raw = large_native_output('session', response, padding=16777216 - terminal_size + extra)
+            if extra:
+                with self.assertRaises(TaskAlongError):
+                    muse._decode(raw, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+            else:
+                self.assertEqual(muse._decode(raw, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)[0], response)
+        for count in (131072, 131073):
+            records = (line[:-1] for line in large_native_records('session', response, count=count))
+            if count == 131073:
+                with self.assertRaises(TaskAlongError):
+                    muse._decode(records, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+            else:
+                self.assertEqual(muse._decode(records, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)[0], response)
+
+    def test_megabyte_decoder_refuses_ambiguous_framing_and_response_json(self):
+        response = {'bundle_digest': 'a' * 64, 'changes': {'greeting.txt': 'x\n'}}
+        raw = large_native_output('session', response)
+        invalid = (raw[:-1], raw + raw.splitlines(keepends=True)[-1], raw + b'{}\n', b'\n' + raw,
+            raw.replace(b'"sequence":1', b'"sequence":true', 1), raw.replace(b'"schema_version":1', b'"schema_version":1,"schema_version":1', 1),
+            raw.replace(b'run.terminal.completed', b'run.terminal.failed'), raw.replace(b'"terminal":"completed"', b'"terminal":"failed"'),
+            raw.replace(b'"schema_version":1', b'"schema_version":1.0', 1), raw.replace(b'"id":"session"', b'"id":"foreign"', 1),
+            large_native_output('session', '{"x":1,"x":2}'), large_native_output('session', '{"x":1.0}'),
+            large_native_output('session', '[]'), large_native_output('session', '{"x":"\\ud800"}'))
+        for value in invalid:
+            with self.subTest(prefix=value[:20]), self.assertRaises(TaskAlongError) as caught:
+                muse._decode(value, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+            self.assertEqual(caught.exception.code, 'provider_response_unrecognized')
+
+    def test_megabyte_raw_response_json_cap_counts_whitespace_before_normalizing(self):
+        response = {'bundle_digest': 'a' * 64, 'changes': {'greeting.txt': 'x\n'}}
+        text = json.dumps(response, separators=(',', ':'))
+        text += ' ' * (4194304 - len(text.encode()))
+        raw = large_native_output('session', text)
+        self.assertEqual(muse._decode(raw, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)[0], response)
+        with self.assertRaises(TaskAlongError):
+            muse._decode(large_native_output('session', text + ' '), 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+
+    def test_megabyte_cumulative_prefix_framing_has_no_four_mib_fit_assumption(self):
+        response = sized_response('a' * 64, 1048576)
+        first, final = large_native_output('session', response).splitlines()
+        terminal = json.loads(final)
+        text = terminal['payload']['text']
+        observed = 0
+        def records():
+            nonlocal observed
+            observed += len(first) + 1
+            yield first
+            for i in range(1, 33):
+                value = terminal | {'sequence': i + 1, 'payload_type': 'run.output.delta',
+                                    'payload': {'kind': 'run_output_delta', 'text': text[:len(text) * i // 32]}}
+                raw = json.dumps(value, separators=(',', ':')).encode()
+                observed += len(raw) + 1
+                yield raw
+            terminal['sequence'] = 34
+            raw = json.dumps(terminal, separators=(',', ':')).encode()
+            observed += len(raw) + 1
+            yield raw
+        self.assertEqual(muse._decode(records(), 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)[0], response)
+        self.assertGreater(observed, 16 * 1048576)
+        self.assertLess(observed, 64 * 1048576)
+
+    def test_megabyte_decoder_exhausts_capture_hash_fence_after_terminal(self):
+        response = {'bundle_digest': 'a' * 64, 'changes': {'greeting.txt': 'x\n'}}
+        def records():
+            for line in large_native_records('session', response):
+                yield line[:-1]
+            raise TaskAlongError('private_capture_invalid', 'Synthetic final hash mismatch.')
+        with self.assertRaises(TaskAlongError) as caught:
+            muse._decode(records(), 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+        self.assertEqual(caught.exception.code, 'provider_response_unrecognized')
+
+    def test_megabyte_post_terminal_metadata_preserves_binding_and_exhausts_capture(self):
+        response = {'bundle_digest': 'a' * 64, 'changes': {'greeting.txt': 'x\n'}}
+        original = list(large_native_records('session', response))
+        terminal = json.loads(original[-1])
+        metadata = terminal | {'sequence': 3, 'payload_type': 'run.metadata',
+                               'payload': {'run_stream': terminal['payload']['run_stream'], 'duration': 1.25}}
+        encoded = json.dumps(metadata, separators=(',', ':')).encode() + b'\n'
+        exhausted = []
+        def records():
+            for line in [*original, encoded]:
+                yield line[:-1]
+            exhausted.append(True)
+        self.assertEqual(muse._decode(records(), 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)[0], response)
+        self.assertEqual(exhausted, [True])
+        invalid = [metadata | {'sequence': 2}, metadata | {'stream': {'kind': 'session', 'id': 'foreign'}},
+                   metadata | {'payload': {'run_stream': {'kind': 'run', 'id': 'foreign'}}},
+                   terminal | {'sequence': 3},
+                   terminal | {'sequence': 3, 'payload_type': 'run.terminal.failed',
+                               'payload': terminal['payload'] | {'terminal': 'failed'}}]
+        for trailing in invalid:
+            raw = b''.join(original) + json.dumps(trailing, separators=(',', ':')).encode() + b'\n'
+            with self.assertRaises(TaskAlongError):
+                muse._decode(raw, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+        with self.assertRaises(TaskAlongError):
+            muse._decode(b''.join(original) + encoded[:-1], 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+        def failed_fence():
+            yield from (line[:-1] for line in [*original, encoded])
+            raise TaskAlongError('private_capture_invalid', 'Synthetic metadata hash mismatch.')
+        with self.assertRaises(TaskAlongError):
+            muse._decode(failed_fence(), 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)
+
+    def test_megabyte_native_frames_bound_shape_and_unicode_preserving_decimal_text(self):
+        def parse(value):
+            return muse._native_json(json.dumps(value).encode(), max_bytes=16777216)
+        self.assertEqual(muse._native_json(b'{"duration":1.25}', max_bytes=16777216), {'duration': '1.25'})
+        self.assertEqual(muse._native_json(b'{"duration":1.25}'), {'duration': '1.25'})
+        self.assertEqual(parse({'x': [0] * 4096})['x'], [0] * 4096)
+        nested = 0
+        for _ in range(63):
+            nested = [nested]
+        self.assertEqual(parse({'x': nested}), {'x': nested})
+        # Root + key + outer list + 16 inner lists + 65517 integers = 65536.
+        nodes = [[0] * 4096 for _ in range(15)] + [[0] * 4077]
+        self.assertEqual(parse({'x': nodes}), {'x': nodes})
+        invalid = ({'x': [0] * 4097}, {'x': [nested]}, {'x': nodes[:-1] + [[0] * 4078]},
+                   {'\ud800': 'x'}, {'x': '\ud800'}, {'x': 2**53})
+        for value in invalid:
+            with self.assertRaises((ValueError, UnicodeError)):
+                parse(value)
+        for raw in (b'{"x":NaN}', b'{"x":Infinity}', b'{"x":1,"x":2}', b'[]', b'\xff', '{"x":1}'.encode('utf-16')):
+            with self.assertRaises((ValueError, UnicodeError)):
+                muse._native_json(raw, max_bytes=16777216)
+        response = {'bundle_digest': 'a' * 64, 'changes': {'greeting.txt': 'x\n'}}
+        raw = large_native_output('session', response).replace(b'"schema_version":1', b'"schema_version":1,"duration":1.25', 1)
+        self.assertEqual(muse._decode(raw, 'session', max_proposal_bytes=1048576, max_records=131072, megabyte=True)[0], response)
+
+    def test_megabyte_pipeline_externalizes_exact_bound_and_retains_small_receipts(self):
+        self.configure(capture_profile='megabyte-proposal', attempt_seconds=1440)
+        response = sized_response(self.manifest['digest'], 1048576)
+        with patch.object(muse.sys, 'platform', 'darwin'), patch.object(muse, '_preflight', return_value={}), \
+                patch.object(muse, 'run_foreground_experiment', side_effect=self.large_process(response, journal_padding=5)), \
+                patch.object(muse, '_journal', side_effect=AssertionError('legacy postrun reader')):
+            result = self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'large-output'))
+        self.assertEqual(result['state'], 'proposal_ready')
+        self.assertEqual(result['execution']['configured_model_requests_observed'], 1)
+        journal = next(self.data.glob('sessions/*/*/*/*/session.jsonl'))
+        self.assertGreater(journal.stat().st_size, 4194304)
+        self.assertLess(len(canonical_bytes(result)), 16384)
+        self.assertEqual(result['response_ref']['bytes'], 1048576)
+        self.assertEqual(result['response_ref']['path'], 'response.json')
+        self.assertEqual(result['response_ref']['sha256'], hashlib.sha256(canonical_bytes(response)).hexdigest())
+        self.assertEqual(loads((self.root/'large-output/response.json').read_bytes()), response)
+        self.assertEqual((self.root/'large-output/proposal/response.json').stat().st_size, 1048576)
+        self.assertTrue(result['process']['process_stream_complete'])
+        self.assertFalse((self.root/'large-output/stdout.bin').exists())
+        self.assertFalse((self.root/'large-output/stderr.bin').exists())
+        self.assertTrue((self.root/'large-output/capture/stdout.bin').exists())
+        self.assertFalse(self.calls[0][1]['_retain_output'])
+        self.assertFalse(result['acceptance_allowed'])
+        self.assertEqual(self.calls[0][1]['timeout_seconds'], 1440)
+        review = loads((self.root/'large-output/proposal/review.json').read_bytes())
+        self.assertEqual(review['replacement_profile'], 'megabyte-proposal/1')
+        self.configure(capture_profile='megabyte-proposal', max_proposal_bytes=1024)
+        with patch.object(muse.sys, 'platform', 'darwin'), \
+                patch.object(muse, 'run_foreground_experiment') as native, self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'retry'))
+        self.assertEqual(caught.exception.code, 'provider_already_submitted')
+        native.assert_not_called()
+
+    def test_megabyte_journal_identity_streams_large_files_and_counts_actual_events(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        def rows():
+            yield from self.journal_rows()
+            yield self.journal_rows()[1]
+            for _ in range(5):
+                yield {'payload': {'kind': 'run', 'event': {'kind': 'output', 'text': 'x' * 1048576}}}
+            yield {'payload': {'kind': 'metadata', 'record': {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0',
+                                                           'reasoning_effort': 'high', 'unretained': 'private fixture'}}}
+        path = self.write_journal(rows())
+        self.assertGreater(path.stat().st_size, 4194304)
+        with patch.object(muse, '_journal_rows', side_effect=AssertionError('materialized journal')), \
+                patch.object(muse, '_journal_source', side_effect=AssertionError('legacy source')):
+            count, metadata = muse._journal_identity(config, 'session', native_run='11111111-1111-4111-8111-111111111111')
+        self.assertEqual(count, 2)
+        self.assertEqual(metadata, {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0', 'reasoning_effort': 'high'})
+        self.write_journal([self.journal_rows()[0]])
+        self.assertEqual(muse._journal_identity(config, 'session'), (0, {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0'}))
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config | {'format': 'local-muse-provider/5'}, 'session')
+
+    def test_megabyte_journal_refuses_bad_framing_identity_and_metadata_bounds(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        path = self.write_journal(self.journal_rows())
+        valid = path.read_bytes()
+        invalid = [valid[:-1], b'not-json\n', b'\n' + valid, b'{"payload":{},"payload":{}}\n', b'{"x":"\\ud800"}\n',
+                   json.dumps({'stream': {'kind': 'session', 'id': 'foreign'}, 'payload': {}}).encode() + b'\n',
+                   json.dumps({'payload': {'kind': 'metadata', 'record': {'session_id': 'foreign'}}}).encode() + b'\n',
+                   json.dumps({'payload': {'kind': 'run', 'run_id': 'foreign'}}).encode() + b'\n',
+                   json.dumps({'sequence': True, 'payload': {}}).encode() + b'\n',
+                   json.dumps({'payload': {'kind': 'metadata', 'record': {'padding': 'x' * 65536}}}).encode() + b'\n',
+                   json.dumps({'payload': {'kind': 'metadata', 'record': {'model_id': 'x' * 257}}}).encode() + b'\n']
+        for raw in invalid:
+            path.write_bytes(raw)
+            with self.subTest(prefix=raw[:30]), self.assertRaises(TaskAlongError) as caught:
+                muse._journal_identity(config, 'session', native_run='11111111-1111-4111-8111-111111111111')
+            self.assertEqual(caught.exception.code, 'provider_journal_invalid')
+        # Exactly 64 KiB of metadata is accepted; only identity fields are retained.
+        record = {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0', 'padding': ''}
+        record['padding'] = 'x' * (65536 - len(json.dumps(record, separators=(',', ':')).encode()))
+        self.write_journal([{'payload': {'kind': 'metadata', 'record': record}}])
+        self.assertEqual(muse._journal_identity(config, 'session')[0], 0)
+
+    def test_megabyte_journal_identity_keeps_original_types_and_utf8_byte_bounds(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        for field in ('provider_id', 'model_id', 'reasoning_effort'):
+            for value in (1.5, 1, True, [], {}):
+                rows = self.journal_rows()
+                rows[0]['payload']['record'][field] = value
+                self.write_journal(rows)
+                with self.subTest(field=field, value=value), self.assertRaises(TaskAlongError):
+                    muse._journal_identity(config, 'session')
+            for value, valid in (('é' * 128, True), ('é' * 128 + 'x', False)):
+                rows = self.journal_rows()
+                rows[0]['payload']['record'][field] = value
+                self.write_journal(rows)
+                if valid:
+                    self.assertEqual(muse._journal_identity(config, 'session')[1][field], value)
+                else:
+                    with self.assertRaises(TaskAlongError):
+                        muse._journal_identity(config, 'session')
+        for field in ('provider_id', 'model_id'):
+            rows = self.journal_rows()
+            rows[0]['payload']['record'][field] = None
+            self.write_journal(rows)
+            with self.assertRaises(TaskAlongError):
+                muse._journal_identity(config, 'session')
+        rows = self.journal_rows()
+        rows[0]['payload']['record'].update(reasoning_effort=None, duration=1.5)
+        rows[1]['payload']['event']['latency'] = 2.25
+        self.write_journal(rows)
+        count, metadata = muse._journal_identity(config, 'session')
+        self.assertEqual(count, 1)
+        self.assertIsNone(metadata['reasoning_effort'])
+        self.assertNotIn('duration', metadata)
+        # The journal-only numeric marker never changes native-frame semantics.
+        self.assertIs(type(muse._native_json(b'{"duration":1.5}', max_bytes=16777216)['duration']), str)
+
+    def test_megabyte_journal_optional_bindings_are_consistent_in_known_locations(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        expected = '11111111-1111-4111-8111-111111111111'
+        locations = ((), ('payload',), ('payload', 'record'), ('payload', 'event'))
+        references = {'run_stream': {'kind': 'run', 'id': expected}, 'session_stream': {'kind': 'session', 'id': 'session'}}
+        base = {'payload': {'kind': 'metadata', 'record': {'provider_id': 'meta', 'model_id': 'muse-wonder-full-1.0'}, 'event': {}}}
+        def location(row, path):
+            for key in path:
+                row = row[key]
+            return row
+        for path in locations:
+            for key, value in ({'run_id': expected, 'session_id': 'session'} | references).items():
+                row = copy.deepcopy(base)
+                location(row, path)[key] = value
+                self.write_journal([row])
+                self.assertEqual(muse._journal_identity(config, 'session', native_run=expected)[0], 0)
+                invalid = [None, True, 1, 1.5, [], {}, 'foreign']
+                if key in references:
+                    kind = references[key]['kind']
+                    invalid += [{'kind': 'wrong', 'id': value['id']}, {'kind': kind, 'id': 'foreign'},
+                                {'kind': kind, 'id': 1.5}, {'kind': kind, 'id': None}]
+                for wrong in invalid:
+                    changed = copy.deepcopy(row)
+                    location(changed, path)[key] = wrong
+                    self.write_journal([changed])
+                    with self.subTest(path=path, key=key, wrong=wrong), self.assertRaises(TaskAlongError):
+                        muse._journal_identity(config, 'session', native_run=expected)
+        # Multiple simultaneous references agree; a contradictory nested one fails.
+        row = copy.deepcopy(base)
+        for path in locations:
+            location(row, path).update(run_id=expected, session_id='session', **references)
+        row['stream'] = {'kind': 'session', 'id': 'session'}
+        self.write_journal([row])
+        self.assertEqual(muse._journal_identity(config, 'session', native_run=expected)[0], 0)
+        row['payload']['record']['run_id'] = 'foreign'
+        self.write_journal([row])
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session', native_run=expected)
+
+    def test_megabyte_journal_refuses_path_alias_hardlink_and_ambiguous_dates(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        path = self.write_journal(self.journal_rows())
+        original = path.with_name('retained.jsonl')
+        path.rename(original)
+        path.symlink_to(original)
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        path.unlink()
+        os.link(original, path)
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        path.unlink()
+        original.rename(path)
+        directory = path.parent
+        retained = directory.with_name('retained-session')
+        directory.rename(retained)
+        directory.symlink_to(retained, target_is_directory=True)
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        directory.unlink()
+        retained.rename(directory)
+        self.write_journal(self.journal_rows(), day=muse.datetime.datetime.now().astimezone().date() + muse.datetime.timedelta(days=1))
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, '../session')
+
+    def test_megabyte_journal_refuses_observed_mutation_and_replacement(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        original = muse._native_json
+        for change in ('append', 'rewrite', 'chmod', 'replace'):
+            path = self.write_journal(self.journal_rows())
+            changed = []
+            def mutate(raw, **kwargs):
+                value = original(raw, **kwargs)
+                if not changed:
+                    changed.append(True)
+                    if change == 'append':
+                        with path.open('ab') as stream:
+                            stream.write(b'{"payload":{}}\n')
+                    elif change == 'rewrite':
+                        path.write_bytes(path.read_bytes().replace(b'meta', b'xxxx'))
+                    elif change == 'chmod':
+                        path.chmod(0o600)
+                    else:
+                        path.rename(path.with_name('old-' + change))
+                        path.write_bytes(b'{"payload":{}}\n')
+                return value
+            with patch.object(muse, '_native_json', side_effect=mutate), self.assertRaises(TaskAlongError) as caught:
+                muse._journal_identity(config, 'session')
+            self.assertEqual(caught.exception.code, 'provider_journal_invalid')
+
+    def test_megabyte_journal_bounds_before_parse_and_at_record_frame_limits(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        path = self.write_journal(self.journal_rows())
+        with path.open('wb') as stream:
+            stream.truncate(67108865)
+        with patch.object(muse, '_native_json', side_effect=AssertionError('oversized source parsed')), self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        path.write_bytes(b'{"payload":{}}\n' * 131072)
+        self.assertEqual(muse._journal_identity(config, 'session'), (0, {}))
+        with path.open('ab') as stream:
+            stream.write(b'{"payload":{}}\n')
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+        frame = b'{"payload":{"padding":"' + b'x' * (16777216 - len(b'{"payload":{"padding":""}}')) + b'"}}'
+        self.assertEqual(len(frame), 16777216)
+        path.write_bytes(frame + b'\n')
+        self.assertEqual(muse._journal_identity(config, 'session'), (0, {}))
+        # Four full physical records sum to exactly 64 MiB; no all-file copy.
+        physical = frame[:-4] + frame[-3:] + b'\n'
+        self.assertEqual(len(physical), 16777216)
+        with path.open('wb') as stream:
+            for _ in range(4):
+                stream.write(physical)
+        self.assertEqual(path.stat().st_size, 67108864)
+        self.assertEqual(muse._journal_identity(config, 'session'), (0, {}))
+        path.write_bytes(frame[:-3] + b'x' + frame[-3:] + b'\n')
+        with self.assertRaises(TaskAlongError):
+            muse._journal_identity(config, 'session')
+
+    def test_megabyte_journal_hash_pass_must_match_parsed_bytes(self):
+        self.configure(capture_profile='megabyte-proposal')
+        config = muse._configuration(self.service._store)
+        self.write_journal(self.journal_rows())
+        original = os.read
+        changed = []
+        def altered(fd, maximum):
+            chunk = original(fd, maximum)
+            if chunk and not changed:
+                changed.append(True)
+                return b'x' + chunk[1:]
+            return chunk
+        with patch.object(muse.os, 'read', side_effect=altered), self.assertRaises(TaskAlongError) as caught:
+            muse._journal_identity(config, 'session')
+        self.assertEqual(changed, [True])
+        self.assertEqual(caught.exception.code, 'provider_journal_invalid')
+
+    def test_megabyte_partial_and_cancel_preserve_uncertain_claim_without_staging(self):
+        self.configure(capture_profile='megabyte-proposal')
+        response = {'bundle_digest': self.manifest['digest'], 'changes': {'greeting.txt': 'x\n'}}
+        for broken in ('partial', 'cancelled'):
+            # Use independent original task intents, never a recovery redispatch.
+            bundle = self.bundle if broken == 'partial' else self.root/'second-bundle'
+            if broken != 'partial':
+                pilot.prepare(request() | {'task': 'A separately scoped task.'}, output=str(bundle))
+                _, manifest = pilot._bundle(str(bundle))
+                response = response | {'bundle_digest': manifest['digest']}
+            output = self.root/broken
+            with patch.object(muse.sys, 'platform', 'darwin'), patch.object(muse, '_preflight', return_value={}), \
+                    patch.object(muse, 'run_foreground_experiment', side_effect=self.large_process(response, broken=broken)):
+                if broken == 'partial':
+                    with self.assertRaises(TaskAlongError) as caught:
+                        self.service.run_provider('muse', bundle=str(bundle), output=str(output))
+                    self.assertEqual(caught.exception.effect_outcome, 'uncertain')
+                else:
+                    self.assertEqual(self.service.run_provider('muse', bundle=str(bundle), output=str(output))['state'], 'failed')
+            self.assertTrue((bundle/'provider-submission.json').exists())
+            self.assertTrue((output/'capture/stdout.bin').exists())
+            self.assertFalse((output/'proposal').exists())
+
+    def test_megabyte_proposal_overflow_keeps_capture_and_consumed_claim(self):
+        self.configure(capture_profile='megabyte-proposal')
+        response = sized_response(self.manifest['digest'], 1048577)
+        output = self.root/'overlarge-proposal'
+        with patch.object(muse.sys, 'platform', 'darwin'), patch.object(muse, '_preflight', return_value={}), \
+                patch.object(muse, 'run_foreground_experiment', side_effect=self.large_process(response)), self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider('muse', bundle=str(self.bundle), output=str(output))
+        self.assertEqual((caught.exception.code, caught.exception.effect_outcome), ('provider_proposal_too_large', 'uncertain'))
+        self.assertTrue((output/'capture').is_dir())
+        self.assertTrue((output/'capture/stdout.bin').exists())
+        self.assertTrue((self.bundle/'provider-submission.json').exists())
+        self.assertFalse((output/'proposal').exists())
 
     def process(self,argv,**options):
         self.calls.append((argv,options))

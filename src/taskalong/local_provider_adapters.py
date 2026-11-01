@@ -19,17 +19,19 @@ from referencing.exceptions import Unresolvable
 from .errors import TaskAlongError
 from .local_provider_contract import ProviderLimits, ProviderObservation
 from .validation import canonical_bytes, loads
+from .provider_wire import loads_wire
 from .executors.antigravity_native import NativeAntigravityConfig, plan_native_turn
 from .executors.antigravity_native_protocol import NativeAntigravityDecoder, checked_native_schema
 from .executors.claude_local import create_adapter
 from .executors.claude_local_config import absolute_path, executable, model_name
-from .executors.claude_local_protocol import response_schema
+from .executors.claude_local_protocol import ClaudeLocalDecoder, response_schema
 from .executors.codex_protocol import CodexEventDecoder
 
 FORMAT = "configured-provider-profile/1"
 FORMAT_V2 = "configured-provider-profile/2"
 FORMAT_V3 = "configured-provider-profile/3"
-_ATTEMPT_CEILINGS = {FORMAT: 720, FORMAT_V2: 1440, FORMAT_V3: 1440}
+FORMAT_V4 = "configured-provider-profile/4"
+_ATTEMPT_CEILINGS = {FORMAT: 720, FORMAT_V2: 1440, FORMAT_V3: 1440, FORMAT_V4: 1440}
 PROVIDERS = frozenset({"codex", "antigravity", "claude-code"})
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 
@@ -44,9 +46,11 @@ def _object(value, fields):
         _fail()
 
 
-def _limits(value):
+def _limits(value, *, extended=False):
     result = value if type(value) is ProviderLimits else ProviderLimits.from_dict(value)
-    if result.max_output_bytes > MAX_OUTPUT_BYTES:
+    if (result.max_output_bytes > (64 * 1048576 if extended else MAX_OUTPUT_BYTES)
+            or not extended and (result.max_record_bytes > 1048576 or result.max_proposal_bytes > 65536
+                                 or result.max_protocol_records > 8192)):
         _fail("local_provider_limits_unsupported")
     return result
 
@@ -88,8 +92,11 @@ def _closure(raw, provider, cfg):
 def normalize_configuration(provider, raw):
     """Validate and copy a complete versioned configured-provider profile.
 
-    Version 1 retains its 720-second ceiling; versions 2 and 3 permit an explicit
-    finite limit through 1440 seconds. Version 3 requires Codex native_roots.
+    Version 1 retains its 720-second ceiling; later versions permit an explicit
+    finite limit through 1440 seconds. Version 3 requires Codex native_roots;
+    version 4 requires native_roots for every provider (empty outside Codex) and
+    opts into one-MiB proposals, sixteen-MiB wire records, 131072 records and
+    sixty-four-MiB aggregate output when those limits are explicitly selected.
     All preserve the shared default of 720 and the supplied format, with
     unchanged output and submission bounds.
 
@@ -101,19 +108,20 @@ def normalize_configuration(provider, raw):
     if type(provider) is not str or provider not in PROVIDERS:
         _fail("local_provider_unsupported")
     fields = {"format", "provider", "adapter_configuration", "limits"}
-    if type(raw) is dict and raw.get("format") == FORMAT_V3:
+    if type(raw) is dict and raw.get("format") in (FORMAT_V3, FORMAT_V4):
         fields.add("native_roots")
     _object(raw, fields)
     if (type(raw["format"]) is not str or raw["format"] not in _ATTEMPT_CEILINGS
             or raw["provider"] != provider):
         _fail()
-    limits = _limits(raw["limits"])
+    limits = _limits(raw["limits"], extended=raw["format"] == FORMAT_V4)
     if limits.attempt_seconds > _ATTEMPT_CEILINGS[raw["format"]]:
         _fail("local_provider_limits_unsupported")
     roots = None
-    if raw["format"] == FORMAT_V3:
+    if raw["format"] in (FORMAT_V3, FORMAT_V4):
         roots = raw["native_roots"]
-        if provider != "codex" or type(roots) is not dict or set(roots) - {"CODEX_HOME"}:
+        if (type(roots) is not dict or set(roots) - {"CODEX_HOME"}
+                or provider != "codex" and (raw["format"] == FORMAT_V3 or roots)):
             _fail("local_provider_native_roots_invalid")
         try:
             roots = {key: absolute_path(value) for key, value in roots.items()}
@@ -274,7 +282,7 @@ def adapter_invocation(config, prepared, prompt):
         text = prompt.decode("utf-8")
     except UnicodeError:
         _fail("local_provider_input_invalid")
-    budget = _limits(prepared["remaining_budget"])
+    budget = _limits(prepared["remaining_budget"], extended=config["format"] == FORMAT_V4)
     if any(value > config["limits"][key] for key, value in budget.to_dict().items()):
         _fail("local_provider_limits_expanded")
     cfg, provider = config["adapter_configuration"], config["provider"]
@@ -318,26 +326,32 @@ class _Decoder:
     def __init__(self, config, binding, limits):
         self.config = _configuration(config)
         self.binding, self.schema = _binding(self.config, binding)
-        self.limits = _limits(limits)
+        self.extended = self.config["format"] == FORMAT_V4
+        self.limits = _limits(limits, extended=self.extended)
         if any(v > self.config["limits"][k] for k, v in self.limits.to_dict().items()):
             _fail("local_provider_limits_expanded")
         self.provider = self.config["provider"]
         self._error = self._finished = self._exit = None
         self._total = 0
         self._pending, self._result, self._stderr = bytearray(), bytearray(), bytearray()
+        self._stderr_count, self._stderr_hash = 0, hashlib.sha256()
         self._initialized_session = None
         if self.provider == "claude-code":
-            self.native = create_adapter().new_decoder(self.binding, self.limits.to_dict())
+            self.native = (ClaudeLocalDecoder(self.binding, self.limits.to_dict(),
+                max_content_bytes=self.limits.max_proposal_bytes, extended_wire=True) if self.extended else
+                create_adapter().new_decoder(self.binding, self.limits.to_dict()))
         elif self.provider == "antigravity":
             if "workspace" not in binding:
                 _fail("local_provider_binding_invalid")
             self.native = NativeAntigravityDecoder(expected_model=self.binding["requested_model"],
                 expected_cwd=absolute_path(binding["workspace"]), result_schema=self.schema,
                 max_output_bytes=self.limits.max_output_bytes, max_line_bytes=self.limits.max_record_bytes,
-                max_frames=self.limits.max_protocol_records)
+                max_frames=self.limits.max_protocol_records,
+                max_result_bytes=self.limits.max_proposal_bytes if self.extended else None,
+                extended_wire=self.extended)
         else:
             self.native = CodexEventDecoder(max_records=self.limits.max_protocol_records,
-                                           max_line_bytes=self.limits.max_record_bytes)
+                max_line_bytes=self.limits.max_record_bytes, extended_wire=self.extended)
 
     @property
     def session_id(self):
@@ -361,7 +375,8 @@ class _Decoder:
             if self._total > self.limits.max_output_bytes:
                 _fail("local_provider_output_limit", uncertain=True)
             if stream == "result":
-                if self.provider != "codex" or len(self._result) + len(chunk) > self.limits.max_record_bytes:
+                result_limit = min(self.limits.max_record_bytes, 4194304) if self.extended else self.limits.max_record_bytes
+                if self.provider != "codex" or len(self._result) + len(chunk) > result_limit:
                     _fail("local_provider_result_limit", uncertain=True)
                 self._result.extend(chunk)
             elif self.provider == "claude-code":
@@ -373,19 +388,28 @@ class _Decoder:
                     if getattr(self.native, "_initialized", False):
                         self._initialized_session = self.binding["attempt_id"]
             elif stream == "stderr":
-                self._stderr.extend(chunk)
+                if self.extended:
+                    self._stderr_count += len(chunk)
+                    self._stderr_hash.update(chunk)
+                else:
+                    self._stderr.extend(chunk)
             elif self.provider == "antigravity":
                 self.native.feed(chunk)
             else:
-                self._pending.extend(chunk)
-                while b"\n" in self._pending:
-                    line, _, rest = self._pending.partition(b"\n")
-                    self._pending = bytearray(rest)
-                    self.native.consume(bytes(line))
+                offset = 0
+                while offset < len(chunk):
+                    newline = chunk.find(b"\n", offset)
+                    end = len(chunk) if newline < 0 else newline
+                    if len(self._pending) + end - offset > self.limits.max_record_bytes:
+                        _fail("local_provider_record_limit" if newline < 0 else "runtime_protocol_invalid", uncertain=True)
+                    self._pending.extend(chunk[offset:end])
+                    if newline < 0:
+                        break
+                    self.native.consume(bytes(self._pending))
+                    self._pending.clear()
                     if self.native.error_code:
                         _fail(self.native.error_code, uncertain=True)
-                if len(self._pending) > self.limits.max_record_bytes:
-                    _fail("local_provider_record_limit", uncertain=True)
+                    offset = end + 1
         except TaskAlongError as exc:
             self._error = exc.code
             raise
@@ -400,6 +424,10 @@ class _Decoder:
             "reported_model": None, "requested_effort": self.binding["requested_effort"], "effective_effort": None,
             "terminal_status": "failed", "structured_result": None, "reported_usage": {}, "tool_denials": [],
             "protocol_errors": [], "diagnostics": {"qualification": "native_unqualified"}}
+        if self.extended and self.provider != "claude-code":
+            value["diagnostics"].update(stderr_bytes=self._stderr_count,
+                stderr_sha256=self._stderr_hash.hexdigest(),
+                stderr_classification="unclassified" if self._stderr_count else "absent")
         try:
             if self._error:
                 _fail(self._error, uncertain=True)
@@ -410,7 +438,9 @@ class _Decoder:
                 value.update(session_id=native["native_session_id"], reported_model=native["reported_model"],
                     structured_result=native["structured_response"], reported_usage=native["reported_usage"], terminal_status="completed")
             elif self.provider == "antigravity":
-                native = self.native.finish(exit_code=exit_code, stderr=bytes(self._stderr))
+                native = (self.native.finish(exit_code=exit_code, stderr_metadata={
+                    "bytes": self._stderr_count, "sha256": self._stderr_hash.hexdigest()}) if self.extended else
+                    self.native.finish(exit_code=exit_code, stderr=bytes(self._stderr)))
                 value.update(session_id=native.conversation_id, reported_model=native.reported_model,
                              reported_usage=loads(native.reported_usage_json))
                 if not native.successful:
@@ -419,7 +449,8 @@ class _Decoder:
                     elif native.provider_status in {"WAITING", "RUNNING"}:
                         value["terminal_status"] = "incomplete"
                     _fail(native.error_code, uncertain=True)
-                proposal = loads(native.structured_output_json, max_bytes=self.limits.max_proposal_bytes)
+                loader = loads_wire if self.extended else loads
+                proposal = loader(native.structured_output_json, max_bytes=self.limits.max_proposal_bytes)
                 value.update(structured_result=proposal, terminal_status="completed")
             else:
                 value.update(session_id=self.native.thread_id, reported_usage=self.native.usage)
@@ -428,10 +459,13 @@ class _Decoder:
                     _fail(self.native.error_code or "local_provider_stream_incomplete", uncertain=True)
                 if exit_code != 0:
                     _fail("local_provider_exit_failed", uncertain=True)
-                value["diagnostics"].update(stderr_bytes=len(self._stderr),
-                    stderr_sha256=hashlib.sha256(self._stderr).hexdigest(),
-                    stderr_classification="unclassified" if self._stderr else "absent")
-                proposal = loads(bytes(self._result), max_bytes=self.limits.max_record_bytes)
+                count = self._stderr_count if self.extended else len(self._stderr)
+                sha = self._stderr_hash.hexdigest() if self.extended else hashlib.sha256(self._stderr).hexdigest()
+                value["diagnostics"].update(stderr_bytes=count, stderr_sha256=sha,
+                    stderr_classification="unclassified" if count else "absent")
+                loader = loads_wire if self.extended else loads
+                result_limit = min(self.limits.max_record_bytes, 4194304) if self.extended else self.limits.max_record_bytes
+                proposal = loader(bytes(self._result), max_bytes=result_limit)
                 if len(canonical_bytes(proposal)) > self.limits.max_proposal_bytes:
                     _fail("local_provider_result_limit", uncertain=True)
                 Draft202012Validator(self.schema).validate(proposal)

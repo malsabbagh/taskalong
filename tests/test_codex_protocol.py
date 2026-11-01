@@ -11,6 +11,35 @@ def record(**value):
 
 
 class CodexProtocolTests(unittest.TestCase):
+    def test_extended_wire_is_explicit_finite_and_keeps_legacy_line_bound(self):
+        raw = record(type="item.completed", item={"text": "x" * 1048576})
+        legacy = CodexEventDecoder()
+        legacy.consume(raw)
+        self.assertEqual(legacy.error_code, "runtime_protocol_invalid")
+        extended = CodexEventDecoder(max_line_bytes=4194304, extended_wire=True)
+        extended.consume(raw)
+        self.assertIsNone(extended.error_code)
+        self.assertEqual(extended.diagnostics, {})
+        for kw in ({"max_line_bytes": 1048577}, {"extended_wire": 1},
+                   {"extended_wire": True, "max_line_bytes": 16777217},
+                   {"extended_wire": True, "max_records": 131073}):
+            with self.assertRaises(TaskAlongError):
+                CodexEventDecoder(**kw)
+
+    def test_extended_wire_preserves_strict_shape_and_bounded_record_flood(self):
+        for raw in (b'{"type":"item.completed","type":"turn.completed"}',
+                    b'{"type":"item.completed","x":NaN}', b'{"type":"item.completed","x":1.5}',
+                    b'{"type":"item.completed","x":"\\ud800"}',
+                    b'{"type":"item.completed","x":' + b'[' * 40 + b'0' + b']' * 40 + b'}'):
+            d = CodexEventDecoder(max_line_bytes=4194304, extended_wire=True)
+            d.consume(raw)
+            self.assertEqual(d.error_code, "runtime_protocol_invalid")
+        d = CodexEventDecoder(max_records=2, max_line_bytes=4194304, extended_wire=True)
+        for _ in range(3):
+            d.consume(record(type="future.event"))
+        self.assertEqual(d.error_code, "runtime_protocol_record_limit")
+        self.assertEqual(d.diagnostics, {"unknown_event_count": 2})
+
     def test_one_turn_observes_only_thread_and_reported_usage(self):
         decoder = CodexEventDecoder()
         decoder.consume(record(type="thread.started", thread_id="exact-thread", model="untrusted-model"))

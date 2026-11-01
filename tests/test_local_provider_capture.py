@@ -330,8 +330,8 @@ class PrivateCaptureTests(unittest.TestCase):
         (self.root / "unknown").write_bytes(b"unaccounted")
         self.rejects(lambda: read_capture(self.root))
 
-    def test_final_raw_fence_rejects_mutation_during_later_stream_validation(self):
-        sink = self.capture()
+    def test_final_raw_fence_rejects_mutation_during_later_stream_validation(self, *, schema_version="1.0"):
+        sink = self.capture(schema_version=schema_version)
         sink.write("stdout", b"good")
         sink.finalize()
         real_entry = capture_module._entry
@@ -348,8 +348,8 @@ class PrivateCaptureTests(unittest.TestCase):
             self.rejects(lambda: read_capture(self.root))
         self.assertEqual((self.root / "stdout.bin").read_bytes(), b"evil")
 
-    def test_concurrent_streams_share_one_serialized_aggregate_budget(self):
-        sink = self.capture(max_output_bytes=6)
+    def test_concurrent_streams_share_one_serialized_aggregate_budget(self, *, schema_version="1.0"):
+        sink = self.capture(max_output_bytes=6, schema_version=schema_version)
         first_writing = threading.Event()
         second_attempted = threading.Event()
         release_first = threading.Event()
@@ -405,6 +405,295 @@ class PrivateCaptureTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "limited")
         self.assertEqual(sum(s["retained_bytes"] for s in receipt["streams"].values()), 6)
         self.assertEqual(sum(s["observed_bytes"] for s in receipt["streams"].values()), 12)
+
+    def test_version2_exact_64MiB_combined_capture_roundtrips_incrementally(self):
+        maximum = 64 * 1024 * 1024
+        sink = self.capture(schema_version="2.0", max_output_bytes=maximum)
+        chunk = bytes(range(256)) * 256
+        streams = ("stdout", "stderr", "result")
+        hashes = {stream: hashlib.sha256() for stream in streams}
+        sizes = dict.fromkeys(streams, 0)
+        for index in range(maximum // len(chunk)):
+            stream = streams[index % len(streams)]
+            sink.write(stream, chunk)
+            hashes[stream].update(chunk)
+            sizes[stream] += len(chunk)
+        receipt = sink.finalize()
+        self.assertEqual(receipt["schema_version"], "2.0")
+        self.assertEqual(receipt["status"], "closed")
+        self.assertFalse(sink.limited)
+        self.assertEqual(receipt["records"], 1026)
+        self.assertEqual(read_capture(self.root), receipt)
+        for stream in streams:
+            reference = receipt["streams"][stream]
+            self.assertEqual(reference["retained_bytes"], sizes[stream])
+            self.assertEqual(reference["observed_bytes"], sizes[stream])
+            self.assertEqual(reference["sha256"], hashes[stream].hexdigest())
+            with (self.root / reference["path"]).open("rb") as source:
+                self.assertEqual(hashlib.file_digest(source, "sha256").hexdigest(), hashes[stream].hexdigest())
+        self.assertEqual(loads((self.root / "capture.json").read_bytes())["schema_version"], "2.0")
+        self.assertEqual(loads(self.record(1025).read_bytes())["schema_version"], "1.0")
+
+    def test_version2_large_aggregate_overflow_includes_owned_result(self):
+        maximum = 5 * 1024 * 1024 + 3
+        sink = self.capture(schema_version="2.0", max_output_bytes=maximum)
+        chunk = b"x" * 65536
+        for _ in range(64):
+            sink.write("stdout", chunk)
+        for _ in range(16):
+            sink.write("stderr", chunk)
+        sink.write("result", b"12345")
+        self.assertTrue(sink.limited)
+        receipt = sink.finalize()
+        self.assertEqual(receipt["status"], "limited")
+        self.assertEqual(receipt["schema_version"], "2.0")
+        self.assertEqual(sum(ref["retained_bytes"] for ref in receipt["streams"].values()), maximum)
+        self.assertEqual(sum(ref["observed_bytes"] for ref in receipt["streams"].values()), maximum + 2)
+        self.assertEqual((self.root / "result.bin").read_bytes(), b"123")
+
+    def test_version2_partial_close_reopens_as_evidence_without_writer_resume(self):
+        sink = self.capture(schema_version="2.0", max_output_bytes=8 * 1024 * 1024)
+        chunk = b"a" * 65536
+        for _ in range(65):
+            sink.write("stdout", chunk)
+        sink.write("stderr", b"tail")
+        sink.close()
+        receipt = read_capture(self.root)
+        self.assertEqual(receipt["schema_version"], "2.0")
+        self.assertEqual(receipt["status"], "incomplete")
+        self.assertFalse(receipt["observed_counts_complete"])
+        self.assertEqual(receipt["streams"]["stderr"]["uncheckpointed_bytes"], 4)
+        self.rejects(lambda: PrivateCapture(self.root, schema_version="2.0"))
+        self.assertEqual((self.root / "stderr.bin").read_bytes(), b"tail")
+
+    def test_capture_schema_versions_and_metadata_capacity_are_explicit(self):
+        for version in (None, True, 2, 2.0, ["2.0"], {}, "2", "1.1", "3.0"):
+            self.rejects(lambda: PrivateCapture(self.root, schema_version=version))
+            self.assertFalse(self.root.exists())
+        self.rejects(lambda: PrivateCapture(self.root, max_output_bytes=4 * 1024 * 1024 + 1))
+        self.rejects(lambda: PrivateCapture(self.root, schema_version="1.0", max_output_bytes=4 * 1024 * 1024 + 1))
+        self.rejects(lambda: PrivateCapture(self.root, schema_version="2.0", max_output_bytes=64 * 1024 * 1024 + 1))
+        self.rejects(lambda: PrivateCapture(self.root, schema_version="2.0", max_records=131072))
+        self.rejects(lambda: PrivateCapture(self.root, schema_version="2.0", max_output_bytes=True))
+        sink = self.capture()
+        receipt = sink.finalize()
+        self.assertEqual(receipt["schema_version"], "1.0")
+        config = loads((self.root / "capture.json").read_bytes())
+        self.assertEqual(config["max_output_bytes"], 4194304)
+
+    def test_reader_does_not_reinterpret_legacy_or_unknown_config_limits(self):
+        sink = self.capture()
+        sink.finalize()
+        path = self.root / "capture.json"
+        original = loads(path.read_bytes())
+        config = dict(original, max_output_bytes=64 * 1024 * 1024)
+        self.rewrite(path, config)
+        self.rejects(lambda: read_capture(self.root))
+        for version in ("3.0", True):
+            self.rewrite(path, dict(original, schema_version=version))
+            self.rejects(lambda: read_capture(self.root))
+        # Even a valid new version cannot relabel old immutable checkpoints;
+        # their config hash binds the exact original declaration.
+        self.rewrite(path, dict(original, schema_version="2.0"))
+        self.rejects(lambda: read_capture(self.root))
+
+    def test_version2_retains_final_raw_race_fence(self):
+        self.test_final_raw_fence_rejects_mutation_during_later_stream_validation(schema_version="2.0")
+
+    def test_version2_serializes_the_combined_budget(self):
+        self.test_concurrent_streams_share_one_serialized_aggregate_budget(schema_version="2.0")
+
+    def test_iter_records_requires_open_finalized_sink_and_bounded_arguments(self):
+        sink = self.capture(schema_version="2.0")
+        self.rejects(lambda: sink.iter_records("stdout"))
+        sink.write("stdout", b"line\n")
+        sink.finalize()
+        for stream in (None, True, "other", "../stdout"):
+            self.rejects(lambda: sink.iter_records(stream))
+        for maximum in (0, -1, True, 1.0, 16 * 1024 * 1024 + 1):
+            self.rejects(lambda: sink.iter_records("stdout", max_record_bytes=maximum))
+        self.assertEqual(list(sink.iter_records("stdout")), [b"line"])
+        iterator = sink.iter_records("stdout")
+        sink.close()
+        self.rejects(lambda: next(iterator))
+        self.rejects(lambda: sink.iter_records("stdout"))
+
+    def test_iter_records_preserves_blank_lines_and_requires_last_lf(self):
+        sink = self.capture()
+        sink.write("stdout", b"\none\n\ntwo\n")
+        sink.write("stderr", b"truncated")
+        sink.finalize()
+        self.assertEqual(list(sink.iter_records("stdout")), [b"", b"one", b"", b"two"])
+        self.assertEqual(list(sink.iter_records("result")), [])
+        self.rejects(lambda: list(sink.iter_records("stderr")))
+        self.rejects(lambda: list(sink.iter_records("stdout", max_record_bytes=2)))
+
+    def test_iter_records_exact_16MiB_frame_uses_bounded_pread_windows(self):
+        maximum = 16 * 1024 * 1024
+        sink = self.capture(schema_version="2.0", max_output_bytes=64 * 1024 * 1024)
+        chunk = b"x" * 65536
+        for _ in range(maximum // len(chunk)):
+            sink.write("stdout", chunk)
+        sink.write("stdout", b"\nlast\n")
+        sink.finalize()
+        real_pread = os.pread
+        requested = []
+        def bounded(fd, count, offset):
+            requested.append(count)
+            self.assertLessEqual(count, 65536)
+            return real_pread(fd, count, offset)
+        position = os.lseek(sink._fds["stdout"], 0, os.SEEK_CUR)
+        with patch("taskalong.local_provider_capture.os.pread", side_effect=bounded):
+            iterator = sink.iter_records("stdout", max_record_bytes=maximum)
+            first = next(iterator)
+            self.assertEqual(len(first), maximum)
+            expected_hash = hashlib.sha256()
+            for _ in range(256):
+                expected_hash.update(chunk)
+            self.assertEqual(hashlib.sha256(first).hexdigest(), expected_hash.hexdigest())
+            del first
+            self.assertEqual(next(iterator), b"last")
+            with self.assertRaises(StopIteration):
+                next(iterator)
+        self.assertTrue(requested)
+        self.assertEqual(os.lseek(sink._fds["stdout"], 0, os.SEEK_CUR), position)
+
+    def test_iter_records_hash_verification_is_required_at_exhaustion(self):
+        sink = self.capture()
+        sink.write("stdout", b"good\n")
+        sink.finalize()
+        real_pread = os.pread
+        def corrupted_read(fd, count, offset):
+            return real_pread(fd, count, offset).replace(b"good", b"evil")
+        with patch("taskalong.local_provider_capture.os.pread", side_effect=corrupted_read):
+            iterator = sink.iter_records("stdout")
+            self.assertEqual(next(iterator), b"evil")
+            self.rejects(lambda: next(iterator))
+
+    def test_iter_records_rejects_tamper_between_yields(self):
+        sink = self.capture(schema_version="2.0")
+        sink.write("stdout", b"first\nsecond\n")
+        sink.finalize()
+        iterator = sink.iter_records("stdout")
+        self.assertEqual(next(iterator), b"first")
+        (self.root / "stdout.bin").write_bytes(b"first\nEVIL!!\n")
+        self.rejects(lambda: next(iterator))
+
+    def test_iter_records_concurrent_close_between_yields_cannot_verify(self):
+        sink = self.capture(schema_version="2.0")
+        sink.write("stdout", b"first\nsecond\n")
+        sink.finalize()
+        iterator = sink.iter_records("stdout")
+        self.assertEqual(next(iterator), b"first")
+        closed = threading.Event()
+        def close():
+            sink.close()
+            closed.set()
+        closer = threading.Thread(target=close)
+        closer.start()
+        closer.join(5)
+        self.assertTrue(closed.is_set())
+        self.assertFalse(closer.is_alive())
+        self.rejects(lambda: next(iterator))
+
+    def test_iter_records_rejects_hardlink_and_replaced_inode(self):
+        sink = self.capture(schema_version="2.0")
+        sink.write("stdout", b"first\nsecond\n")
+        sink.finalize()
+        iterator = sink.iter_records("stdout")
+        self.assertEqual(next(iterator), b"first")
+        raw = self.root / "stdout.bin"
+        alias = self.parent / "linked-raw"
+        os.link(raw, alias)
+        self.rejects(lambda: next(iterator))
+        alias.unlink()
+        raw.rename(self.parent / "original-raw")
+        raw.write_bytes(b"first\nsecond\n")
+        raw.chmod(0o600)
+        self.rejects(lambda: list(sink.iter_records("stdout")))
+
+    def test_iter_records_rejects_link_mode_and_other_stream_changes(self):
+        sink = self.capture(schema_version="2.0")
+        sink.write("stdout", b"first\n")
+        sink.finalize()
+        iterator = sink.iter_records("stdout")
+        self.assertEqual(next(iterator), b"first")
+        (self.root / "stderr.bin").write_bytes(b"changed")
+        self.rejects(lambda: next(iterator))
+        (self.root / "stdout.bin").chmod(0o644)
+        self.rejects(lambda: list(sink.iter_records("stdout")))
+
+    def finalized_line_iterator(self):
+        sink = self.capture(schema_version="2.0")
+        sink.write("stdout", b"line\n")
+        receipt = sink.finalize()
+        iterator = sink.iter_records("stdout")
+        self.assertEqual(next(iterator), b"line")
+        return sink, receipt, iterator
+
+    def test_iter_records_rejects_deleted_final_checkpoint_before_exhaustion(self):
+        sink, receipt, iterator = self.finalized_line_iterator()
+        self.record(receipt["records"] - 1).unlink()
+        self.assertEqual(read_capture(self.root)["status"], "incomplete")
+        self.rejects(lambda: list(iterator))
+
+    def test_iter_records_rejects_checkpoint_or_config_replacement_with_identical_bytes(self):
+        for name in ("capture.json", "record-000001.json"):
+            with self.subTest(name=name):
+                self.root = self.parent / ("replace-" + name)
+                sink, receipt, iterator = self.finalized_line_iterator()
+                path = self.root / name
+                data = path.read_bytes()
+                path.rename(self.parent / ("old-" + name))
+                path.write_bytes(data)
+                path.chmod(0o400)
+                # Content closure alone is unchanged; immutable identity must
+                # also stay bound to the metadata read at finalize.
+                self.assertEqual(read_capture(self.root), receipt)
+                self.rejects(lambda: list(iterator))
+
+    def test_iter_records_rejects_mutated_config_or_final_record(self):
+        for name in ("capture.json", "record-000001.json"):
+            with self.subTest(name=name):
+                self.root = self.parent / ("mutate-" + name)
+                sink, receipt, iterator = self.finalized_line_iterator()
+                path = self.root / name
+                document = loads(path.read_bytes())
+                if name == "capture.json":
+                    document["max_records"] -= 1
+                else:
+                    document["finalized"] = False
+                self.rewrite(path, document)
+                self.rejects(lambda: list(iterator))
+
+    def test_iter_records_rejects_metadata_symlink_or_missing_config(self):
+        for operation in ("symlink", "delete"):
+            with self.subTest(operation=operation):
+                self.root = self.parent / operation
+                sink, receipt, iterator = self.finalized_line_iterator()
+                if operation == "delete":
+                    (self.root / "capture.json").unlink()
+                else:
+                    path = self.record(receipt["records"] - 1)
+                    target = self.parent / "external-index"
+                    path.rename(target)
+                    path.symlink_to(target)
+                self.rejects(lambda: list(iterator))
+
+    def test_returned_closure_mutation_cannot_change_iterator_expectation(self):
+        sink, receipt, iterator = self.finalized_line_iterator()
+        receipt["status"] = "caller-mutated"
+        receipt["records"] = 0
+        receipt["streams"]["stdout"]["sha256"] = "0" * 64
+        self.assertEqual(list(iterator), [])
+        # A caller cannot weaken the privately stored closure into an incomplete
+        # one that would make deletion of the final checkpoint acceptable.
+        iterator = sink.iter_records("stdout")
+        self.assertEqual(next(iterator), b"line")
+        self.record(1).unlink()
+        receipt.clear()
+        receipt.update(read_capture(self.root))
+        self.rejects(lambda: list(iterator))
 
     def test_raw_fsync_precedes_each_immutable_record_creation(self):
         sink = self.capture()

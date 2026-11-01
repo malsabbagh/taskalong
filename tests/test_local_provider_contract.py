@@ -29,9 +29,9 @@ class LocalProviderContractTests(unittest.TestCase):
         for field, values in {
             "attempt_seconds": (True, 0, 1441, float("inf")),
             "max_output_bytes": (False, 0, 64 * 1024 * 1024 + 1),
-            "max_protocol_records": (0, 8193, 1.5),
-            "max_record_bytes": (0, 1024 * 1024 + 1),
-            "max_proposal_bytes": (0, 65537),
+            "max_protocol_records": (0, 131073, 1.5),
+            "max_record_bytes": (0, 16 * 1024 * 1024 + 1),
+            "max_proposal_bytes": (0, 1048577),
             "max_controller_submissions": (0, 2, True),
         }.items():
             for value in values:

@@ -104,6 +104,50 @@ class SupervisedPilotTests(unittest.TestCase):
         with self.assertRaises(TaskAlongError):self.prepare(request()|{'files':{f'f{i}':'x'*65535+'\n' for i in range(5)}})
         self.assertFalse(self.bundle.exists())
 
+    def test_megabyte_replacement_profile_is_explicit_and_receipt_stays_small(self):
+        binding = self.prepare()
+        response = {'bundle_digest': binding['bundle_digest'], 'changes': {'hello.txt': '\n'}}
+        extra = 1048576 - len(canonical_bytes(response))
+        response['changes']['hello.txt'] = 'x' * extra + '\n'
+        self.assertEqual(len(canonical_bytes(response)), 1048576)
+        with self.assertRaises(TaskAlongError):
+            pilot.stage(bundle=str(self.bundle), response=response, output=str(self.output))
+        self.assertFalse((self.bundle/'response-claim.json').exists())
+        report = pilot.stage(bundle=str(self.bundle), response=response, output=str(self.output), replacement_profile='megabyte-proposal/1')
+        self.assertEqual(report['replacement_profile'], 'megabyte-proposal/1')
+        self.assertLess(len(canonical_bytes(report)), 4096)
+        self.assertEqual((self.output/'response.json').stat().st_size, 1048576)
+        self.assertNotIn('response', report)
+        with self.assertRaises(TaskAlongError) as caught:
+            pilot.stage(bundle=str(self.bundle), response=response, output=str(self.root/'retry'), replacement_profile='megabyte-proposal/1')
+        self.assertEqual(caught.exception.code, 'pilot_response_already_claimed')
+
+    def test_megabyte_replacement_profile_cannot_expand_authority_json_or_snapshot(self):
+        binding = self.prepare()
+        response = {'bundle_digest': binding['bundle_digest'], 'changes': {'hello.txt': 'x' * 1048576 + '\n'}}
+        with self.assertRaises(TaskAlongError):
+            pilot.stage(bundle=str(self.bundle), response=response, output=str(self.output), replacement_profile='megabyte-proposal/1')
+        with self.assertRaises(TaskAlongError):
+            pilot._proposal({'digest': binding['bundle_digest']}, {}, replacement_profile='unbounded')
+        with self.assertRaises(TaskAlongError):
+            pilot._request(request() | {'files': {'hello.txt': 'x' * 65536 + '\n'}})
+        self.assertFalse((self.bundle/'response-claim.json').exists())
+
+    def test_megabyte_interrupted_staging_preserves_claim_and_partial_bytes(self):
+        response = self.response()
+        response['changes']['hello.txt'] = 'x' * 70000 + '\n'
+        original = pilot._write
+        def failed(root, name, data):
+            if name == 'review.json':
+                raise OSError('Synthetic write failure')
+            return original(root, name, data)
+        with patch.object(pilot, '_write', side_effect=failed), self.assertRaises(TaskAlongError) as caught:
+            pilot.stage(bundle=str(self.bundle), response=response, output=str(self.output), replacement_profile='megabyte-proposal/1')
+        self.assertEqual(caught.exception.effect_outcome, 'uncertain')
+        self.assertTrue((self.bundle/'response-claim.json').exists())
+        self.assertTrue((self.output/'response.json').exists())
+        self.assertFalse((self.output/'review.json').exists())
+
     def test_existing_directory_and_symlink_refuse_without_overwrite(self):
         self.bundle.mkdir();(self.bundle/'keep').write_text('original')
         with self.assertRaises(TaskAlongError):self.prepare()

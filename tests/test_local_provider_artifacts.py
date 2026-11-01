@@ -13,7 +13,7 @@ import unittest
 from taskalong.errors import TaskAlongError
 from taskalong.local_provider_artifacts import validate_response
 from taskalong.local_provider_tasks import FORMAT, _intent
-from taskalong.validation import canonical_bytes, digest, loads
+from taskalong.validation import MAX_DOCUMENT_BYTES, canonical_bytes, digest, loads
 
 
 def blob(raw):
@@ -139,10 +139,121 @@ class ProviderArtifactTests(unittest.TestCase):
         self.rejected(plan, {"new.txt": "é\n"}, max_proposal_bytes=size - 1)
         self.rejected(plan, {"new.txt": "é\n"}, max_patch_bytes=len(artifact.patch_bytes) - 1)
         self.assertEqual(validate_response(plan, response, max_patch_bytes=len(artifact.patch_bytes)), artifact)
-        for value in (0, -1, True, 1.5, 1048577):
-            for key in ("max_proposal_bytes", "max_patch_bytes"):
+        for key, maximum in (("max_proposal_bytes", 1048576), ("max_patch_bytes", 4194304)):
+            for value in (0, -1, True, 1.5, maximum + 1):
                 with self.subTest(key=key, value=value):
                     self.rejected(plan, {"new.txt": "ok\n"}, **{key: value})
+
+    def test_exact_megabyte_canonical_replacement_is_explicit_and_larger_is_rejected(self):
+        cap = 1048576
+        plan = synthetic_plan({"new.txt": None})
+        overhead = len(canonical_bytes(self.response(plan, {"new.txt": "\n"})))
+        content = "x" * (cap - overhead) + "\n"
+        response = self.response(plan, {"new.txt": content})
+        self.assertEqual(len(canonical_bytes(response)), cap)
+        artifact = validate_response(plan, response, max_proposal_bytes=cap, max_patch_bytes=4194304)
+        metadata = artifact.to_dict()
+        self.assertEqual(metadata["response_bytes"], cap)
+        self.assertEqual(metadata["files"][0]["after"]["bytes"], len(content.encode()))
+        self.assertEqual(metadata["files"][0]["after"]["sha256"], hashlib.sha256(content.encode()).hexdigest())
+        self.assertGreater(len(artifact.patch_bytes), cap)
+        self.rejected(plan, {"new.txt": content}, max_proposal_bytes=cap)  # Legacy patch default stays 1 MiB.
+        self.rejected(plan, {"new.txt": content}, max_patch_bytes=4194304)  # Proposal default stays 64 KiB.
+        self.rejected(plan, {"new.txt": "x" + content}, max_proposal_bytes=cap, max_patch_bytes=4194304)
+        self.assertEqual(MAX_DOCUMENT_BYTES, cap)
+        with self.assertRaises(TaskAlongError):
+            canonical_bytes({"ordinary_authority_document": "x" * cap})
+
+    def test_megabyte_boundary_counts_utf8_and_json_escaping(self):
+        cap = 1048576
+        plan = synthetic_plan({"new.txt": None})
+        unit = 'é"\\\t🙂'
+        content = unit * 70000 + "\n"
+        remaining = cap - len(canonical_bytes(self.response(plan, {"new.txt": content})))
+        self.assertGreater(remaining, 0)
+        content = "x" * remaining + content
+        response = self.response(plan, {"new.txt": content})
+        encoded = canonical_bytes(response)
+        self.assertEqual(len(encoded), cap)
+        self.assertLess(len(content.encode()), cap - 100000)
+        artifact = validate_response(plan, response, max_proposal_bytes=cap, max_patch_bytes=4194304)
+        metadata = artifact.to_dict()
+        self.assertEqual(metadata["response_sha256"], hashlib.sha256(encoded).hexdigest())
+        self.assertEqual(metadata["files"][0]["after"]["bytes"], len(content.encode()))
+        self.rejected(plan, {"new.txt": "x" + content}, max_proposal_bytes=cap, max_patch_bytes=4194304)
+
+    def test_replacement_line_prefix_amplification_has_an_independent_patch_bound(self):
+        cap = 1048576
+        before = "\n" * 262144
+        plan = synthetic_plan({"target.txt": snapshot(before)})
+        overhead = len(canonical_bytes(self.response(plan, {"target.txt": "\n"})))
+        content = "x" * (cap - overhead) + "\n"
+        self.rejected(plan, {"target.txt": content}, max_proposal_bytes=cap)
+        artifact = self.artifact(plan, {"target.txt": content}, max_proposal_bytes=cap, max_patch_bytes=4194304)
+        size = len(artifact.patch_bytes)
+        self.assertGreater(size, cap + 500000)
+        self.assertLess(size, 4194304)
+        self.assertEqual(self.artifact(plan, {"target.txt": content}, max_proposal_bytes=cap,
+                                      max_patch_bytes=size), artifact)
+        self.rejected(plan, {"target.txt": content}, max_proposal_bytes=cap, max_patch_bytes=size - 1)
+
+    def test_exact_megabyte_diff_and_normalized_context_amplification(self):
+        cap = 1048576
+        prefix = ("context" + "x" * 86000 + "\n") * 3
+        plan = synthetic_plan({"target.txt": snapshot(prefix + "old\n")}, kind="unified-diff/1")
+        header = "--- a/target.txt\n+++ b/target.txt\n@@ -4 +4 @@\n-old\n+"
+        content = "é" * 100000 + '"\\\t' * 10000
+        remaining = cap - len(canonical_bytes(self.response(plan, header + content + "\n")))
+        self.assertGreater(remaining, 0)
+        content = "y" * remaining + content + "\n"
+        patch = header + content
+        response = self.response(plan, patch)
+        self.assertEqual(len(canonical_bytes(response)), cap)
+        self.rejected(plan, patch, max_proposal_bytes=cap)
+        artifact = validate_response(plan, response, max_proposal_bytes=cap, max_patch_bytes=4194304)
+        after = (prefix + content).encode()
+        self.assertGreater(len(artifact.patch_bytes), cap)
+        self.assertGreater(len(after), cap)
+        self.assertLessEqual(len(after), 2 * cap)
+        self.assertLessEqual(len(after), 524288 + cap)
+        self.assertEqual(artifact.to_dict()["files"][0]["after"]["sha256"], hashlib.sha256(after).hexdigest())
+        size = len(artifact.patch_bytes)
+        self.assertEqual(validate_response(plan, response, max_proposal_bytes=cap, max_patch_bytes=size), artifact)
+        self.rejected(plan, patch, max_proposal_bytes=cap, max_patch_bytes=size - 1)
+        self.rejected(plan, header + "y" + content, max_proposal_bytes=cap, max_patch_bytes=4194304)
+
+    def test_multifile_reconstructed_output_remains_within_source_plus_proposal_allowance(self):
+        cap = 1048576
+        source = "s" * 262142 + "\n"
+        plan = synthetic_plan({"a.txt": snapshot(source), "b.txt": snapshot(source)}, kind="unified-diff/1")
+        first = "--- a/a.txt\n+++ b/a.txt\n@@ -1,0 +2 @@\n+"
+        second = "--- a/b.txt\n+++ b/b.txt\n@@ -1,0 +2 @@\n+"
+        overhead = len(canonical_bytes(self.response(plan, first + "\n" + second + "\n")))
+        allowance = cap - overhead
+        additions = ["a" * (allowance // 2) + "\n", "b" * (allowance - allowance // 2) + "\n"]
+        patch = first + additions[0] + second + additions[1]
+        self.assertEqual(len(canonical_bytes(self.response(plan, patch))), cap)
+        artifact = self.artifact(plan, patch, max_proposal_bytes=cap, max_patch_bytes=4194304)
+        files = artifact.to_dict()["files"]
+        total = sum(entry["after"]["bytes"] for entry in files)
+        self.assertGreater(total, 524288 + cap - 1024)
+        self.assertLessEqual(total, 524288 + cap)
+        for entry, addition in zip(files, additions):
+            self.assertLessEqual(entry["after"]["bytes"], 2 * cap)
+            self.assertEqual(entry["after"]["sha256"], hashlib.sha256((source + addition).encode()).hexdigest())
+
+    def test_legacy_default_canonical_boundary_and_patch_bytes_are_unchanged(self):
+        plan = synthetic_plan({"new.txt": None})
+        overhead = len(canonical_bytes(self.response(plan, {"new.txt": "\n"})))
+        content = "x" * (65536 - overhead) + "\n"
+        response = self.response(plan, {"new.txt": content})
+        self.assertEqual(len(canonical_bytes(response)), 65536)
+        self.assertEqual(validate_response(plan, response),
+                         validate_response(plan, response, max_proposal_bytes=65536, max_patch_bytes=1048576))
+        self.rejected(plan, {"new.txt": "x" + content})
+        small = self.response(plan, {"new.txt": "hello\n"})
+        self.assertEqual(validate_response(plan, small),
+                         validate_response(plan, small, max_proposal_bytes=1048576, max_patch_bytes=4194304))
 
     def test_small_unified_patch_changes_a_large_preimage(self):
         text = "unchanged long source line\n" * 5000 + "old\n"
