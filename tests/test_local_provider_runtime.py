@@ -15,7 +15,7 @@ from unittest.mock import patch
 from taskalong.api import RunService
 from taskalong.errors import TaskAlongError
 from taskalong import local_provider_runtime as owner
-from taskalong.process import ProcessReceipt
+from taskalong.process import ProcessReceipt, ProcessResult, ProcessBoundaryError
 from taskalong.validation import canonical_bytes, digest
 from test_local_provider_adapters import configuration, wire
 
@@ -273,6 +273,20 @@ class ProviderOwnerTests(unittest.TestCase):
         self.assertEqual(result["remote_usage"],"unknown")
         self.assertEqual(result["runtime_observation"]["local_termination"],"observed")
         self.assertFalse(result["patch_applied"])
+
+    def test_linux_owned_boundary_failure_keeps_observation_without_redispatch(self):
+        receipt=ProcessReceipt("synthetic-invocation",100,100,101,1234567,self.sha)
+        process=ProcessResult(None,b"",b"",False,False,True,True,False,receipt,1,0,"linux-child-subreaper",False,None)
+        error=ProcessBoundaryError("synthetic stopped before gate release",code="cancel_pending",effect_outcome="not_sent",process_result=process)
+        prepared={"remaining_budget":{"attempt_seconds":1440,"max_output_bytes":1048576},
+                  "absolute_deadline":__import__('time').time()*1000+1440000,"workspace":str(self.root)}
+        with patch.object(owner.sys,"platform","linux"),patch.object(owner,"run_bounded",side_effect=error) as run:
+            observed=owner._process({},prepared,{"argv":[str(self.exe)],"stdin":b"","env_overrides":{}},
+                output_chunk=lambda *_:None,cancelled=lambda:False,spawned=lambda _:None)
+        self.assertEqual(observed["failure_code"],"cancel_pending")
+        self.assertEqual(observed["effect_outcome"],"not_sent")
+        self.assertFalse(observed["root_exit_observed"])
+        run.assert_called_once()
 
 
 if __name__ == "__main__":

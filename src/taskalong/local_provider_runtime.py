@@ -207,12 +207,20 @@ def _process(config, prepared, invocation, *, output_chunk, cancelled, spawned):
             cancel_requested=cancelled, on_spawn=spawned, _on_output_chunk=output_chunk)
         summary = result.to_dict()
     else:
-        result = run_bounded(invocation["argv"], cwd=prepared["workspace"], stdin=invocation["stdin"], env=env,
-            timeout_seconds=timeout, max_output_bytes=limits["max_output_bytes"],
-            cancel_requested=cancelled, on_spawn=spawned, _on_output_chunk=output_chunk)
+        failure_code, failures, effect = None, (), "uncertain"
+        try:
+            result = run_bounded(invocation["argv"], cwd=prepared["workspace"], stdin=invocation["stdin"], env=env,
+                timeout_seconds=timeout, max_output_bytes=limits["max_output_bytes"],
+                cancel_requested=cancelled, on_spawn=spawned, _on_output_chunk=output_chunk)
+        except ProcessBoundaryError as exc:
+            if exc.process_result is None:
+                raise
+            result = exc.process_result
+            failure_code, failures, effect = exc.code, exc.boundary_failures, exc.effect_outcome
         summary = result.to_dict()
         summary.update(root_exit_code=result.exit_code, root_exit_observed=result.exit_code is not None,
-                       descendant_cessation="unknown", production_dispatch_allowed=False, acceptance_allowed=False)
+                       descendant_cessation="unknown", production_dispatch_allowed=False, acceptance_allowed=False,
+                       failure_code=failure_code, boundary_failures=failures, effect_outcome=effect)
     summary.pop("stdout", None)
     summary.pop("stderr", None)
     summary["observed_output_bytes"] = result.output_bytes
