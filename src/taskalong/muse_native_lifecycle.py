@@ -146,7 +146,7 @@ class NativeModelTaskGuard:
                 or type(event) is not dict or event.get("kind") != "status"):
             return None
         details = event.get("details")
-        if type(details) is not dict or details.get("phase") not in {"opening_stream", "stream_cancelled"}:
+        if type(details) is not dict or details.get("phase") not in {"opening_stream", "stream_cancelled", "stream_succeeded"}:
             return None
         if (task not in self._models or info is None or info["phase"] != 5 or info["terminal"]
                 or set(details) != {"phase", "facets"}):
@@ -156,22 +156,22 @@ class NativeModelTaskGuard:
             raise ValueError("status descriptor facets")
         attempt, producer = facets
         keys = {"kind", "system", "operation", "attempt", "max_attempts"}
-        if phase == "stream_cancelled":
+        if phase != "opening_stream":
             keys.add("error_kind")
         if (type(attempt) is not dict or set(attempt) != keys or attempt.get("kind") != "external_attempt"
                 or attempt.get("system") != "meta" or attempt.get("operation") != "model.response"
                 or type(attempt["attempt"]) is not int or type(attempt["max_attempts"]) is not int
                 or not 1 <= attempt["attempt"] <= attempt["max_attempts"] <= 10
-                or phase == "stream_cancelled" and attempt["error_kind"] != "stream_cancelled"
+                or phase != "opening_stream" and attempt["error_kind"] != phase
                 or type(producer) is not dict or set(producer) != {"kind", "detail"} or producer.get("kind") != "producer"):
             raise ValueError("status attempt descriptor")
         detail = producer["detail"]
         keys = {"kind", "provider"}
-        if phase == "stream_cancelled":
+        if phase != "opening_stream":
             keys.update(("request_id", "response_id", "model", "stream"))
         if type(detail) is not dict or set(detail) != keys or detail.get("kind") != "provider" or detail.get("provider") != "meta":
             raise ValueError("status producer descriptor")
-        if phase == "stream_cancelled":
+        if phase != "opening_stream":
             for key in ("request_id", "response_id", "model"):
                 _identifier(detail[key])
             stream = detail["stream"]
@@ -253,7 +253,7 @@ class NativeModelTaskGuard:
                 self._task_limited = True
                 self._invalid("task_metadata_limit")
                 return
-            info = {"kind": None, "phase": 0, "terminal": False}
+            info = {"kind": None, "phase": 0, "terminal": False, "observed": set()}
             self._tasks[task] = info
         marker = event.get("task_kind") if kind == "proposed" else event.get("operation") if kind == "side_effect_intent" else None
         if marker is not None:
@@ -293,6 +293,7 @@ class NativeModelTaskGuard:
             if not info["phase"] or info["terminal"] or kind in {"completed", "succeeded"} and info["phase"] != 5:
                 raise ValueError("terminal order")
             info["terminal"] = True
+        info["observed"].add(kind)
         if model and kind in self._counts:
             self._counts[kind] += 1
         if model and kind in {"timed_out", "failed", "cancelled"}:
@@ -331,6 +332,19 @@ class NativeModelTaskGuard:
             # The callback must never prevent the owner from draining capture
             # and retaining its final process receipt. No exception text leaks.
             self._invalid("malformed_native_lifecycle")
+
+    def completed_single_model(self, *, full=False):
+        """A closed single-task observation, optionally requiring all six phases."""
+        if self.stop_requested or len(self._models) != 1:
+            return False
+        task = self._tasks[next(iter(self._models))]
+        required = {"proposed", "accepted", "scheduled", "side_effect_intent", "started"}
+        return (task["terminal"] and (not full or required <= task["observed"]
+                and bool({"completed", "succeeded"} & task["observed"])))
+
+    def completed_model_task_sha256(self):
+        return (hashlib.sha256(next(iter(self._models)).encode()).hexdigest()
+                if self.completed_single_model() else None)
 
     def summary(self):
         hashed = lambda value: hashlib.sha256(value.encode("utf-8")).hexdigest() if value is not None else None

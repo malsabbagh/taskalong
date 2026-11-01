@@ -50,8 +50,8 @@ def status_details(phase):
     attempt = {"kind": "external_attempt", "system": "meta", "operation": "model.response",
                "attempt": 1, "max_attempts": 10}
     producer = {"kind": "provider", "provider": "meta"}
-    if phase == "stream_cancelled":
-        attempt["error_kind"] = "stream_cancelled"
+    if phase in {"stream_cancelled", "stream_succeeded"}:
+        attempt["error_kind"] = phase
         producer.update(request_id="synthetic-request", response_id="synthetic-response", model="synthetic-model",
             stream={"bytes_read": 1, "wire_events_seen": 1, "last_wire_event_type": "keepalive",
                     "eof": False, "eof_buffer_len": 0, "time_to_first_event_ms": 1, "bytes_before_first_event": 0})
@@ -140,7 +140,7 @@ class NativeModelTaskGuardTests(unittest.TestCase):
         self.assertEqual(summary["model_tasks_started"], 2)
 
     def test_bounded_model_status_descriptors_do_not_invent_task_starts(self):
-        for phase in ("opening_stream", "stream_cancelled"):
+        for phase in ("opening_stream", "stream_cancelled", "stream_succeeded"):
             for attempt, maximum in ((1, 1), (1, 10), (2, 10), (10, 10)):
                 item = row(4, "status")
                 item["payload"]["event"]["details"] = status_details(phase)
@@ -175,9 +175,9 @@ class NativeModelTaskGuardTests(unittest.TestCase):
                 self.assertFalse(self.feed(guard, start_rows() + [item])["protocol_valid"])
 
     def test_status_descriptors_do_not_hide_activity_results_or_foreign_references(self):
-        for phase in ("opening_stream", "stream_cancelled"):
+        for phase in ("opening_stream", "stream_cancelled", "stream_succeeded"):
             for location in ("details", "facet", "producer", "stream"):
-                if location == "stream" and phase != "stream_cancelled":
+                if location == "stream" and phase == "opening_stream":
                     continue
                 for extra in ({"kind": "task_lifecycle", "task_id": SECOND},
                               {"kind": "run_terminal", "terminal": "completed"}, {"response": {}},

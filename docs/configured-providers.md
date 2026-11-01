@@ -590,6 +590,36 @@ is performed. The proposed patch still needs independent review and tests before
 manual application.
 
 
+### Completed High successor with failed closing-metadata validation
+
+A separate `muse-result-recovery-plan/2` dialect supports a failed `/2` run
+created by the authenticated `interrupted-high` successor. It requires the
+original Max record, claim, configuration, exclusive ladder and reservation,
+the derived High configuration and task, and the consumed High claim. It never
+changes either run's failure, cancellation flag, native invocation or accounting.
+
+This narrow path requires root exit zero, observed group cleanup, a closed
+byte-complete capture, and the historical guard failure at a `stream_succeeded`
+status. The complete stream is replayed with the validated passive-success
+facet schema; both capture and durable journal must show one completed model
+task, with one configured request, one committed response, and a matching
+completed terminal. Unknown schemas, extra tasks, conflicting identities,
+malformed statuses, truncation and changed evidence refuse recovery. These
+local observations do not prove remote settlement or escaped-descendant cessation.
+
+Use the same `provider-result-recovery-plan` and `provider-result-recover`
+commands above on the High run ID, in the same original State. Recovery stages
+only a proposed patch, using the unchanged `/6` task's finite proposal cap (at
+most one MiB). The retained raw capture remains bounded by its original 64 MiB,
+131,072-record and 16 MiB-frame profile; journal read bounds are unchanged.
+Recovery may hold two bounded capture images during stability checks, plus a
+bounded parsed frame and response; these are not whole-process RSS guarantees.
+No provider installation, binary execution, credential lookup, PID probe,
+new controller submission, automatic patch application or acceptance is performed.
+A repeated key observes the retained recovery; another key cannot restage it.
+Outputs must remain outside both original Max and High evidence directories.
+
+
 ### Explicit Codex endpoint selection
 
 Codex profile `configured-provider-profile/5` preserves profile `/4` limits and
