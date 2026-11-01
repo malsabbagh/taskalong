@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import stat
 import subprocess
 import sys
@@ -475,6 +476,76 @@ class QualificationFormat3Tests(unittest.TestCase):
 
 
 class DistributionTests(unittest.TestCase):
+    def test_autocrlf_checkout_keeps_approved_license_bytes_in_built_wheel(self):
+        """Fresh Git checkout, actual offline wheel build, unchanged strict audit.
+
+        This reproduces autocrlf conversion, not the Windows runner's unknown
+        initial/index state after its separate checkout-index correction.
+        """
+        source = Path(__file__).resolve().parents[1]
+        notice = (source / 'LICENSE').read_bytes()
+        self.assertEqual(hashlib.sha256(notice).hexdigest(), auditor.APPROVED_LICENSE_SHA256)
+        with tempfile.TemporaryDirectory(prefix='taskalong-license-eol-') as directory:
+            root = Path(directory)
+            environment = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+                               GIT_ATTR_NOSYSTEM='1', PIP_NO_INDEX='1')
+            def git(*args):
+                return subprocess.run(['git', '-c', 'core.attributesFile=' + os.devnull, *args],
+                    cwd=root, env=environment, capture_output=True, check=True, timeout=15)
+            git('init', '-q')
+            (root / 'LICENSE').write_bytes(notice)
+            git('-c', 'core.autocrlf=false', 'add', 'LICENSE')
+            package = root / 'src' / 'taskalong'
+            package.mkdir(parents=True)
+            (package / '__init__.py').write_bytes(b'')
+            (root / 'pyproject.toml').write_text('''[build-system]
+requires = ["setuptools>=77,<85"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "taskalong"
+version = "0.1.0a1"
+requires-python = ">=3.11,<3.15"
+dependencies = ["jsonschema>=4.26,<5"]
+license = "MIT"
+license-files = ["LICENSE"]
+[project.optional-dependencies]
+review = ["review-sensei==0.8.8"]
+[project.scripts]
+taskalong = "taskalong.cli:main"
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["taskalong"]
+''', encoding='utf-8')
+            inventory = {'wheel_sources': ['src/taskalong/__init__.py']}
+            def build(label):
+                output = root / label
+                subprocess.run([sys.executable, '-c',
+                    'from setuptools.build_meta import build_wheel; import sys; build_wheel(sys.argv[1])', str(output)],
+                    cwd=root, env=environment, capture_output=True, check=True, timeout=45)
+                return output / 'taskalong-0.1.0a1-py3-none-any.whl'
+
+            (root / 'LICENSE').unlink()
+            git('-c', 'core.autocrlf=true', 'checkout-index', '-f', '--', 'LICENSE')
+            converted = (root / 'LICENSE').read_bytes()
+            self.assertEqual(converted, notice.replace(b'\n', b'\r\n'))
+            before = build('before-attributes')
+            with self.assertRaisesRegex(auditor.AuditError, 'wheel license differs from the approved MIT notice'):
+                auditor.audit(before, root=root, inventory=inventory)
+
+            (root / '.gitattributes').write_bytes((source / '.gitattributes').read_bytes())
+            git('-c', 'core.autocrlf=true', 'add', '.gitattributes')
+            (root / 'LICENSE').unlink()
+            git('-c', 'core.autocrlf=true', 'checkout-index', '-f', '--', 'LICENSE')
+            self.assertEqual((root / 'LICENSE').read_bytes(), notice)
+            after = build('with-attributes')
+            self.assertEqual(auditor.read_wheel(after)[f'{auditor.DIST_INFO}/licenses/LICENSE'], notice)
+            self.assertEqual(auditor.audit(after, root=root, inventory=inventory)['artifact'], 'wheel')
+
+            (root / 'LICENSE').write_bytes(notice + b'Unapproved additional notice.\n')
+            changed = build('changed-notice')
+            with self.assertRaisesRegex(auditor.AuditError, 'wheel license differs from the approved MIT notice'):
+                auditor.audit(changed, root=root, inventory=inventory)
+
     def test_runtime_inventory_binds_installed_wheel_and_original_artifact_separately(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

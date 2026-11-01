@@ -195,6 +195,7 @@
     "src/taskalong/workspace.py"
   ],
   "sdist_sources": [
+    ".gitattributes",
     "CONTRIBUTING.md",
     "LICENSE",
     "MANIFEST.in",

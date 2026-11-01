@@ -33,6 +33,18 @@ jobs:
         with:
           node-version: 24.18.0
       - run: python -m pip install --isolated --disable-pip-version-check --require-hashes -r requirements-dev.lock
+      - name: Verify approved license bytes before build
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          from tools.check_dist import APPROVED_LICENSE_SHA256
+          data = Path("LICENSE").read_bytes()
+          digest = hashlib.sha256(data).hexdigest()
+          print(json.dumps({"license_sha256": digest, "bytes": len(data), "crlf_count": data.count(b"\r\n")}))
+          if digest != APPROVED_LICENSE_SHA256:
+              raise SystemExit("source LICENSE differs from the approved MIT notice before build")
+          PY
       - run: python -m build --no-isolation --wheel --sdist
       - run: python tools/normalize_sdist.py dist/*.tar.gz
       - run: python tools/check_dist.py --dist-dir dist
