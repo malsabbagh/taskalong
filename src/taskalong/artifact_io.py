@@ -88,6 +88,7 @@ def _parent(root, relative, *, private, create=False, changes=None, missing_ok=F
         raise _invalid()
     descriptors = []
     links = []
+    primary_error = None
     try:
         descriptor = _open(absolute.anchor, os.O_RDONLY | directory_flags)
         descriptors.append(descriptor)
@@ -124,6 +125,9 @@ def _parent(root, relative, *, private, create=False, changes=None, missing_ok=F
             links.append((descriptor, part, child, _identity(info), True, private))
             descriptor = child
         yield descriptor, parts[-1], links
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
         owned, descriptors = descriptors, []
         first_error = None
@@ -134,6 +138,8 @@ def _parent(root, relative, *, private, create=False, changes=None, missing_ok=F
                 if first_error is None:
                     first_error = exc
         if first_error is not None:
+            if primary_error is not None:
+                raise primary_error from first_error
             raise first_error
 
 

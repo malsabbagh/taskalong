@@ -52,7 +52,11 @@ class ArtifactIOTests(unittest.TestCase):
                         self.assertRaises(OSError) as failure:
                     with artifact_io._parent(root, "value", private=True):
                         pass
-                self.assertIs(failure.exception, first)
+                if missing_root:
+                    self.assertIsInstance(failure.exception, FileNotFoundError)
+                    self.assertIs(failure.exception.__cause__, first)
+                else:
+                    self.assertIs(failure.exception, first)
                 self.assertGreater(len(opened), 1)
                 self.assertEqual(attempted, list(reversed(opened)))
                 self.assertEqual(len(attempted), len(set(attempted)))
@@ -60,6 +64,31 @@ class ArtifactIOTests(unittest.TestCase):
                     with self.assertRaises(OSError) as closed:
                         os.fstat(fd)
                     self.assertEqual(closed.exception.errno, errno.EBADF)
+
+    def test_body_failure_retains_type_and_outcome_when_cleanup_also_fails(self):
+        primary = TaskAlongError("synthetic_validation_failure", "Synthetic evidence invalid.",
+                                exit_code=4, effect_outcome="uncertain")
+        real_close = os.close
+        attempted = []
+        cleanup = OSError(errno.EIO, "Synthetic cleanup failure")
+        def closing(fd):
+            attempted.append(fd)
+            real_close(fd)
+            if len(attempted) == 1:
+                raise cleanup
+        with patch.object(artifact_io.os, "close", side_effect=closing), \
+                self.assertRaises(TaskAlongError) as failure:
+            with artifact_io._parent(self.root, "value", private=True):
+                raise primary
+        self.assertIs(failure.exception, primary)
+        self.assertIs(failure.exception.__cause__, cleanup)
+        self.assertEqual(failure.exception.effect_outcome, "uncertain")
+        self.assertEqual(failure.exception.code, "synthetic_validation_failure")
+        self.assertGreater(len(attempted), 1)
+        self.assertEqual(len(attempted), len(set(attempted)))
+        for fd in attempted:
+            with self.assertRaises(OSError):
+                os.fstat(fd)
 
     def test_add_absence_is_observational_and_refuses_existing_entries(self):
         artifact_io.require_absent(self.root,"missing/parent/leaf")
