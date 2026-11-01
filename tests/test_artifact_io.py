@@ -1,5 +1,6 @@
 """Descriptor artifact boundaries on real disposable synthetic filesystem data."""
 import hashlib
+import errno
 import os
 from pathlib import Path
 import stat
@@ -26,6 +27,68 @@ class ArtifactIOTests(unittest.TestCase):
     def read(self, **options):
         return read_regular(self.root, "value", max_bytes=len(self.payload),
                             expected_sha256=self.sha, expected_bytes=len(self.payload), **options)
+
+    def test_parent_cleanup_attempts_all_descriptors_once_after_close_errors(self):
+        for missing_root in (False, True):
+            with self.subTest(missing_root=missing_root):
+                real_open, real_close = artifact_io._open, os.close
+                opened, attempted = [], []
+                first = OSError(errno.EIO, "Synthetic close completed then failed")
+                second = OSError(errno.EINTR, "Synthetic later close error")
+                def opening(*args, **kwargs):
+                    fd = real_open(*args, **kwargs)
+                    opened.append(fd)
+                    return fd
+                def closing(fd):
+                    attempted.append(fd)
+                    real_close(fd)
+                    if len(attempted) == 1:
+                        raise first
+                    if len(attempted) == 2:
+                        raise second
+                root = self.root / "missing" if missing_root else self.root
+                with patch.object(artifact_io, "_open", side_effect=opening), \
+                        patch.object(artifact_io.os, "close", side_effect=closing), \
+                        self.assertRaises(OSError) as failure:
+                    with artifact_io._parent(root, "value", private=True):
+                        pass
+                if missing_root:
+                    self.assertIsInstance(failure.exception, FileNotFoundError)
+                    self.assertIs(failure.exception.__cause__, first)
+                else:
+                    self.assertIs(failure.exception, first)
+                self.assertGreater(len(opened), 1)
+                self.assertEqual(attempted, list(reversed(opened)))
+                self.assertEqual(len(attempted), len(set(attempted)))
+                for fd in opened:
+                    with self.assertRaises(OSError) as closed:
+                        os.fstat(fd)
+                    self.assertEqual(closed.exception.errno, errno.EBADF)
+
+    def test_body_failure_retains_type_and_outcome_when_cleanup_also_fails(self):
+        primary = TaskAlongError("synthetic_validation_failure", "Synthetic evidence invalid.",
+                                exit_code=4, effect_outcome="uncertain")
+        real_close = os.close
+        attempted = []
+        cleanup = OSError(errno.EIO, "Synthetic cleanup failure")
+        def closing(fd):
+            attempted.append(fd)
+            real_close(fd)
+            if len(attempted) == 1:
+                raise cleanup
+        with patch.object(artifact_io.os, "close", side_effect=closing), \
+                self.assertRaises(TaskAlongError) as failure:
+            with artifact_io._parent(self.root, "value", private=True):
+                raise primary
+        self.assertIs(failure.exception, primary)
+        self.assertIs(failure.exception.__cause__, cleanup)
+        self.assertEqual(failure.exception.effect_outcome, "uncertain")
+        self.assertEqual(failure.exception.code, "synthetic_validation_failure")
+        self.assertGreater(len(attempted), 1)
+        self.assertEqual(len(attempted), len(set(attempted)))
+        for fd in attempted:
+            with self.assertRaises(OSError):
+                os.fstat(fd)
 
     def test_add_absence_is_observational_and_refuses_existing_entries(self):
         artifact_io.require_absent(self.root,"missing/parent/leaf")

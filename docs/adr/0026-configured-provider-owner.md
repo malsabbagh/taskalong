@@ -157,3 +157,16 @@ In particular, truncation inside a native completed-terminal text is not
 cancellation evidence. Full bound native completion evidence must be reconciled
 before considering another attempt; verified result recovery is not implemented
 by the successor path. Old failure status, claims and unknown exposure survive.
+
+### Sealed complete-result observations
+
+Complete-result recovery is a separate model-free local operation, not a
+successor attempt. It requires stable full native completion evidence and checks
+the committed response against the original scope and bounds. A new immutable
+observation and staged proposal reference the failed run without rewriting its
+status, submission claim, captures, history or unknown remote exposure. A shared
+exclusive anchor prevents recovery from racing a successor or being repeated
+through copied or restored State. Reservation precedes local staging; uncertain
+local outcomes are observed instead of restaged. Recovered snapshots retain the
+original submission marker and cannot become a fresh inference route. Captured
+fragments alone never authorize this operation.

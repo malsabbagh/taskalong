@@ -417,3 +417,5 @@ include src/taskalong/provider_wire.py
 include tests/test_provider_wire.py
 include src/taskalong/muse_capture_recovery.py
 include tests/test_muse_capture_recovery.py
+include src/taskalong/muse_result_recovery.py
+include tests/test_muse_result_recovery.py

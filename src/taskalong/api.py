@@ -91,6 +91,20 @@ class RunService:
         from .muse_successor import execute
         return execute(self._store, predecessor=predecessor, key=key, plan_digest=plan_digest, output=output, reason=reason)
 
+    def provider_result_recovery_plan(self, provider="muse", *, run_id):
+        """Inspect sealed completion evidence without dispatch or staging."""
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented complete-result recovery adapter.", exit_code=3)
+        from .muse_result_recovery import plan
+        return plan(self._store, run_id=run_id)
+
+    def recover_provider_result(self, provider="muse", *, run_id, key, plan_digest, output):
+        """Stage a separately recorded recovered proposal; never run a model."""
+        if provider != "muse":
+            raise TaskAlongError("provider_unavailable", "This provider has no implemented complete-result recovery adapter.", exit_code=3)
+        from .muse_result_recovery import recover
+        return recover(self._store, run_id=run_id, key=key, plan_digest=plan_digest, output=output)
+
     def configure_muse(self, configuration):
         """Register production intent only; never qualify or launch Muse."""
         from .muse_production import configure
