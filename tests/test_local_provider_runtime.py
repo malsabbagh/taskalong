@@ -248,6 +248,23 @@ class ProviderOwnerTests(unittest.TestCase):
         self.assertEqual(result["controller_submissions"], 1)
         self.assertEqual(result["remote_usage"], "unknown")
 
+    def test_oversized_result_keeps_cleanup_and_consumed_claim_observable(self):
+        self.configure()
+        def oversized(config, prepared, invocation, **callbacks):
+            process = self.process(config, prepared, invocation, **callbacks)
+            Path(prepared["result_file"]).write_bytes(b" " * (1048576 + 1))
+            return process
+        with patch.object(owner, "_process", side_effect=oversized):
+            with self.assertRaises(TaskAlongError):
+                self.service.run_provider("codex", request=self.request())
+        run_id = self.calls[0]["run_id"]
+        result = self.service.inspect(run_id)
+        self.assertEqual(result["state"],"failed")
+        self.assertEqual(result["controller_submissions"],1)
+        self.assertEqual(result["remote_usage"],"unknown")
+        self.assertEqual(result["runtime_observation"]["local_termination"],"observed")
+        self.assertFalse(result["patch_applied"])
+
 
 if __name__ == "__main__":
     unittest.main()

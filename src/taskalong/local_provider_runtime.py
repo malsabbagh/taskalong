@@ -321,13 +321,18 @@ def run(store, provider, *, request, output=None):
         else:
             process = owner()
         # Codex's schema-bound result file is part of the same aggregate cap.
+        result_bytes = 0
         if provider == "codex" and (control / "result.json").exists():
             remaining = max(0, limits.max_output_bytes - process["observed_output_bytes"])
-            raw = read_regular(control, "result.json", max_bytes=min(remaining, limits.max_proposal_bytes), private=True)
+            raw = read_regular(control, "result.json", max_bytes=min(remaining, limits.max_record_bytes), private=True)
+            result_bytes = len(raw)
             chunk("result", raw)
         closure = capture.finalize()
         observed_pipes = sum(closure["streams"][s]["observed_bytes"] for s in ("stdout", "stderr"))
         process["process_stream_complete"] = observed_pipes == process["observed_output_bytes"]
+        process["observed_pipe_bytes"] = process["observed_output_bytes"]
+        process["observed_result_bytes"] = result_bytes
+        process["observed_output_bytes"] += result_bytes
         process["retained_output_bytes"] = sum(closure["streams"][s]["retained_bytes"] for s in ("stdout", "stderr", "result"))
         _write(root, "process.json", canonical_bytes(process))
         observation = decoder.finish(process["root_exit_code"])
@@ -354,6 +359,10 @@ def run(store, provider, *, request, output=None):
                 root_exit_observed=exc.process_result.exit_code is not None, descendant_cessation="unknown")
             if not (root / "process.json").exists():
                 _write(root, "process.json", canonical_bytes(process))
+        if process is not None and not (root / "process.json").exists():
+            # A result-file/capture failure occurs after owned cleanup. Keep
+            # that authentic process observation even though no proposal exists.
+            _write(root, "process.json", canonical_bytes(process))
         if closure is None:
             try:
                 closure = capture.finalize()

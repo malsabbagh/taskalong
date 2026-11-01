@@ -230,6 +230,9 @@ the actual repository/base again and review and test the proposed change.
 The default and maximum shared profile uses a 720-second local attempt,
 4 MiB combined output capture, 8,192 protocol records, 1 MiB per protocol record,
 64 KiB canonical decoded proposal, and one reserved controller submission.
+Codex's separate result file is also one protocol record: its raw JSON may use
+more than 64 KiB, while remaining within the 1 MiB record and combined capture
+limits. The decoded canonical object has its own 64 KiB limit.
 Smaller supported finite limits may be selected; capture checkpoint capacity is
 also finite. The stdin packet is capped at 1 MiB. The generated patch has a separate
 1 MiB bound. A small unified diff can edit a preimage larger than 64 KiB without

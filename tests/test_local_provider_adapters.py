@@ -241,7 +241,7 @@ class LocalProviderAdapterTests(unittest.TestCase):
             self.assertEqual(result["session_id"], b["attempt_id"])
 
     def test_bounds_truncation_nonzero_and_unbound_results_fail(self):
-        for options in ({"max_output_bytes": 32, "max_record_bytes": 32}, {"max_proposal_bytes": 10}):
+        for options in ({"max_output_bytes": 32, "max_record_bytes": 32},):
             limits = ProviderLimits.from_dict(ProviderLimits().to_dict() | options)
             d = decoder(configuration(), binding(), limits)
             with self.assertRaises(TaskAlongError):
@@ -253,6 +253,24 @@ class LocalProviderAdapterTests(unittest.TestCase):
             d.feed("stdout", wire({"type": "thread.started", "thread_id": "s"}, {"type": "turn.completed"}) + tail)
             d.feed("result", json.dumps(proposal).encode())
             self.assertEqual(d.finish(exit_code)["terminal_status"], "failed")
+
+    def test_result_wire_bound_and_canonical_proposal_bound_are_independent(self):
+        limits = ProviderLimits.from_dict(ProviderLimits().to_dict() | {"max_proposal_bytes": len(json.dumps(PROPOSAL,separators=(",", ":")).encode())})
+        raw = b" " * 70000 + json.dumps(PROPOSAL,indent=8).encode()
+        self.assertGreater(len(raw),limits.max_proposal_bytes)
+        d = decoder(configuration(),binding(),limits)
+        d.feed("stdout",wire({"type":"thread.started","thread_id":"s"},{"type":"turn.completed"}))
+        d.feed("result",raw)
+        self.assertEqual(d.finish(0)["terminal_status"],"completed")
+        limits = ProviderLimits.from_dict(limits.to_dict() | {"max_proposal_bytes": 10})
+        d = decoder(configuration(),binding(),limits)
+        d.feed("stdout",wire({"type":"thread.started","thread_id":"s"},{"type":"turn.completed"}))
+        d.feed("result",raw)
+        self.assertEqual(d.finish(0)["terminal_status"],"failed")
+        self.assertIn("local_provider_result_limit",d.finish(0)["protocol_errors"])
+        d = decoder(configuration(),binding(),ProviderLimits())
+        with self.assertRaises(TaskAlongError):
+            d.feed("result",b" " * (1048576+1))
 
 
 if __name__ == "__main__":

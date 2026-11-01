@@ -336,7 +336,7 @@ class _Decoder:
             if self._total > self.limits.max_output_bytes:
                 _fail("local_provider_output_limit", uncertain=True)
             if stream == "result":
-                if self.provider != "codex" or len(self._result) + len(chunk) > self.limits.max_proposal_bytes:
+                if self.provider != "codex" or len(self._result) + len(chunk) > self.limits.max_record_bytes:
                     _fail("local_provider_result_limit", uncertain=True)
                 self._result.extend(chunk)
             elif self.provider == "claude-code":
@@ -406,7 +406,9 @@ class _Decoder:
                 value["diagnostics"].update(stderr_bytes=len(self._stderr),
                     stderr_sha256=hashlib.sha256(self._stderr).hexdigest(),
                     stderr_classification="unclassified" if self._stderr else "absent")
-                proposal = loads(bytes(self._result), max_bytes=self.limits.max_proposal_bytes)
+                proposal = loads(bytes(self._result), max_bytes=self.limits.max_record_bytes)
+                if len(canonical_bytes(proposal)) > self.limits.max_proposal_bytes:
+                    _fail("local_provider_result_limit", uncertain=True)
                 Draft202012Validator(self.schema).validate(proposal)
                 if type(proposal) is not dict:
                     _fail("local_provider_result_invalid", uncertain=True)
