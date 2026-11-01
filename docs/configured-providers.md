@@ -325,3 +325,66 @@ The authoritative closed configuration and behavior contracts are
 [local_provider_runtime.py](../src/taskalong/local_provider_runtime.py), and
 [claude_local_config.py](../src/taskalong/executors/claude_local_config.py).
 The proposed ownership decision is [ADR0026](adr/0026-configured-provider-owner.md).
+
+## One-MiB final proposals
+
+A larger final proposal is an explicit, versioned choice. Existing profiles,
+receipts, claims and defaults keep their previous bounds. The time limit remains
+independent: select at most 1440 seconds, with 720 seconds still the default.
+A failed prior task does not acquire another submission by changing these limits.
+
+For Codex, Antigravity and Claude Code, use `configured-provider-profile/4` and
+provide the complete `limits` object. The recommended expanded limits are:
+
+```json
+{
+  "attempt_seconds": 1440,
+  "max_output_bytes": 67108864,
+  "max_protocol_records": 131072,
+  "max_record_bytes": 16777216,
+  "max_proposal_bytes": 1048576,
+  "max_controller_submissions": 1
+}
+```
+
+Profile `/4` also requires `native_roots`: use an empty object for Antigravity or
+Claude Code; Codex may explicitly bind `CODEX_HOME` as in profile `/3`. Smaller
+positive limits remain selectable. The final limit counts the canonical UTF-8
+JSON proposal, including its binding fields and JSON escapes; actual patch or
+replacement text can therefore be smaller than one MiB. The separate Codex
+response file is limited to 4 MiB of wire JSON before canonical validation.
+
+For Muse, configure `capture_profile: "megabyte-proposal"`. This creates
+`local-muse-provider/6` with exactly 64 MiB combined raw capture and 131,072
+protocol records. Set `max_proposal_bytes` between 1024 and 1048576 and
+`attempt_seconds` between 1 and 1440. The defaults for this new profile are
+1048576 and 720 respectively. Its protocol frame limit is 16 MiB and extracted
+response-wire limit is 4 MiB. The existing account, model, effort and context
+choices remain explicit; selecting a larger output profile does not change them.
+
+Raw capture includes prompts echoed by a provider, progress, deltas, terminal
+records, stderr and the separately read Codex response. It is much larger than
+the final result. Streaming overhead depends on native fragment sizes and
+repetition. These finite limits admit representative large streams; they do not
+guarantee that every one-MiB proposal will fit. Overflow, excessive records,
+malformed frames, missing completion or uncertain cleanup remain failures. There
+is no automatic cap growth, retry, fallback, patch application or acceptance.
+
+The new profiles stream original bytes to private capture files instead of
+retaining duplicate full-transcript process buffers. Final responses are stored
+separately from small, hash-bound references in receipts. Authority documents
+retain their original one-MiB ceiling. Independent capture checkpoints retain a
+separate ceiling of 8192 records, at most 16 KiB each; this is not the protocol
+record count. Reconstruction and normalized review patches have independent
+limits (4 MiB generated patch, at most 2 MiB per reconstructed file, and a
+source-plus-selected-proposal aggregate bound in the shared validator). Muse's
+replacement-only route additionally keeps its selected one-MiB aggregate output
+bound. All proposals still require human review and independent tests before
+manual application.
+
+These are controller byte and object bounds, not an OS disk quota or a measured
+RSS guarantee. Native subprocess memory, native result files while being written,
+account journals and remote usage remain outside them. Existing uncertainty about
+provider-internal retries, effective effort, remote cancellation and descendants
+is preserved. Offline boundary tests establish parser and lifecycle behavior;
+they do not qualify an account or prove a live provider will complete the task.

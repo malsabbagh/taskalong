@@ -101,30 +101,34 @@ def _constant(_):
     raise ValueError
 
 
-def _shape(value, depth=0):
+def _shape(value, depth=0, *, budget=None):
+    if budget is not None:
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise ValueError
     if depth > 32:
         raise ValueError
     if type(value) is dict:
         if len(value) > 4096:
             raise ValueError
         for key, child in value.items():
-            _shape(key, depth + 1)
-            _shape(child, depth + 1)
+            _shape(key, depth + 1, budget=budget)
+            _shape(child, depth + 1, budget=budget)
     elif type(value) is list:
         if len(value) > 4096:
             raise ValueError
         for child in value:
-            _shape(child, depth + 1)
+            _shape(child, depth + 1, budget=budget)
     elif type(value) is str:
         value.encode("utf-8", errors="strict")
 
 
-def _frame(line):
+def _frame(line, *, extended=False):
     value = json.loads(line.decode("utf-8", errors="strict"), object_pairs_hook=_pairs,
                        parse_int=_integer, parse_float=_decimal, parse_constant=_constant)
     if type(value) is not dict:
         raise ValueError
-    _shape(value)
+    _shape(value, budget=[65536] if extended else None)
     return value
 
 
@@ -136,11 +140,19 @@ class ClaudeLocalDecoder:
     finish() returns protocol observation only; optional exit_code checks an
     owner-observed exit and does not manufacture cessation evidence.
     """
-    def __init__(self, task_binding, limits):
+    def __init__(self, task_binding, limits, *, max_content_bytes=65536, extended_wire=False):
         self._binding = validate_binding(task_binding)
+        if (type(extended_wire) is not bool or type(max_content_bytes) is not int
+                or not 1 <= max_content_bytes <= 1048576):
+            refuse("claude_local_limits_invalid")
+        self._content_limit = max_content_bytes
+        self._extended = extended_wire
         names = {"max_protocol_records", "max_record_bytes", "max_proposal_bytes"}
         bounds = {"max_protocol_records": 65536, "max_record_bytes": 8 * 1024 * 1024,
                   "max_proposal_bytes": 4 * 1024 * 1024}
+        if extended_wire:
+            bounds.update(max_protocol_records=131072, max_record_bytes=16 * 1024 * 1024,
+                          max_proposal_bytes=1048576)
         if type(limits) is not dict or not names <= set(limits):
             refuse("claude_local_limits_invalid")
         if any(type(limits[k]) is not int or not 1 <= limits[k] <= bounds[k] for k in names):
@@ -211,7 +223,7 @@ class ClaudeLocalDecoder:
         if self._terminal is not None:
             self._fail("claude_local_event_after_terminal")
         try:
-            event = _frame(line)
+            event = _frame(line, extended=self._extended)
         except (ValueError, UnicodeError, RecursionError, DecimalException):
             self._fail("claude_local_frame_invalid")
         if event.get("session_id") != self._binding["attempt_id"]:
@@ -342,7 +354,7 @@ class ClaudeLocalDecoder:
         for content in changes.values():
             if content is None:
                 continue
-            if (type(content) is not str or len(content.encode("utf-8")) > 65536
+            if (type(content) is not str or len(content.encode("utf-8")) > self._content_limit
                     or any(ord(c) < 32 and c not in "\n\t" for c in content)
                     or "\x7f" in content or content and not content.endswith("\n")):
                 self._fail("claude_local_proposal_text_invalid")

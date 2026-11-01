@@ -29,7 +29,11 @@ def _json_bytes(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
-def _walk(value, depth=0):
+def _walk(value, depth=0, *, budget=None):
+    if budget is not None:
+        budget[0] -= 1
+        if budget[0] < 0 or type(value) in (dict, list) and len(value) > 4096:
+            raise ValueError("native JSON shape")
     if depth > 32:
         raise ValueError("native JSON depth")
     if type(value) is dict:
@@ -37,10 +41,12 @@ def _walk(value, depth=0):
             if type(key) is not str:
                 raise ValueError("native JSON key")
             key.encode("utf-8")
-            _walk(item, depth + 1)
+            if budget is not None:
+                _walk(key, depth + 1, budget=budget)
+            _walk(item, depth + 1, budget=budget)
     elif type(value) is list:
         for item in value:
-            _walk(item, depth + 1)
+            _walk(item, depth + 1, budget=budget)
     elif type(value) is float:
         if not math.isfinite(value):
             raise ValueError("native JSON number")
@@ -127,15 +133,27 @@ class NativeAntigravityDecoder:
     Native durations may be finite decimals. Canonical TaskAlong documents keep
     their separate integer-only contract. Usage remains a terminal cumulative
     snapshot; per-step counters are validated but never added to terminal totals.
+    Extended wire opts into finite node/container bounds, 256 retained step
+    identities and one MiB of retained parameters; text deltas are discarded.
     """
 
     def __init__(self, *, expected_model, expected_cwd, result_schema,
-                 max_output_bytes=8 * 1024 * 1024, max_line_bytes=None, max_frames=65536):
+                 max_output_bytes=8 * 1024 * 1024, max_line_bytes=None, max_frames=65536,
+                 max_result_bytes=None, extended_wire=False):
         if (type(max_output_bytes) is not int or not 1 <= max_output_bytes <= _MAX_BYTES
                 or type(max_frames) is not int or not 1 <= max_frames <= 262144):
             self._invalid_configuration()
-        line_limit = min(max_output_bytes, 8 * 1024 * 1024) if max_line_bytes is None else max_line_bytes
-        if type(line_limit) is not int or not 1 <= line_limit <= min(max_output_bytes, 8 * 1024 * 1024):
+        if type(extended_wire) is not bool or extended_wire and max_frames > 131072:
+            self._invalid_configuration()
+        if max_result_bytes is not None and (type(max_result_bytes) is not int or not 1 <= max_result_bytes <= 1048576):
+            self._invalid_configuration()
+        self._result_limit = max_result_bytes
+        self._extended = extended_wire
+        self._step_limit = 256 if extended_wire else 65536
+        self._parameter_bytes = 0
+        ceiling = (16 if extended_wire else 8) * 1024 * 1024
+        line_limit = min(max_output_bytes, ceiling) if max_line_bytes is None else max_line_bytes
+        if type(line_limit) is not int or not 1 <= line_limit <= min(max_output_bytes, ceiling):
             self._invalid_configuration()
         if (type(expected_model) is not str or not 1 <= len(expected_model) <= 256
                 or type(expected_cwd) is not str or not 1 <= len(expected_cwd) <= 4096):
@@ -212,7 +230,7 @@ class NativeAntigravityDecoder:
             self._fail("agy_native_event_after_terminal")
         try:
             event = json.loads(raw.decode("utf-8"), object_pairs_hook=self._pairs)
-            _walk(event)
+            _walk(event, budget=[65536] if self._extended else None)
         except (ValueError, UnicodeError, RecursionError):
             self._fail("agy_native_frame_invalid")
         if type(event) is not dict:
@@ -325,13 +343,18 @@ class NativeAntigravityDecoder:
                 self._fail("agy_native_step_transition_invalid")
             if parameters is None:
                 parameters = previous_parameters
-        elif len(self._steps) >= 65536:
+        elif len(self._steps) >= self._step_limit:
             self._fail("agy_native_step_limit")
+        retained = self._parameter_bytes - (len(previous[2]) if previous and previous[2] is not None else 0)
+        retained += len(parameters) if parameters is not None else 0
+        if self._extended and retained > 1048576:
+            self._fail("agy_native_metadata_limit")
         if kind == "user_input":
             if self._user_step is not None and self._user_step != index:
                 self._fail("agy_native_extra_turn")
             self._user_step = index
         self._steps[index] = (kind, tool, parameters, state)
+        self._parameter_bytes = retained
 
     def _result(self, result):
         required = {"conversation_id", "status", "response", "num_turns"}
@@ -353,24 +376,38 @@ class NativeAntigravityDecoder:
                 self._fail("agy_native_result_inconsistent")
             if any(step[3] != "DONE" for step in self._steps.values()):
                 self._fail("agy_native_step_pending")
+            if self._result_limit is not None and len(_json_bytes(result["structured_output"])) > self._result_limit:
+                self._fail("agy_native_result_limit")
             try:
                 self._validator.validate(result["structured_output"])
             except (ValidationError, Unresolvable, ValueError, RecursionError):
                 self._fail("agy_native_structured_output_invalid")
         self._terminal = (result, usage)
 
-    def finish(self, *, exit_code, stderr=b""):
+    def finish(self, *, exit_code, stderr=b"", stderr_metadata=None):
         """Return a protocol observation after EOF, never a cessation claim.
 
         Even a valid SUCCESS is unsuccessful if stderr is unclassified, a tool
         failed, or the process exited nonzero. Failed provider statuses retain
         their observed identity and usage instead of manufacturing a result.
+        Extended callers may supply owner-counted/hashed stderr metadata instead
+        of retaining its original bytes here. Private capture keeps those bytes.
         """
         if self._error is not None:
             raise self._error
         if type(exit_code) is not int or type(stderr) is not bytes:
             self._fail("agy_native_exit_invalid")
-        signature = (exit_code, hashlib.sha256(stderr).digest(), len(stderr))
+        stderr_count, stderr_hash = len(stderr), hashlib.sha256(stderr).hexdigest()
+        if stderr_metadata is not None:
+            if (not self._extended or stderr or type(stderr_metadata) is not dict
+                    or set(stderr_metadata) != {"bytes", "sha256"}
+                    or type(stderr_metadata["bytes"]) is not int or not 0 <= stderr_metadata["bytes"] <= self._byte_limit
+                    or type(stderr_metadata["sha256"]) is not str
+                    or re.fullmatch(r"[a-f0-9]{64}", stderr_metadata["sha256"]) is None
+                    or stderr_metadata["bytes"] == 0 and stderr_metadata["sha256"] != hashlib.sha256(b"").hexdigest()):
+                self._fail("agy_native_exit_invalid")
+            stderr_count, stderr_hash = stderr_metadata["bytes"], stderr_metadata["sha256"]
+        signature = (exit_code, bytes.fromhex(stderr_hash), stderr_count)
         if self._finished is not None:
             if self._finish_signature != signature:
                 self._fail("agy_native_finish_conflict")
@@ -379,7 +416,7 @@ class NativeAntigravityDecoder:
             self._fail("agy_native_truncated_frame")
         if self._terminal is None:
             self._fail("agy_native_stream_incomplete")
-        if self._bytes + len(stderr) > self._byte_limit:
+        if self._bytes + stderr_count > self._byte_limit:
             self._fail("agy_native_output_limit")
         result, usage = self._terminal
         status = result["status"]
@@ -388,7 +425,7 @@ class NativeAntigravityDecoder:
             error = "agy_native_turn_incomplete" if status in {"WAITING", "RUNNING"} else "agy_native_provider_failed"
         elif exit_code != 0:
             error = "agy_native_exit_failed"
-        elif stderr:
+        elif stderr_count:
             error = "agy_native_diagnostics_unqualified"
         elif self._tool_failed:
             error = "agy_native_tool_failed"

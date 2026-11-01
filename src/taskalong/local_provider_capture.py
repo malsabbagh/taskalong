@@ -19,6 +19,8 @@ from .validation import canonical_bytes, loads
 
 _STREAMS = ("stdout", "stderr", "result")
 _MAX_OUTPUT = 4_194_304
+_OUTPUT_CEILINGS = {"1.0": _MAX_OUTPUT, "2.0": 64 * 1024 * 1024}
+_MAX_ITER_RECORD_BYTES = 16 * 1024 * 1024
 _MAX_RECORDS = 8192
 _RECORD_BYTES = 16_384
 _EVENT_BYTES = 4096
@@ -29,6 +31,12 @@ _FLAGS = os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
 
 def _invalid():
     return TaskAlongError("private_capture_invalid", "Private capture evidence is invalid or unavailable.")
+
+
+def _output_ceiling(schema_version):
+    if type(schema_version) is not str or schema_version not in _OUTPUT_CEILINGS:
+        raise _invalid()
+    return _OUTPUT_CEILINGS[schema_version]
 
 
 def _integer(value, maximum=_INTEGER):
@@ -185,15 +193,22 @@ class PrivateCapture:
     effects. A failed write/checkpoint poisons the sink and preserves its files.
     Public operations serialize on one reentrant lock, including aggregate byte
     reservations and closure, so independent stream reader threads may share it.
+    ``schema_version="2.0"`` explicitly opts into a maximum 64 MiB raw budget;
+    legacy 1.0 remains capped at 4 MiB. Checkpoint metadata stays independently
+    capped at 8,192 records, regardless of native protocol record limits.
     """
-    def __init__(self, root, *, max_output_bytes=_MAX_OUTPUT, max_records=_MAX_RECORDS):
-        if (not _integer(max_output_bytes, _MAX_OUTPUT) or not _integer(max_records, _MAX_RECORDS)
+    def __init__(self, root, *, max_output_bytes=_MAX_OUTPUT, max_records=_MAX_RECORDS,
+                 schema_version="1.0"):
+        ceiling = _output_ceiling(schema_version)
+        if (not _integer(max_output_bytes, ceiling) or not _integer(max_records, _MAX_RECORDS)
                 or max_records < 2):
             raise _invalid()
         self._lock = RLock()
         self._directory = None
         self._fds = {}
         self._closed = self._finalized = self._failed = False
+        self._closure_bytes = None
+        self._closure_metadata = {}
         self._limit = max_output_bytes
         self._max_records = max_records
         self._sequence = 0
@@ -208,7 +223,7 @@ class PrivateCapture:
         self._since_checkpoint = 0
         try:
             self._directory = _Directory(root, create=True)
-            config = {"kind": "private_local_provider_capture", "schema_version": "1.0",
+            config = {"kind": "private_local_provider_capture", "schema_version": schema_version,
                       "max_output_bytes": max_output_bytes, "max_records": max_records}
             data = canonical_bytes(config)
             _immutable(self._directory, "capture.json", data)
@@ -338,9 +353,100 @@ class PrivateCapture:
         self._finalized = True
         # Independent readback is mandatory before exposing a closure receipt.
         try:
-            return _read_capture_fd(self._directory)
+            metadata = {}
+            receipt = _read_capture_fd(self._directory, _metadata_states=metadata)
+            # The caller receives a mutable dict, never the internal expectation.
+            self._closure_bytes = canonical_bytes(receipt)
+            self._closure_metadata = metadata
+            return receipt
         except (OSError, ValueError, TypeError, KeyError, TaskAlongError):
             self._failed = True
+            raise _invalid() from None
+
+    def _readable(self):
+        if self._closed or not self._finalized or self._failed:
+            raise _invalid()
+
+    @_serialized
+    def iter_records(self, stream, *, max_record_bytes=_MAX_ITER_RECORD_BYTES):
+        """Yield finalized physical lines without LF, including empty lines.
+
+        This is a lazy evidence reader, not a proposal-acceptance receipt. The
+        consumer MUST exhaust it before staging any result: full byte/hash and
+        immutable metadata/closure fences run at exhaustion. Nonempty trailing
+        bytes without LF reject.
+        Only one bounded frame and 64 KiB read window are assembled; raw files
+        stay on disk. The per-record limit excludes the terminating LF.
+        """
+        self._readable()
+        if (type(stream) is not str or stream not in _STREAMS
+                or not _integer(max_record_bytes, _MAX_ITER_RECORD_BYTES)
+                or max_record_bytes == 0):
+            raise _invalid()
+        return self._iter_records(stream, max_record_bytes)
+
+    def _iter_records(self, stream, maximum):
+        pending = bytearray()
+        hashed = hashlib.sha256()
+        position = 0
+        try:
+            with self._lock:
+                self._readable()
+                expected = self._states[stream]
+                size = self._retained[stream]
+                expected_hash = self._hashes[stream].hexdigest()
+            while position < size:
+                with self._lock:
+                    self._readable()
+                    fd = self._fds[stream]
+                    if _entry(self._directory, stream + ".bin", fd, self._limit, 0o600) != expected:
+                        raise _invalid()
+                    chunk = os.pread(fd, min(_CADENCE, size - position), position)
+                    if not chunk:
+                        raise _invalid()
+                    if _entry(self._directory, stream + ".bin", fd, self._limit, 0o600) != expected:
+                        raise _invalid()
+                position += len(chunk)
+                hashed.update(chunk)
+                offset = 0
+                while offset < len(chunk):
+                    newline = chunk.find(b"\n", offset)
+                    end = len(chunk) if newline < 0 else newline
+                    if len(pending) + end - offset > maximum:
+                        raise _invalid()
+                    pending.extend(chunk[offset:end])
+                    if newline < 0:
+                        break
+                    record = bytes(pending)
+                    pending.clear()
+                    # Release the lock across yields; a concurrent close is
+                    # allowed, and must fail the resumed reader before proof.
+                    with self._lock:
+                        self._readable()
+                        if _entry(self._directory, stream + ".bin", self._fds[stream], self._limit, 0o600) != expected:
+                            raise _invalid()
+                    yield record
+                    del record
+                    offset = end + 1
+            with self._lock:
+                self._readable()
+                if pending or position != size or hashed.hexdigest() != expected_hash:
+                    raise _invalid()
+                # A later stream can never invalidate an earlier raw proof
+                # silently while the consumer processes yielded records.
+                for name, fd in self._fds.items():
+                    if _entry(self._directory, name + ".bin", fd, self._limit, 0o600) != self._states[name]:
+                        raise _invalid()
+                # Revalidate all immutable config/index records and every raw
+                # stream, then compare against the private finalize snapshot.
+                # This rereads disk sequentially; it never assembles the whole
+                # capture. Identity checks also reject same-content replacement.
+                metadata = {}
+                receipt = _read_capture_fd(self._directory, _metadata_states=metadata)
+                if (canonical_bytes(receipt) != self._closure_bytes
+                        or metadata != self._closure_metadata):
+                    raise _invalid()
+        except (OSError, ValueError, TypeError, KeyError, TaskAlongError):
             raise _invalid() from None
 
     @_serialized
@@ -390,12 +496,15 @@ def _validate_record(record, sequence, previous, config_hash, old, event_count, 
         raise _invalid()
 
 
-def _read_capture_fd(directory):
+def _read_capture_fd(directory, *, _metadata_states=None):
+    if _metadata_states is not None and (type(_metadata_states) is not dict or _metadata_states):
+        raise _invalid()
     config, config_hash, config_state = _read_record(directory, "capture.json")
     immutable_states = {"capture.json": config_state}
+    ceiling = _output_ceiling(config.get("schema_version"))
     if (set(config) != {"kind", "schema_version", "max_output_bytes", "max_records"}
-            or config["kind"] != "private_local_provider_capture" or config["schema_version"] != "1.0"
-            or not _integer(config["max_output_bytes"], _MAX_OUTPUT)
+            or config["kind"] != "private_local_provider_capture"
+            or not _integer(config["max_output_bytes"], ceiling)
             or not _integer(config["max_records"], _MAX_RECORDS) or config["max_records"] < 2):
         raise _invalid()
     names = directory.names()
@@ -464,9 +573,11 @@ def _read_capture_fd(directory):
             if _entry(directory, stream + ".bin", fd, config["max_output_bytes"], 0o600) != states[stream]:
                 raise _invalid()
         directory.check()
+        if _metadata_states is not None:
+            _metadata_states.update(immutable_states)
         finalized = old is not None and old["finalized"]
         limited = old is not None and (old["output_limited"] or old["metadata_limited"])
-        return {"kind": "private_local_provider_capture", "schema_version": "1.0",
+        return {"kind": "private_local_provider_capture", "schema_version": config["schema_version"],
                 "byte_closure": finalized, "status": "limited" if finalized and limited else "closed" if finalized else "incomplete",
                 "output_limited": old["output_limited"] if old else False,
                 "metadata_limited": old["metadata_limited"] if old else False,

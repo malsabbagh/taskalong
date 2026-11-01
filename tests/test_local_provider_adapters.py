@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from taskalong.errors import TaskAlongError
 from taskalong.local_provider_contract import ProviderLimits
+from taskalong.validation import canonical_bytes, loads
 from taskalong.local_provider_adapters import (
     adapter_invocation, capabilities, decoder, executable_descriptors,
     normalize_configuration, proposal_schema,
@@ -54,6 +55,231 @@ PROPOSAL = {"bundle_digest": "c" * 64, "changes": {"new.txt": "hello\n"}}
 
 
 class LocalProviderAdapterTests(unittest.TestCase):
+    def extended(self, provider="codex", **limits):
+        cfg = configuration(provider) | {"format": "configured-provider-profile/4", "native_roots": {}}
+        cfg["limits"].update({"max_proposal_bytes": 1048576, "max_record_bytes": 4194304} | limits)
+        b = binding(provider, "anthropic" if provider == "claude-code" else None)
+        b["remaining_budget"] = cfg["limits"].copy()
+        return cfg, b
+
+    def proposal_stream(self, cfg, b, proposal):
+        provider = cfg["provider"]
+        if provider == "codex":
+            return [("stdout", wire({"type": "thread.started", "thread_id": "synthetic-session"},
+                                     {"type": "turn.completed"})),
+                    ("result", json.dumps(proposal).encode())]
+        if provider == "antigravity":
+            return [("stdout", wire({"event": "init", "conversation_id": "synthetic-session", "init": {
+                "cwd": b["workspace"], "model": "synthetic-model", "tools": [],
+                "permission_mode": "request-review", "json_schema": proposal_schema(cfg, b)}},
+                {"event": "result", "result": {"conversation_id": "synthetic-session", "status": "SUCCESS",
+                    "num_turns": 1, "response": "", "duration_seconds": 1.25, "structured_output": proposal}}))]
+        common = {"session_id": b["attempt_id"], "parent_tool_use_id": None}
+        return [("stdout", wire(common | {"type": "system", "subtype": "init", "model": "synthetic-model", "tools": []},
+            common | {"type": "result", "subtype": "success", "is_error": False,
+                "permission_denials": [], "total_cost_usd": 0.25, "structured_output": proposal}))]
+
+    def test_profile_four_preserves_defaults_and_requires_explicit_roots_for_all_providers(self):
+        for provider in ("codex", "antigravity", "claude-code"):
+            cfg, b = self.extended(provider)
+            default = cfg | {"limits": ProviderLimits().to_dict()}
+            self.assertEqual(normalize_configuration(provider, default)["limits"], default["limits"])
+            normalized = normalize_configuration(provider, cfg)
+            self.assertEqual(normalized["limits"], cfg["limits"])
+            self.assertEqual(normalize_configuration(provider, normalized), normalized)
+            self.assertEqual(decoder(cfg, b, cfg["limits"]).limits.max_proposal_bytes, 1048576)
+            with self.assertRaises(TaskAlongError):
+                normalize_configuration(provider, {k: v for k, v in cfg.items() if k != "native_roots"})
+            if provider != "codex":
+                with self.assertRaises(TaskAlongError):
+                    normalize_configuration(provider, cfg | {"native_roots": {"CODEX_HOME": "/synthetic/root"}})
+            maximum = cfg | {"limits": cfg["limits"] | {"max_record_bytes": 16777216,
+                "max_output_bytes": 67108864, "max_protocol_records": 131072}}
+            self.assertEqual(normalize_configuration(provider, maximum)["limits"], maximum["limits"])
+            for field, value in (("max_proposal_bytes", 1048577), ("max_record_bytes", 16777217),
+                                 ("max_output_bytes", 67108865), ("max_protocol_records", 131073)):
+                with self.subTest(provider=provider, field=field), self.assertRaises(TaskAlongError):
+                    normalize_configuration(provider, cfg | {"limits": cfg["limits"] | {field: value}})
+        for version in (1, 2, 3):
+            cfg = configuration() | {"format": f"configured-provider-profile/{version}"}
+            if version == 3:
+                cfg["native_roots"] = {}
+            for field, value in (("max_proposal_bytes", 65537), ("max_record_bytes", 1048577),
+                                 ("max_protocol_records", 8193), ("max_output_bytes", 4194305)):
+                with self.subTest(version=version, field=field), self.assertRaises(TaskAlongError):
+                    normalize_configuration("codex", cfg | {"limits": cfg["limits"] | {field: value}})
+
+    def test_profile_four_accepts_exact_megabyte_proposals_inside_larger_native_frames(self):
+        overhead = len(canonical_bytes(PROPOSAL | {"changes": {"new.txt": "\n"}}))
+        count, extra = divmod(1048576 - overhead, 2)
+        proposal = PROPOSAL | {"changes": {"new.txt": "é" * count + "x" * extra + "\n"}}
+        self.assertEqual(len(canonical_bytes(proposal)), 1048576)
+        expected = hashlib.sha256(canonical_bytes(proposal)).hexdigest()
+        for provider in ("codex", "antigravity", "claude-code"):
+            cfg, b = self.extended(provider)
+            d = decoder(cfg, b, cfg["limits"])
+            stream = self.proposal_stream(cfg, b, proposal)
+            self.assertGreater(max(len(raw) for _, raw in stream), 1048576)
+            self.assertLess(sum(len(raw) for _, raw in stream), 4194304)
+            for name, raw in stream:
+                for offset in range(0, len(raw), 65521):
+                    d.feed(name, raw[offset:offset + 65521])
+            result = d.finish(0)
+            self.assertEqual(result["terminal_status"], "completed", result["protocol_errors"])
+            self.assertEqual(hashlib.sha256(canonical_bytes(result["structured_result"])).hexdigest(), expected)
+            self.assertIsNone(result["effective_effort"])
+            with self.assertRaises(TaskAlongError):
+                loads(json.dumps(proposal).encode())  # Authority JSON stays one MiB.
+
+    def test_profile_four_rejects_canonical_overflow_and_raw_flood_without_retry(self):
+        proposal = PROPOSAL | {"changes": {"new.txt": "x" * 1048576 + "\n"}}
+        for provider in ("codex", "antigravity", "claude-code"):
+            cfg, b = self.extended(provider)
+            d = decoder(cfg, b, cfg["limits"])
+            try:
+                for name, raw in self.proposal_stream(cfg, b, proposal):
+                    d.feed(name, raw)
+            except TaskAlongError:
+                pass
+            result = d.finish(0)
+            self.assertEqual(result["terminal_status"], "failed")
+            self.assertIsNone(result["structured_result"])
+            d = decoder(cfg, b, cfg["limits"])
+            with self.assertRaises(TaskAlongError):
+                d.feed("stdout", b"x" * 4194305)
+            self.assertEqual(d.finish(0)["terminal_status"], "failed")
+
+    def test_profile_four_codex_large_result_rejects_malformed_json_atomically(self):
+        cfg, b = self.extended()
+        nesting = b'{"a":' * 40 + b'0' + b'}' * 40
+        for raw in (b'{"changes":{},"changes":{}}', b'{"x":NaN}', b'{"x":1.5}',
+                    b'{"x":"\\ud800"}', b'\xff', nesting, b'{"x":' + b'[' * 1500 + b'0' + b']' * 1500 + b'}'):
+            d = decoder(cfg, b, cfg["limits"])
+            d.feed("stdout", wire({"type": "thread.started", "thread_id": "synthetic-session"}, {"type": "turn.completed"}))
+            d.feed("result", raw)
+            result = d.finish(0)
+            self.assertEqual(result["terminal_status"], "failed")
+            self.assertIsNone(result["structured_result"])
+
+    def test_profile_four_record_flood_remains_bounded_for_all_providers(self):
+        for provider in ("codex", "antigravity", "claude-code"):
+            cfg, b = self.extended(provider, max_protocol_records=2)
+            stream = self.proposal_stream(cfg, b, PROPOSAL)
+            frames = [json.loads(line) for line in stream[0][1].splitlines()]
+            if provider == "codex":
+                middle = {"type": "future.event"}
+            elif provider == "antigravity":
+                middle = {"event": "step_update", "step_update": {"conversation_id": "synthetic-session",
+                    "step_index": 1, "step_type": "checkpoint", "state": "DONE"}}
+            else:
+                middle = {"type": "system", "subtype": "status", "session_id": b["attempt_id"]}
+            d = decoder(cfg, b, cfg["limits"])
+            with self.assertRaises(TaskAlongError):
+                d.feed("stdout", wire(frames[0], middle, frames[1]))
+            result = d.finish(0)
+            self.assertEqual(result["terminal_status"], "failed")
+            self.assertIsNone(result["structured_result"])
+            self.assertIsNotNone(result["session_id"])
+
+    def test_profile_four_streams_32768_deltas_and_one_megabyte_final_proposal(self):
+        overhead = len(canonical_bytes(PROPOSAL | {"changes": {"new.txt": "\n"}}))
+        proposal = PROPOSAL | {"changes": {"new.txt": "x" * (1048576 - overhead) + "\n"}}
+        self.assertEqual(len(canonical_bytes(proposal)), 1048576)
+        for provider in ("codex", "antigravity", "claude-code"):
+            cfg, b = self.extended(provider, max_output_bytes=67108864,
+                max_record_bytes=16777216, max_protocol_records=131072)
+            stream = self.proposal_stream(cfg, b, proposal)
+            frames = stream[0][1].splitlines(keepends=True)
+            if provider == "codex":
+                delta = {"type": "item.updated", "item": {"text": "x" * 512}}
+            elif provider == "antigravity":
+                delta = {"event": "step_update", "step_update": {"conversation_id": "synthetic-session",
+                    "step_index": 1, "step_type": "agent_response", "state": "ACTIVE", "text_delta": "x" * 512}}
+            else:
+                delta = {"type": "stream_event", "session_id": b["attempt_id"], "event": {
+                    "type": "content_block_delta", "delta": {"type": "text_delta", "text": "x" * 512}}}
+            batch = wire(delta) * 128
+            d = decoder(cfg, b, cfg["limits"])
+            d.feed("stdout", frames[0])
+            for _ in range(256):
+                d.feed("stdout", batch)
+            if provider == "antigravity":
+                done = copy.deepcopy(delta)
+                done["step_update"]["state"] = "DONE"
+                d.feed("stdout", wire(done))
+            d.feed("stdout", frames[1])
+            for stream_name, raw in stream[1:]:
+                d.feed(stream_name, raw)
+            self.assertGreater(d._total, 17 * 1048576)
+            self.assertLess(d._total, 67108864)
+            result = d.finish(0)
+            self.assertEqual(result["terminal_status"], "completed", result["protocol_errors"])
+            self.assertEqual(len(canonical_bytes(result["structured_result"])), 1048576)
+            self.assertEqual(d._pending, b"")
+
+    def test_profile_four_codex_response_wire_remains_four_megabytes(self):
+        cfg, b = self.extended(max_output_bytes=67108864, max_record_bytes=16777216,
+                               max_protocol_records=131072)
+        d = decoder(cfg, b, cfg["limits"])
+        with self.assertRaises(TaskAlongError) as caught:
+            d.feed("result", b" " * 4194305)
+        self.assertEqual(caught.exception.code, "local_provider_result_limit")
+        d = decoder(cfg, b, cfg["limits"])
+        d.feed("stdout", wire({"type": "thread.started", "thread_id": "synthetic-session"}, {"type": "turn.completed"}))
+        raw = json.dumps(PROPOSAL).encode()
+        d.feed("result", raw + b" " * (4194304 - len(raw)))
+        self.assertEqual(d.finish(0)["terminal_status"], "completed")
+
+    def test_profile_four_accepts_large_outer_frames_but_refuses_frame_overflow(self):
+        payload = "x" * (9 * 1048576)
+        overflow = b"x" * 16777217
+        for provider in ("codex", "antigravity", "claude-code"):
+            cfg, b = self.extended(provider, max_output_bytes=67108864,
+                max_record_bytes=16777216, max_protocol_records=131072)
+            stream = self.proposal_stream(cfg, b, PROPOSAL)
+            frames = stream[0][1].splitlines(keepends=True)
+            if provider == "codex":
+                event = {"type": "item.updated", "item": {"text": payload}}
+            elif provider == "antigravity":
+                event = {"event": "step_update", "step_update": {"conversation_id": "synthetic-session",
+                    "step_index": 1, "step_type": "agent_response", "state": "DONE", "text_delta": payload}}
+            else:
+                event = {"type": "stream_event", "session_id": b["attempt_id"], "event": {
+                    "type": "content_block_delta", "delta": {"type": "text_delta", "text": payload}}}
+            d = decoder(cfg, b, cfg["limits"])
+            d.feed("stdout", frames[0])
+            d.feed("stdout", wire(event))
+            d.feed("stdout", frames[1])
+            for stream_name, raw in stream[1:]:
+                d.feed(stream_name, raw)
+            self.assertEqual(d.finish(0)["terminal_status"], "completed")
+            d = decoder(cfg, b, cfg["limits"])
+            with self.assertRaises(TaskAlongError):
+                d.feed("stdout", overflow)
+            self.assertEqual(d.finish(0)["terminal_status"], "failed")
+
+    def test_profile_four_stderr_is_incremental_metadata_without_private_byte_retention(self):
+        raw = b"private synthetic diagnostic\n" * 4096
+        for provider in ("codex", "antigravity"):
+            cfg, b = self.extended(provider, max_output_bytes=67108864,
+                max_record_bytes=16777216, max_protocol_records=131072)
+            d = decoder(cfg, b, cfg["limits"])
+            for offset in range(0, len(raw), 19):
+                d.feed("stderr", raw[offset:offset + 19])
+            for stream_name, chunk in self.proposal_stream(cfg, b, PROPOSAL):
+                d.feed(stream_name, chunk)
+            self.assertEqual(d._stderr, b"")
+            result = d.finish(0)
+            self.assertEqual(result["diagnostics"]["stderr_bytes"], len(raw))
+            self.assertEqual(result["diagnostics"]["stderr_sha256"], hashlib.sha256(raw).hexdigest())
+            self.assertNotIn("private synthetic", json.dumps(result))
+            self.assertEqual(result["terminal_status"], "completed" if provider == "codex" else "failed")
+            if provider == "antigravity":
+                self.assertIn("agy_native_diagnostics_unqualified", result["protocol_errors"])
+            legacy = decoder(configuration(provider), binding(provider), ProviderLimits())
+            legacy.feed("stderr", raw)
+            self.assertEqual(bytes(legacy._stderr), raw)
+
     def test_profile_three_codex_roots_are_explicit_passive_and_copied(self):
         raw = configuration() | {"format": "configured-provider-profile/3", "native_roots": {"CODEX_HOME": "/synthetic/native-root"}}
         original = copy.deepcopy(raw)

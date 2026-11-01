@@ -48,9 +48,9 @@ class ProviderLimits:
     def __post_init__(self):
         _integer(self.attempt_seconds, 1, 1440, "attempt_seconds")
         _integer(self.max_output_bytes, 1, 64 * 1024 * 1024, "max_output_bytes")
-        _integer(self.max_protocol_records, 1, 8192, "max_protocol_records")
-        _integer(self.max_record_bytes, 1, min(self.max_output_bytes, 1024 * 1024), "max_record_bytes")
-        _integer(self.max_proposal_bytes, 1, 65536, "max_proposal_bytes")
+        _integer(self.max_protocol_records, 1, 131072, "max_protocol_records")
+        _integer(self.max_record_bytes, 1, min(self.max_output_bytes, 16 * 1024 * 1024), "max_record_bytes")
+        _integer(self.max_proposal_bytes, 1, 1048576, "max_proposal_bytes")
         _integer(self.max_controller_submissions, 1, 1, "max_controller_submissions")
 
     @classmethod

@@ -151,6 +151,24 @@ def _observe(record, root, control):
     capture = {"status": "unknown", "byte_closure": False}
     if _present(control, "capture"):
         capture = read_capture(control / "capture")
+    response_reference = (record.get("observation") or {}).get("structured_result_reference")
+    if response_reference is not None:
+        if (type(response_reference) is not dict
+                or set(response_reference) != {"format", "path", "sha256", "bytes", "plan_digest", "artifact_format"}
+                or response_reference.get("format") != "configured-provider-response-reference/1"
+                or response_reference.get("path") != "response.json"
+                or not _sha(response_reference.get("sha256"))
+                or type(response_reference.get("bytes")) is not int
+                or not 1 <= response_reference["bytes"] <= _LIMIT
+                or response_reference.get("plan_digest") != record.get("request_digest")
+                or response_reference.get("artifact_format") not in {"file-replacements/1", "unified-diff/1"}
+                or record["observation"].get("structured_result") is not None):
+            _fail("provider_response_reference_invalid", uncertain=True)
+        raw = read_regular(root, "response.json", max_bytes=response_reference["bytes"],
+                           expected_sha256=response_reference["sha256"], private=True, expected_mode=0o400)
+        if (len(raw) != response_reference["bytes"] or canonical_bytes(loads(raw)) != raw
+                or loads(raw).get("bundle_digest") != response_reference["plan_digest"]):
+            _fail("provider_response_reference_invalid", uncertain=True)
     return {"run_id": record["run_id"], "provider": record["provider"], "revision": record["revision"],
             "stored_state": record["state"], "local_termination": process_status,
             "group_termination_confirmed": bool(process and process.get("group_termination_confirmed") is True),

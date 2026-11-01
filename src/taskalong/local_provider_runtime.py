@@ -64,7 +64,7 @@ def _native_roots(config):
 
 def _check_native_roots(store, config, bound=None):
     observed = _native_roots(config)
-    if config["provider"] != "codex" or config["format"] != "configured-provider-profile/3":
+    if config["provider"] != "codex" or config["format"] not in {"configured-provider-profile/3", "configured-provider-profile/4"}:
         return
     if bound is None:
         pointer = store.setting("provider-native-roots:" + config["digest"])
@@ -91,7 +91,7 @@ def configure(store, provider, value):
     with store.transaction() as db:
         raw = canonical_bytes(config).decode()
         db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", ("provider-config:" + config["digest"], raw))
-        if config["format"] == "configured-provider-profile/3":
+        if config["provider"] == "codex" and config["format"] in {"configured-provider-profile/3", "configured-provider-profile/4"}:
             binding = {"configuration_digest": config["digest"], "roots": roots}
             binding["digest"] = digest(binding)
             name = "provider-native-root-observation:" + binding["digest"]
@@ -251,19 +251,20 @@ def _process(config, prepared, invocation, *, output_chunk, cancelled, spawned):
     timeout = min(limits["attempt_seconds"], remaining_seconds)
     env = minimal_environment(runtime_parent=True)
     env.update(invocation["env_overrides"])
+    stream_options = {"_retain_output": False} if config.get("format") == "configured-provider-profile/4" else {}
     if sys.platform == "darwin":
         from .experimental_process import FOREGROUND_EXPERIMENT, run_foreground_experiment
         result = run_foreground_experiment(invocation["argv"], mode=FOREGROUND_EXPERIMENT,
             cwd=prepared["workspace"], stdin=invocation["stdin"], env=env,
             timeout_seconds=timeout, max_output_bytes=limits["max_output_bytes"],
-            cancel_requested=cancelled, on_spawn=spawned, _on_output_chunk=output_chunk)
+            cancel_requested=cancelled, on_spawn=spawned, _on_output_chunk=output_chunk, **stream_options)
         summary = result.to_dict()
     else:
         failure_code, failures, effect = None, (), "uncertain"
         try:
             result = run_bounded(invocation["argv"], cwd=prepared["workspace"], stdin=invocation["stdin"], env=env,
                 timeout_seconds=timeout, max_output_bytes=limits["max_output_bytes"],
-                cancel_requested=cancelled, on_spawn=spawned, _on_output_chunk=output_chunk)
+                cancel_requested=cancelled, on_spawn=spawned, _on_output_chunk=output_chunk, **stream_options)
         except ProcessBoundaryError as exc:
             if exc.process_result is None:
                 raise
@@ -344,7 +345,8 @@ def run(store, provider, *, request, output=None):
         record["native_root_binding"] = native_binding
     record = _event(store, record, root, "preflight")
     capture = PrivateCapture(control / "capture", max_output_bytes=limits.max_output_bytes,
-                             max_records=max(2, limits.max_protocol_records))
+                             max_records=min(8192, max(2, limits.max_protocol_records)),
+                             schema_version="2.0" if config["format"] == "configured-provider-profile/4" else "1.0")
     claimed = False
     process = None
     closure = None
@@ -394,7 +396,7 @@ def run(store, provider, *, request, output=None):
         result_bytes = 0
         if provider == "codex" and (control / "result.json").exists():
             remaining = max(0, limits.max_output_bytes - process["observed_output_bytes"])
-            raw = read_regular(control, "result.json", max_bytes=min(remaining, limits.max_record_bytes), private=True)
+            raw = read_regular(control, "result.json", max_bytes=min(remaining, limits.max_record_bytes, 4194304), private=True)
             result_bytes = len(raw)
             chunk("result", raw)
         closure = capture.finalize()
@@ -406,15 +408,28 @@ def run(store, provider, *, request, output=None):
         process["retained_output_bytes"] = sum(closure["streams"][s]["retained_bytes"] for s in ("stdout", "stderr", "result"))
         _write(root, "process.json", canonical_bytes(process))
         observation = decoder.finish(process["root_exit_code"])
+        response = observation["structured_result"]
+        if config["format"] == "configured-provider-profile/4" and response is not None:
+            # Authority/event documents keep their original one-MiB ceiling.
+            # A boundary-sized response lives as its own immutable object.
+            screen_sensitive(response)
+            response_bytes = canonical_bytes(response)
+            if len(response_bytes) > limits.max_proposal_bytes:
+                _fail("provider_proposal_too_large", "The canonical proposal exceeds its finite limit.", uncertain=True)
+            _write(root, "response.json", response_bytes)
+            observation = {**observation, "structured_result": None, "structured_result_reference": {
+                "format": "configured-provider-response-reference/1", "path": "response.json",
+                "sha256": hashlib.sha256(response_bytes).hexdigest(), "bytes": len(response_bytes),
+                "plan_digest": plan["digest"], "artifact_format": plan["artifact_format"]}}
         capture_failure = capture.limited or process.get("output_limited")
         if (process["root_exit_code"] != 0 or process.get("timed_out") or process.get("cancelled")
                 or capture_failure or process.get("failure_code") or observation["terminal_status"] != "completed"
                 or observation["protocol_errors"] or not process["process_stream_complete"]):
             return _event(store, record, root, "failed", process=process, observation=observation,
                           error="provider_local_or_protocol_failure", capture=closure)
-        response = observation["structured_result"]
         screen_sensitive(response)
-        artifact = validate_response(plan, response, max_proposal_bytes=limits.max_proposal_bytes)
+        artifact = validate_response(plan, response, max_proposal_bytes=limits.max_proposal_bytes,
+            max_patch_bytes=4*1048576 if config["format"] == "configured-provider-profile/4" else 1048576)
         _write(root, "proposed.patch", artifact.patch_bytes)
         _write(root, "proposal.json", artifact.manifest_json)
         return _event(store, record, root, "proposal_ready", process=process, observation=observation,

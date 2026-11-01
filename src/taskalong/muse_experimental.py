@@ -29,11 +29,15 @@ _EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 _CONTEXT = {"include", "native-only", "exclude"}
 _KEYS = {"executable", "account_home", "muse_home", "model", "reasoning_effort", "context", "catalog_digest", "public_context_hashes", "context_hashes", "native_roots", "attempt_seconds", "max_output_bytes", "max_proposal_bytes", "capture_profile", "max_protocol_records"}
 _IMPLEMENTATION = (720, 4*1048576, 65536, 8192)
+_MEGABYTE = "local-muse-provider/6"
+_MEGABYTE_RAW = 64 * 1048576
+_MEGABYTE_RECORDS = 131072
+_MEGABYTE_FRAME = 16 * 1048576
 
 
 def _max_records(config):
     # Never reinterpret an old cohort by adding defaults to its sealed bytes.
-    return config["max_protocol_records"] if config["format"] == "local-muse-provider/5" else 8192 if config["format"] == "local-muse-provider/4" else 2048
+    return config["max_protocol_records"] if config["format"] in {"local-muse-provider/5", _MEGABYTE} else 8192 if config["format"] == "local-muse-provider/4" else 2048
 
 
 class _RecordBudget:
@@ -78,29 +82,32 @@ def configure(store, value):
     effort = value.get("reasoning_effort", "high")
     context = value.get("context", "include")
     profile = value.get("capture_profile")
-    if profile is not None and (type(profile) is not str or profile not in {"implementation", "large-task"}):
+    if profile is not None and (type(profile) is not str or profile not in {"implementation", "large-task", "megabyte-proposal"}):
         _fail("provider_config_invalid", "Select the supported implementation capture profile or omit it.")
     large_task = profile == "large-task"
+    megabyte = profile == "megabyte-proposal"
     seconds = value.get("attempt_seconds", 1440 if large_task else 720 if profile else 20)
-    maximum = value.get("max_output_bytes", 4*1048576 if profile else 65536)
-    proposal_maximum = value.get("max_proposal_bytes", 65536)
-    records = value.get("max_protocol_records", 8192)
-    if ("max_protocol_records" in value and not large_task
-            or type(records) is not int or not 2 <= records <= 8192):
+    maximum = value.get("max_output_bytes", _MEGABYTE_RAW if megabyte else 4*1048576 if profile else 65536)
+    proposal_maximum = value.get("max_proposal_bytes", 1048576 if megabyte else 65536)
+    records = value.get("max_protocol_records", _MEGABYTE_RECORDS if megabyte else 8192)
+    if ("max_protocol_records" in value and not (large_task or megabyte)
+            or type(records) is not int or not 2 <= records <= (_MEGABYTE_RECORDS if megabyte else 8192)):
         _fail("provider_config_invalid", "Explicit finite record limits require the large-task profile.")
     catalog_digest = value.get("catalog_digest")
     if (type(model) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}", model)
             or type(effort) is not str or effort not in _EFFORTS
             or type(context) is not str or context not in _CONTEXT
-            or type(seconds) is not int or not 1 <= seconds <= (1440 if large_task else 720)
-            or type(maximum) is not int or not 1024 <= maximum <= (4*1048576 if profile else 1048576)
-            or type(proposal_maximum) is not int or not 1024 <= proposal_maximum <= 262144
+            or type(seconds) is not int or not 1 <= seconds <= (1440 if large_task or megabyte else 720)
+            or type(maximum) is not int or not 1024 <= maximum <= (_MEGABYTE_RAW if megabyte else 4*1048576 if profile else 1048576)
+            or type(proposal_maximum) is not int or not 1024 <= proposal_maximum <= (1048576 if megabyte else 262144)
             or catalog_digest is not None and (type(catalog_digest) is not str or not re.fullmatch(r"[a-f0-9]{64}", catalog_digest))):
         _fail("provider_config_invalid", "Select valid model, effort, context and finite local limits.")
     if profile == "implementation" and (seconds, maximum, proposal_maximum) != _IMPLEMENTATION[:3]:
         _fail("provider_config_invalid", "Implementation capture requires exactly 720 seconds, 4 MiB protocol and 64 KiB proposal.")
     if large_task and proposal_maximum > 65536:
         _fail("provider_config_invalid", "Large-task proposals remain capped at 64 KiB.")
+    if megabyte and (maximum, records) != (_MEGABYTE_RAW, _MEGABYTE_RECORDS):
+        _fail("provider_config_invalid", "Megabyte proposals require exactly 64 MiB protocol capture and 131072 records.")
     public_hashes = value.get("public_context_hashes", {})
     if (type(public_hashes) is not dict or set(public_hashes) - {"capability_policy", "security_mode", "meta_context_note"}
             or any(type(v) is not str or not re.fullmatch(r"[a-f0-9]{64}", v) for v in public_hashes.values())):
@@ -114,7 +121,7 @@ def configure(store, value):
     with Path(binary["path"]).open("rb") as stream:
         if stream.read(2) == b"#!":
             _fail("provider_native_binary_required", "Select the installed direct native binary, not an updater or shell wrapper.")
-    config = {"format": "local-muse-provider/5" if large_task else "local-muse-provider/4" if profile else "local-muse-provider/3", "provider": "muse", "experimental": True,
+    config = {"format": _MEGABYTE if megabyte else "local-muse-provider/5" if large_task else "local-muse-provider/4" if profile else "local-muse-provider/3", "provider": "muse", "experimental": True,
               "binary": binary, "account_home": str(home), "muse_home": str(muse_home), "native_roots": native_roots, "model": model,
               "reasoning_effort": effort, "context": context, "catalog_digest": catalog_digest, "public_context_hashes": public_hashes, "context_hashes": context_hashes,
               "attempt_seconds": seconds, "max_output_bytes": maximum, "max_proposal_bytes": proposal_maximum}
@@ -144,25 +151,27 @@ def _configuration(store):
 
 
 def _checked_configuration(config):
-    if type(config) is not dict or config.get("format") not in ("local-muse-provider/1", "local-muse-provider/2", "local-muse-provider/3", "local-muse-provider/4", "local-muse-provider/5") or config.get("digest") != digest(config):
+    if type(config) is not dict or config.get("format") not in ("local-muse-provider/1", "local-muse-provider/2", "local-muse-provider/3", "local-muse-provider/4", "local-muse-provider/5", _MEGABYTE) or config.get("digest") != digest(config):
         _fail("provider_configuration_changed", "The local provider configuration is inconsistent; configure it again.")
     large_task = config["format"] == "local-muse-provider/5"
-    implementation = config["format"] in {"local-muse-provider/4", "local-muse-provider/5"}
+    megabyte = config["format"] == _MEGABYTE
+    implementation = config["format"] in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE}
     if implementation:
-        if (config.get("capture_profile") != ("large-task" if large_task else "implementation")
+        if (config.get("capture_profile") != ("megabyte-proposal" if megabyte else "large-task" if large_task else "implementation")
                 or type(config.get("max_protocol_records")) is not int
-                or not large_task and tuple(config.get(k) for k in ("max_output_bytes", "max_proposal_bytes", "max_protocol_records")) != _IMPLEMENTATION[1:]
+                or not (large_task or megabyte) and tuple(config.get(k) for k in ("max_output_bytes", "max_proposal_bytes", "max_protocol_records")) != _IMPLEMENTATION[1:]
+                or megabyte and (config.get("max_output_bytes"), config.get("max_protocol_records")) != (_MEGABYTE_RAW, _MEGABYTE_RECORDS)
                 or large_task and not 2 <= config["max_protocol_records"] <= 8192
-                or not large_task and config.get("attempt_seconds") != _IMPLEMENTATION[0]):
+                or not (large_task or megabyte) and config.get("attempt_seconds") != _IMPLEMENTATION[0]):
             _fail("provider_configuration_changed", "The implementation capture profile is inconsistent.")
     elif "capture_profile" in config or "max_protocol_records" in config:
         _fail("provider_configuration_changed", "Legacy capture identities cannot declare implementation bounds.")
-    ceiling = 1440 if large_task else 720 if config["format"] in {"local-muse-provider/3", "local-muse-provider/4"} else 60
+    ceiling = 1440 if large_task or megabyte else 720 if config["format"] in {"local-muse-provider/3", "local-muse-provider/4"} else 60
     if type(config.get("attempt_seconds")) is not int or not 1 <= config["attempt_seconds"] <= ceiling:
         _fail("provider_configuration_changed", "The provider deadline is invalid for its configuration format.")
-    if type(config.get("max_output_bytes")) is not int or not 1024 <= config["max_output_bytes"] <= (4*1048576 if implementation else 1048576):
+    if type(config.get("max_output_bytes")) is not int or not 1024 <= config["max_output_bytes"] <= (_MEGABYTE_RAW if megabyte else 4*1048576 if implementation else 1048576):
         _fail("provider_configuration_changed", "The whole-protocol capture limit is invalid.")
-    if config["format"] != "local-muse-provider/1" and (type(config.get("max_proposal_bytes")) is not int or not 1024 <= config["max_proposal_bytes"] <= (65536 if large_task else 262144)):
+    if config["format"] != "local-muse-provider/1" and (type(config.get("max_proposal_bytes")) is not int or not 1024 <= config["max_proposal_bytes"] <= (1048576 if megabyte else 65536 if large_task else 262144)):
         _fail("provider_configuration_changed", "This provider configuration requires an explicit finite proposal limit; configure it again.")
     if _observe_file(config["binary"]["path"], executable=True) != config["binary"]:
         _fail("provider_executable_changed", "The configured binary changed; configure the installed provider again.")
@@ -180,15 +189,53 @@ def _argv(config, *, provider, workspace, prompt, session):
     return argv
 
 
-def _native_json(raw):
+def _native_json(raw, *, max_bytes=None):
     # Preserve native decimal observations as text, not invented rounded totals.
+    # Only the new /6 frame path opts into expanded wire/object bounds. Legacy
+    # journal/context readers retain their existing separately bounded dialect.
+    if max_bytes is not None:
+        if type(max_bytes) is not int or max_bytes != _MEGABYTE_FRAME or type(raw) not in (bytes, str):
+            raise ValueError("native frame bound")
+        encoded = raw if type(raw) is bytes else raw.encode("utf-8", errors="strict")
+        if len(encoded) > max_bytes:
+            raise ValueError("native frame bound")
+        raw = encoded.decode("utf-8", errors="strict")
     def pairs(items):
         result = {}
         for key, value in items:
             if key in result: raise ValueError("duplicate native key")
             result[key] = value
         return result
-    return json.loads(raw, object_pairs_hook=pairs, parse_float=str, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
+    value = json.loads(raw, object_pairs_hook=pairs, parse_float=str, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
+    if max_bytes is not None:
+        if type(value) is not dict:
+            raise ValueError("native frame root")
+        stack = [(value, 0)]
+        nodes = 0
+        while stack:
+            item, depth = stack.pop()
+            nodes += 1
+            if depth > 64 or nodes > 65536:
+                raise ValueError("native frame shape")
+            if type(item) is str:
+                if len(item.encode("utf-8", errors="strict")) > max_bytes:
+                    raise ValueError("native frame string")
+            elif type(item) is int:
+                if abs(item) > 2**53 - 1:
+                    raise ValueError("native frame integer")
+            elif item is None or type(item) is bool:
+                continue
+            elif type(item) in (dict, list):
+                if len(item) > 4096:
+                    raise ValueError("native frame container")
+                if type(item) is dict:
+                    stack.extend((key, depth + 1) for key in item)
+                    stack.extend((child, depth + 1) for child in item.values())
+                else:
+                    stack.extend((child, depth + 1) for child in item)
+            else:
+                raise ValueError("native frame value")
+    return value
 
 
 def _journal_source(config, session, *, started_unix_ms=None):
@@ -266,6 +313,8 @@ def _budget(config, prompt):
     # turn.input.user and run.lifecycle.started. Count minimal JSON frames,
     # including UTF-8 and JSON string escaping. Omitted native metadata, stderr,
     # output deltas and the final response can only require additional space.
+    if config.get("format") == _MEGABYTE and len(prompt) > 1048576:
+        _fail("provider_prompt_too_large", "The prompt exceeds the unchanged one MiB input limit.")
     text = prompt.decode("utf-8")
     minimum = sum(len(json.dumps({"payload_type": kind, "payload": {"prompt": text}},
         ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + 1
@@ -279,7 +328,7 @@ def _budget(config, prompt):
             "input_echoes_fit": minimum < maximum,
             "remaining_after_minimum_echo_bytes": max(0, maximum - minimum),
             "response_fit_guaranteed": False}
-    if config.get("format") in {"local-muse-provider/4", "local-muse-provider/5"}:
+    if config.get("format") in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE}:
         value.update(capture_profile=config["capture_profile"], max_protocol_records=_max_records(config))
     return value
 
@@ -385,7 +434,87 @@ def _session_records(raw, session, *, max_records=2048):
         _fail("provider_response_unrecognized", "The captured native output has no unambiguous completed response; preserve it without redispatch.", outcome="uncertain")
 
 
-def _decode(raw, session, *, max_proposal_bytes=65536, max_records=2048):
+def _decode_megabyte(raw, session, *, max_proposal_bytes, max_records):
+    """Iterate bounded wire frames, retaining only one terminal response."""
+    from .provider_wire import loads_wire
+    try:
+        if (type(max_records) is not int or max_records != _MEGABYTE_RECORDS
+                or type(max_proposal_bytes) is not int or not 1024 <= max_proposal_bytes <= 1048576):
+            raise ValueError()
+        if type(raw) is bytes:
+            if not raw or len(raw) > _MEGABYTE_RAW or not raw.endswith(b"\n"):
+                raise ValueError()
+            def byte_records():
+                offset = 0
+                while offset < len(raw):
+                    end = raw.find(b"\n", offset)
+                    if end < offset or end - offset > _MEGABYTE_FRAME:
+                        raise ValueError()
+                    yield raw[offset:end]
+                    offset = end + 1
+            records = byte_records()
+        else:
+            # The finalized capture iterator owns framing, held-file identity,
+            # full-stream hash verification and bounded pread buffers.
+            records = iter(raw)
+        run = None
+        terminal = None
+        sequence = count = total = 0
+        for line in records:
+            if type(line) is not bytes or len(line) > _MEGABYTE_FRAME or b"\n" in line:
+                raise ValueError()
+            count += 1
+            total += len(line) + 1
+            if count > max_records or total > _MEGABYTE_RAW or not line:
+                raise ValueError()
+            row = _native_json(line, max_bytes=_MEGABYTE_FRAME)
+            if (type(row.get("schema_version")) is not int or row["schema_version"] != 1
+                    or row.get("stream") != {"kind": "session", "id": session}
+                    or type(row.get("sequence")) is not int or row["sequence"] <= sequence
+                    or type(row.get("payload_type")) is not str or not row["payload_type"]
+                    or type(row.get("payload")) is not dict):
+                raise ValueError()
+            sequence = row["sequence"]
+            payload = row["payload"]
+            reference = payload.get("run_stream")
+            if reference is not None:
+                if (type(reference) is not dict or reference.get("kind") != "run"
+                        or type(reference.get("id")) is not str or not reference["id"]
+                        or len(reference["id"]) > 128 or not reference["id"].isprintable()):
+                    raise ValueError()
+                if run is not None and reference["id"] != run:
+                    raise ValueError()
+                run = reference["id"]
+            if row["payload_type"].startswith("run.terminal."):
+                if (terminal is not None or row["payload_type"] != "run.terminal.completed" or payload.get("kind") != "run_terminal"
+                        or payload.get("terminal") != "completed" or type(payload.get("text")) is not str
+                        or reference is None):
+                    raise ValueError()
+                terminal = payload["text"]
+        if run is None or terminal is None:
+            raise ValueError()
+        if len(terminal.encode("utf-8")) > 4194304:
+            raise ValueError()
+        text = terminal.strip()
+        if text.startswith("```json\n") and text.endswith("\n```"):
+            text = text[8:-4].strip()
+        response = loads_wire(text, max_bytes=4194304)
+        # Measure the complete canonical response before applying the unchanged
+        # authority JSON serializer, whose independent ceiling remains one MiB.
+        encoded = json.dumps(response, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        if len(encoded) > max_proposal_bytes:
+            _fail("provider_proposal_too_large", "The decoded proposal exceeds its separate configured byte limit; preserve captures without redispatch.", outcome="uncertain")
+        canonical_bytes(response)
+        return response, run
+    except (ValueError, TypeError, AttributeError, KeyError, UnicodeError, RecursionError, TaskAlongError) as exc:
+        if isinstance(exc, TaskAlongError) and exc.code == "provider_proposal_too_large":
+            raise
+        _fail("provider_response_unrecognized", "The captured native output has no unambiguous completed response; preserve it without redispatch.", outcome="uncertain")
+
+
+def _decode(raw, session, *, max_proposal_bytes=65536, max_records=2048, megabyte=False):
+    if megabyte:
+        return _decode_megabyte(raw, session, max_proposal_bytes=max_proposal_bytes, max_records=max_records)
     try:
         if max_records==8192 and not raw.endswith(b'\n'):raise ValueError()
         rows, run = _session_records(raw, session, max_records=max_records)
@@ -471,7 +600,8 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
     record = _event(store, record, root, "preflight")
     claimed = False
     from .local_provider_capture import PrivateCapture
-    capture = PrivateCapture(root/"capture", max_output_bytes=config["max_output_bytes"], max_records=8192)
+    capture_options = {"schema_version": "2.0"} if config["format"] == _MEGABYTE else {}
+    capture = PrivateCapture(root/"capture", max_output_bytes=config["max_output_bytes"], max_records=8192, **capture_options)
     try:
         context = _preflight(config, root)
         if _observe_file(config["binary"]["path"], executable=True) != config["binary"]:
@@ -497,36 +627,48 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
                 _check(store, _successor, config)
             record = _event(store, record, root, "running", process_receipt=receipt.to_dict())
         env = _environment(config, root)
-        record_budget = _RecordBudget(_max_records(config)) if config["format"] in {"local-muse-provider/4", "local-muse-provider/5"} else None
-        capture_options = {"on_stdout_line": record_budget.observe, "max_line_bytes": config["max_output_bytes"]} if record_budget else {}
+        record_budget = _RecordBudget(_max_records(config)) if config["format"] in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE} else None
+        capture_options = {"on_stdout_line": record_budget.observe, "max_line_bytes": _MEGABYTE_FRAME if config["format"] == _MEGABYTE else config["max_output_bytes"]} if record_budget else {}
+        if config["format"] == _MEGABYTE:
+            capture_options["_retain_output"] = False
         result = run_foreground_experiment(argv, mode=FOREGROUND_EXPERIMENT, cwd=root/"workspace", env=env,
             timeout_seconds=config["attempt_seconds"], max_output_bytes=config["max_output_bytes"], signal_grace_seconds=.5,
             on_spawn=spawned, cancel_requested=lambda:(root/"cancel-request.json").exists(),
             _on_output_chunk=capture.write, **capture_options)
         closure = capture.finalize()
-        pilot._write(root,"stdout.bin",redact(result.stdout)); pilot._write(root,"stderr.bin",redact(result.stderr))
+        if config["format"] != _MEGABYTE:
+            pilot._write(root,"stdout.bin",redact(result.stdout)); pilot._write(root,"stderr.bin",redact(result.stderr))
         process = _summary(result)
+        if config["format"] == _MEGABYTE:
+            process.update(retained_stdout_bytes=closure["streams"]["stdout"]["retained_bytes"],
+                           retained_stderr_bytes=closure["streams"]["stderr"]["retained_bytes"],
+                           retained_output_bytes=sum(closure["streams"][s]["retained_bytes"] for s in ("stdout", "stderr")))
         process["private_capture"] = closure
         process["process_stream_complete"] = sum(closure["streams"][s]["observed_bytes"] for s in ("stdout", "stderr")) == process["observed_output_bytes"]
         if record_budget:
             process.update(protocol_records_observed=record_budget.observed,
                            protocol_record_limit=record_budget.maximum, protocol_record_limited=record_budget.limited)
         pilot._write(root,"process.json",canonical_bytes(process))
-        if result.root_exit_code != 0 or result.timed_out or result.cancelled or result.output_limited or _owner_failed(result) or record_budget and record_budget.limited:
+        if result.root_exit_code != 0 or result.timed_out or result.cancelled or result.output_limited or _owner_failed(result) or record_budget and record_budget.limited or config["format"] == _MEGABYTE and not process["process_stream_complete"]:
             return _event(store,record,root,"failed",process=process,
                           error="provider_protocol_record_limit" if record_budget and record_budget.limited else "provider_local_failure",remote_usage="unknown")
-        response, native_run = _decode(result.stdout, session, max_proposal_bytes=config.get("max_proposal_bytes", 65536), max_records=_max_records(config))
-        screen_sensitive(response); pilot._proposal(manifest,response)
+        decode_options = {"megabyte": True} if config["format"] == _MEGABYTE else {}
+        source = capture.iter_records("stdout", max_record_bytes=_MEGABYTE_FRAME) if config["format"] == _MEGABYTE else result.stdout
+        response, native_run = _decode(source, session, max_proposal_bytes=config.get("max_proposal_bytes", 65536), max_records=_max_records(config), **decode_options)
+        replacement_options = {"replacement_profile": "megabyte-proposal/1"} if config["format"] == _MEGABYTE else {}
+        screen_sensitive(response); pilot._proposal(manifest,response, **replacement_options)
         _, events, metadata = _journal(config, session)
         observations = {"requested_provider":"meta","requested_model":config["model"],"requested_effort":config["reasoning_effort"],
                         "reported_provider":metadata.get("provider_id"),"reported_model":metadata.get("model_id"),"reported_effort":metadata.get("reasoning_effort"),
                         "configured_model_requests_observed":len(events),"native_run_id":native_run}
         if metadata.get("provider_id") != "meta" or metadata.get("model_id") != config["model"]:
             _fail("provider_response_identity_mismatch", "The native journal reports a different provider or model; inspect the captured output.", outcome="uncertain")
-        pilot._write(root,"response.json",canonical_bytes(response))
-        proposal = pilot.stage(bundle=str(bundle_root),response=response,output=str(root/"proposal"))
+        response_bytes = canonical_bytes(response)
+        pilot._write(root,"response.json",response_bytes)
+        proposal = pilot.stage(bundle=str(bundle_root),response=response,output=str(root/"proposal"), **replacement_options)
+        response_reference = {"response_ref": {"path": "response.json", "sha256": hashlib.sha256(response_bytes).hexdigest(), "bytes": len(response_bytes)}} if config["format"] == _MEGABYTE else {}
         return _event(store,record,root,"proposal_ready",process=process,execution=observations,
-                      proposal_path=str(root/"proposal/proposed.patch"),review_path=str(root/"proposal/review.json"),proposal_digest=proposal["digest"],remote_usage="unknown")
+                      proposal_path=str(root/"proposal/proposed.patch"),review_path=str(root/"proposal/review.json"),proposal_digest=proposal["digest"],remote_usage="unknown", **response_reference)
     except (TaskAlongError, ProcessBoundaryError, OSError) as exc:
         code = exc.code if hasattr(exc,"code") else "provider_local_io"
         record = _event(store,record,root,"blocked" if not claimed else "failed",error=code,remote_usage="unknown" if claimed else "not_sent")

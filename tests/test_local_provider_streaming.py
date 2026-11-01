@@ -135,6 +135,32 @@ class LocalProviderStreamingTests(unittest.TestCase):
         self.assertFalse(result.unaccounted_descendants)
         self.assertEqual(set(result.to_dict()), _LEGACY_RESULT_FIELDS)
 
+    def test_explicit_stream_only_mode_keeps_finite_raw_evidence_without_buffers(self):
+        sink = self.capture()
+        result = self.invoke("import os;os.write(1,b'x'*100000);os.write(2,b'y'*100000)",
+                             _on_output_chunk=sink.write, _retain_output=False)
+        self.assertEqual(result.stdout, b'')
+        self.assertEqual(result.stderr, b'')
+        self.assertEqual(result.output_bytes, 200000)
+        self.assertFalse(result.output_limited)
+        closure = sink.finalize()
+        self.assertEqual(sum(v['retained_bytes'] for v in closure['streams'].values()), 200000)
+        self.assertTrue(closure['byte_closure'])
+
+    def test_stream_only_overflow_and_invalid_sink_cannot_become_success(self):
+        for options in ({'_retain_output': False}, {'_retain_output': 0}):
+            with self.assertRaises(process.ProcessBoundaryError):
+                self.invoke("pass", **options)
+        sink = self.capture(maximum=4096)
+        result = self.invoke("import os;os.write(1,b'x'*100000)", max_output_bytes=4096,
+                             _on_output_chunk=sink.write, _retain_output=False)
+        self.assertTrue(result.output_limited)
+        self.assertGreater(result.output_bytes, 4096)
+        self.assertEqual(result.stdout, b'')
+        closure = sink.finalize()
+        self.assertEqual(closure['streams']['stdout']['retained_bytes'], 4096)
+        self.assertEqual(closure['status'], 'limited')
+
     @unittest.skipUnless(sys.platform == 'darwin', 'explicit Darwin foreground passthrough')
     def test_foreground_passes_live_raw_chunks_without_promoting_cessation(self):
         result = self.handshake(foreground=True)

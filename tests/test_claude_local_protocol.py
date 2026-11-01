@@ -10,7 +10,7 @@ from jsonschema import validate
 
 from taskalong.errors import TaskAlongError
 from taskalong.executors.claude_local import new_decoder
-from taskalong.executors.claude_local_protocol import response_schema
+from taskalong.executors.claude_local_protocol import ClaudeLocalDecoder, response_schema
 from test_claude_local_config import binding, config
 
 
@@ -18,6 +18,36 @@ LIMITS = {"max_protocol_records": 32, "max_record_bytes": 16384, "max_proposal_b
 
 
 class ClaudeLocalProtocolTests(unittest.TestCase):
+    def test_extended_frames_have_total_node_depth_and_unicode_bounds(self):
+        limits = LIMITS | {"max_record_bytes": 16777216}
+        nested = 0
+        for _ in range(40):
+            nested = [nested]
+        for value in ([[0] * 4096 for _ in range(17)], [0] * 4097,
+                      {str(i): 0 for i in range(4097)}, nested, "\ud800"):
+            d = ClaudeLocalDecoder(self.binding, limits, extended_wire=True)
+            with self.assertRaises(TaskAlongError) as caught:
+                d.feed("stdout", (json.dumps(self.init | {"unknown": value}, ensure_ascii=True) + "\n").encode())
+            self.assertEqual(caught.exception.code, "claude_local_frame_invalid")
+        legacy = new_decoder(self.binding, LIMITS | {"max_record_bytes": 8388608})
+        legacy.feed("stdout", self.wire(self.init | {"unknown": [[0] * 4096 for _ in range(17)]}, self.result))
+        self.assertEqual(legacy.finish()["structured_response"], self.proposal)
+
+    def test_large_file_content_is_an_explicit_opt_in_with_unchanged_native_default(self):
+        limits = LIMITS | {"max_record_bytes": 4194304, "max_proposal_bytes": 1048576}
+        proposal = self.proposal | {"changes": {"src/app.py": "x" * 70000 + "\n"}}
+        raw = self.wire(self.init, self.result | {"structured_output": proposal})
+        legacy = new_decoder(self.binding, limits)
+        with self.assertRaises(TaskAlongError) as caught:
+            legacy.feed("stdout", raw)
+        self.assertEqual(caught.exception.code, "claude_local_proposal_text_invalid")
+        extended = ClaudeLocalDecoder(self.binding, limits, max_content_bytes=1048576)
+        extended.feed("stdout", raw)
+        self.assertEqual(extended.finish()["structured_response"], proposal)
+        for bound in (True, 0, 1048577):
+            with self.assertRaises(TaskAlongError):
+                ClaudeLocalDecoder(self.binding, limits, max_content_bytes=bound)
+
     def setUp(self):
         self.binding = binding()
         self.init = self.event("system", subtype="init", model="synthetic-model", tools=[])

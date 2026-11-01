@@ -10,6 +10,89 @@ from taskalong.executors.antigravity_native_protocol import NativeAntigravityDec
 
 
 class NativeAntigravityProtocolTests(unittest.TestCase):
+    def test_extended_frames_have_total_node_container_depth_and_unicode_bounds(self):
+        values = ([[0] * 4096 for _ in range(17)], [0] * 4097, {str(i): 0 for i in range(4097)}, "\ud800")
+        nested = 0
+        for _ in range(40):
+            nested = [nested]
+        for value in (*values, nested):
+            d = self.decoder(extended_wire=True)
+            event = copy.deepcopy(self.init)
+            event["init"]["oversized_unknown"] = value
+            raw = (json.dumps(event, ensure_ascii=True) + "\n").encode()
+            with self.subTest(value_type=type(value)), self.assertRaises(TaskAlongError) as caught:
+                d.feed(raw)
+            self.assertEqual(caught.exception.code, "agy_native_frame_invalid")
+
+    def test_extended_steps_and_retained_parameters_are_bounded_without_delta_accumulation(self):
+        d = self.decoder(extended_wire=True)
+        d.feed(self.wire(self.init))
+        event = self.step(index=0, kind="agent_response", state="ACTIVE", text_delta="discarded")
+        for _ in range(1000):
+            d.feed(self.wire(event))
+        self.assertEqual((len(d._steps), d._parameter_bytes), (1, 0))
+        for index in range(1, 256):
+            d.feed(self.wire(self.step(index=index, kind="checkpoint")))
+        with self.assertRaises(TaskAlongError) as caught:
+            d.feed(self.wire(self.step(index=256, kind="checkpoint")))
+        self.assertEqual(caught.exception.code, "agy_native_step_limit")
+        legacy = self.decoder()
+        legacy.feed(self.wire(self.init))
+        for index in range(257):
+            legacy.feed(self.wire(self.step(index=index, kind="checkpoint")))
+        legacy.feed(self.wire(self.result))
+        self.assertTrue(legacy.finish(exit_code=0).successful)
+        d = self.decoder(extended_wire=True)
+        d.feed(self.wire(self.init))
+        parameters = {"p": "x" * (1048576 - len(json.dumps({"p": ""}, separators=(",", ":")).encode()))}
+        event = self.step(index=0, state="ACTIVE", tool_info={"name": "write_to_file", "parameters": parameters})
+        for _ in range(2):
+            d.feed(self.wire(event))
+        self.assertEqual(d._parameter_bytes, 1048576)
+        with self.assertRaises(TaskAlongError) as caught:
+            d.feed(self.wire(self.step(index=1, state="ACTIVE", tool_info={"name": "write_to_file", "parameters": {}})))
+        self.assertEqual(caught.exception.code, "agy_native_metadata_limit")
+
+    def test_extended_stderr_metadata_preserves_legacy_signature_failure_and_combined_bound(self):
+        stderr = b"synthetic diagnostic\n"
+        metadata = {"bytes": len(stderr), "sha256": hashlib.sha256(stderr).hexdigest()}
+        old = self.decoder()
+        old.feed(self.wire(self.init, self.result))
+        expected = old.finish(exit_code=0, stderr=stderr)
+        new = self.decoder(extended_wire=True)
+        new.feed(self.wire(self.init, self.result))
+        self.assertEqual(new.finish(exit_code=0, stderr_metadata=metadata), expected)
+        self.assertEqual(new.finish(exit_code=0, stderr=stderr), expected)
+        with self.assertRaises(TaskAlongError):
+            new.finish(exit_code=0, stderr_metadata=metadata | {"sha256": "0" * 64})
+        raw = self.wire(self.init, self.result)
+        bounded = self.decoder(extended_wire=True, max_output_bytes=len(raw))
+        bounded.feed(raw)
+        with self.assertRaises(TaskAlongError) as caught:
+            bounded.finish(exit_code=0, stderr_metadata=metadata)
+        self.assertEqual(caught.exception.code, "agy_native_output_limit")
+        for bad in ({"bytes": True, "sha256": "a" * 64}, {"bytes": 0, "sha256": "a" * 64},
+                    {"bytes": 1, "sha256": "bad"}, metadata | {"extra": 1}):
+            d = self.decoder(extended_wire=True)
+            with self.assertRaises(TaskAlongError):
+                d.finish(exit_code=0, stderr_metadata=bad)
+
+    def test_result_limit_is_explicit_and_does_not_change_legacy_native_default(self):
+        schema = {"type": "object"}
+        init = self.init | {"init": self.init["init"] | {"json_schema": schema}}
+        result = self.result | {"result": self.result["result"] | {
+            "structured_output": {"text": "x" * 70000}, "json_schema": schema}}
+        legacy = self.decoder(result_schema=schema)
+        legacy.feed(self.wire(init, result))
+        self.assertTrue(legacy.finish(exit_code=0).successful)
+        extended = self.decoder(result_schema=schema, max_result_bytes=65536)
+        with self.assertRaises(TaskAlongError) as caught:
+            extended.feed(self.wire(init, result))
+        self.assertEqual(caught.exception.code, "agy_native_result_limit")
+        for bound in (True, 0, 1048577):
+            with self.assertRaises(TaskAlongError):
+                self.decoder(max_result_bytes=bound)
+
     def setUp(self):
         self.session = "b643e889-7a21-4d5a-8f71-aa1760db5196"
         self.schema = {"type": "object", "additionalProperties": False,

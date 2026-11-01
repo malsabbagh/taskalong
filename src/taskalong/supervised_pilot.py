@@ -29,10 +29,10 @@ def _fail(code, *, uncertain=False):
                         exit_code=3, effect_outcome="uncertain" if uncertain else "not_sent")
 
 
-def _text(value, *, nullable=False):
+def _text(value, *, nullable=False, maximum=_MAX_TEXT):
     if nullable and value is None:
         return None
-    if (type(value) is not str or len(value.encode("utf-8")) > _MAX_TEXT
+    if (type(value) is not str or len(value.encode("utf-8")) > maximum
             or any(ord(c) < 32 and c not in "\n\t" for c in value)
             or "\x7f" in value or value and not value.endswith("\n")):
         _fail("pilot_text_invalid")
@@ -145,7 +145,10 @@ def _lines(text):
     return [line + "\n" for line in (text or "").split("\n")[:-1]]
 
 
-def _proposal(manifest, response):
+def _proposal(manifest, response, *, replacement_profile=None):
+    if replacement_profile not in (None, "megabyte-proposal/1"):
+        _fail("pilot_replacement_profile_invalid")
+    maximum, aggregate = (1048576, 1048576) if replacement_profile else (_MAX_TEXT, _MAX_TOTAL)
     if (type(response) is not dict or set(response) != {"bundle_digest", "changes"}
             or response["bundle_digest"] != manifest["digest"]):
         _fail("pilot_response_invalid")
@@ -156,7 +159,7 @@ def _proposal(manifest, response):
     files = manifest["request"]["files"]
     patch, observations, total = [], [], 0
     for path, content in sorted(changes.items()):
-        _path(path); _text(content, nullable=True)
+        _path(path); _text(content, nullable=True, maximum=maximum)
         if path not in files or files[path] == content:
             _fail("pilot_response_scope_or_noop")
         before = files[path]
@@ -170,14 +173,14 @@ def _proposal(manifest, response):
         observations.append({"path": path, "before_sha256": None if before is None else hashlib.sha256(before.encode()).hexdigest(),
                              "after_sha256": None if content is None else hashlib.sha256(content.encode()).hexdigest()})
     result = "".join(patch).encode("utf-8")
-    if total > _MAX_TOTAL or len(result) > 2 * _MAX_TOTAL:
+    if total > aggregate or len(result) > (4194304 if replacement_profile else 2 * _MAX_TOTAL):
         _fail("pilot_response_limit")
     return result, observations
 
 
-def stage(*, bundle, response, output):
+def stage(*, bundle, response, output, replacement_profile=None):
     root, manifest = _bundle(bundle)
-    proposal, changes = _proposal(manifest, response)
+    proposal, changes = _proposal(manifest, response, replacement_profile=replacement_profile)
     target = _destination(output)
     if target.is_relative_to(root) or root.is_relative_to(target):
         _fail("pilot_directory_overlap")
@@ -189,6 +192,8 @@ def stage(*, bundle, response, output):
               "proposed_patch_sha256": hashlib.sha256(proposal).hexdigest(), "changes": changes,
               "validation": "text_diff_against_supplied_snapshot", "base_commit": manifest["request"]["base_commit"],
               "repository_observed": False, "tests_run": False, "patch_applied": False, **_FLAGS}
+    if replacement_profile is not None:
+        report["replacement_profile"] = replacement_profile
     report["digest"] = digest(report)
     claimed = False
     try:
