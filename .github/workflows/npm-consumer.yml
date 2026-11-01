@@ -64,6 +64,14 @@ jobs:
       - env:
           NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
         run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          data = Path("packages/npm/cli/bin/taskalong.js").read_bytes()
+          print(json.dumps({"npm_launcher_sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "crlf_count": data.count(b"\r\n")}))
+          if not data.startswith(b"#!/usr/bin/env node\n") or b"\r\n" in data:
+              raise SystemExit("npm launcher must use LF before packing; npm rewrites CRLF shebangs during installation")
+          PY
           mkdir -p "$NPM_CONFIG_CACHE" npm-dist receipts
           npm pack ./packages/npm/cli --offline --ignore-scripts --pack-destination npm-dist
       - run: python tools/release_bundle.py audit-npm --root . --archive npm-dist/taskalong-cli-0.1.0-alpha.1.tgz > receipts/audit.json

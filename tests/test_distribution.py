@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -476,6 +477,85 @@ class QualificationFormat3Tests(unittest.TestCase):
 
 
 class DistributionTests(unittest.TestCase):
+    def test_autocrlf_npm_launcher_stays_identical_after_offline_pack_and_install(self):
+        """Real local npm bin linking preserves hashes only with an LF shebang.
+
+        The CRLF baseline demonstrates npm's mutation; it does not establish
+        the bytes of any previously failed Windows CI archive.
+        """
+        node, npm = shutil.which('node'), shutil.which('npm')
+        if not node or not npm:
+            self.skipTest('Node and npm are required for the offline own-package regression')
+        node_path, npm_path = Path(node).resolve(), Path(npm).resolve()
+        candidates = [npm_path if npm_path.name == 'npm-cli.js' else None,
+                      node_path.parent / 'node_modules/npm/bin/npm-cli.js',
+                      node_path.parent.parent / 'lib/node_modules/npm/bin/npm-cli.js']
+        npm_cli = next((p for p in candidates if p is not None and p.is_file()), None)
+        if npm_cli is None:
+            self.skipTest('The existing npm CLI JavaScript entrypoint is unavailable')
+        source = Path(__file__).resolve().parents[1]
+        relative = 'packages/npm/cli/bin/taskalong.js'
+        canonical = (source / relative).read_bytes()
+        self.assertTrue(canonical.startswith(b'#!/usr/bin/env node\n'))
+        self.assertNotIn(b'\r\n', canonical)
+        with tempfile.TemporaryDirectory(prefix='taskalong-npm-bin-eol-') as directory:
+            root = Path(directory)
+            package = root / 'packages/npm/cli'
+            (package / 'bin').mkdir(parents=True)
+            script = root / relative
+            script.write_bytes(canonical)
+            (package / 'package.json').write_text(json.dumps({
+                'name': 'taskalong-bin-eol-fixture', 'version': '1.0.0',
+                'bin': {'taskalong-bin-eol-fixture': 'bin/taskalong.js'},
+                'files': ['bin/taskalong.js']}), encoding='utf-8')
+            user, global_config = root / 'user.npmrc', root / 'global.npmrc'
+            user.write_bytes(b'')
+            global_config.write_bytes(b'')
+            environment = {k: v for k, v in os.environ.items() if not k.upper().startswith('NPM_CONFIG_')
+                           and k not in {'NODE_AUTH_TOKEN', 'NPM_TOKEN'}}
+            environment.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull, GIT_ATTR_NOSYSTEM='1',
+                NPM_CONFIG_USERCONFIG=str(user), NPM_CONFIG_GLOBALCONFIG=str(global_config),
+                NPM_CONFIG_CACHE=str(root / 'cache'), NPM_CONFIG_UPDATE_NOTIFIER='false')
+            def git(*args):
+                return subprocess.run(['git', '-c', 'core.attributesFile=' + os.devnull, *args],
+                    cwd=root, env=environment, capture_output=True, check=True, timeout=15)
+            def npm_run(*args):
+                return subprocess.run([str(node_path), str(npm_cli), *args], cwd=package,
+                    env=environment, capture_output=True, check=True, timeout=30)
+            def pack_and_install(label):
+                packed, prefix = root / ('packed-' + label), root / ('prefix-' + label)
+                packed.mkdir()
+                npm_run('pack', '.', '--offline', '--ignore-scripts', '--pack-destination', str(packed))
+                archives = list(packed.glob('*.tgz'))
+                self.assertEqual(len(archives), 1)
+                with tarfile.open(archives[0]) as archive:
+                    archived = archive.extractfile('package/bin/taskalong.js').read()
+                npm_run('install', '--prefix', str(prefix), '--offline', '--ignore-scripts', '--no-audit',
+                    '--no-fund', '--no-update-notifier', '--no-package-lock', str(archives[0]))
+                installed = (prefix / 'node_modules/taskalong-bin-eol-fixture/bin/taskalong.js').read_bytes()
+                return archived, installed
+
+            git('init', '-q')
+            git('-c', 'core.autocrlf=false', 'add', relative)
+            script.unlink()
+            git('-c', 'core.autocrlf=true', 'checkout-index', '-f', '--', relative)
+            converted = script.read_bytes()
+            self.assertEqual(converted, canonical.replace(b'\n', b'\r\n'))
+            archived, installed = pack_and_install('crlf')
+            self.assertEqual(archived, converted)
+            self.assertEqual(installed, converted.replace(b'\r\n', b'\n', 1))
+            self.assertNotEqual(hashlib.sha256(installed).hexdigest(), hashlib.sha256(archived).hexdigest())
+
+            (root / '.gitattributes').write_bytes((source / '.gitattributes').read_bytes())
+            git('-c', 'core.autocrlf=true', 'add', '.gitattributes')
+            script.unlink()
+            git('-c', 'core.autocrlf=true', 'checkout-index', '-f', '--', relative)
+            self.assertEqual(script.read_bytes(), canonical)
+            archived, installed = pack_and_install('lf')
+            self.assertEqual(archived, canonical)
+            self.assertEqual(installed, archived)
+            self.assertEqual(hashlib.sha256(installed).hexdigest(), hashlib.sha256(archived).hexdigest())
+
     def test_autocrlf_checkout_keeps_approved_license_bytes_in_built_wheel(self):
         """Fresh Git checkout, actual offline wheel build, unchanged strict audit.
 
