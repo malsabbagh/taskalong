@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 import time
 
-from .artifact_io import read_regular
+from .artifact_io import read_regular, _parent, _unchanged_directories
 from .errors import TaskAlongError
 from .local_provider_artifacts import validate_response
 from .local_provider_capture import PrivateCapture
@@ -42,16 +42,67 @@ def _passive(config):
     return {k:v for k,v in config.items() if k != "digest"}
 
 
+def _native_roots(config):
+    """Observe only selected directory identities; never read native contents."""
+    if config["provider"] != "codex":
+        return {}
+    roots = config.get("native_roots", {})
+    if "CODEX_HOME" in os.environ and "CODEX_HOME" not in roots:
+        _fail("provider_native_root_unsupported", "Select CODEX_HOME explicitly with profile/3 before submission.")
+    observed = {}
+    try:
+        for key, path in roots.items():
+            # Reuse held no-follow traversal without creating or opening a file.
+            with _parent(path, "native-root-observation", private=False) as (fd, _, links):
+                info = os.fstat(fd)
+                observed[key] = {"path": path, "device": info.st_dev, "inode": info.st_ino, "owner": info.st_uid}
+                _unchanged_directories(links)
+    except (TaskAlongError, OSError):
+        _fail("provider_native_root_unavailable", "The selected native directory is unavailable or unsafe.")
+    return observed
+
+
+def _check_native_roots(store, config, bound=None):
+    observed = _native_roots(config)
+    if config["provider"] != "codex" or config["format"] != "configured-provider-profile/3":
+        return
+    if bound is None:
+        pointer = store.setting("provider-native-roots:" + config["digest"])
+        if (type(pointer) is not dict or pointer.get("digest") != digest(pointer)
+                or pointer.get("configuration_digest") != config["digest"]
+                or type(pointer.get("observation_digest")) is not str):
+            _fail("provider_native_root_changed", "The selected native directory binding is unavailable.")
+        bound = store.setting("provider-native-root-observation:" + pointer["observation_digest"])
+    if (type(bound) is not dict or bound.get("digest") != digest(bound)
+            or bound.get("configuration_digest") != config["digest"] or bound.get("roots") != observed
+            or store.setting("provider-native-root-observation:" + bound["digest"]) != bound):
+        _fail("provider_native_root_changed", "The selected native directory binding changed; configure it again.")
+    return bound
+
+
 def configure(store, provider, value):
     if type(provider) is not str or provider not in PROVIDERS:
         _fail("provider_unavailable", "Select an implemented configured provider.")
     screen_sensitive(value)
     config = _adapters().normalize_configuration(provider, value)
     _check_executables(config)
+    roots = _native_roots(config)
     config["digest"] = digest(config)
     with store.transaction() as db:
         raw = canonical_bytes(config).decode()
         db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", ("provider-config:" + config["digest"], raw))
+        if config["format"] == "configured-provider-profile/3":
+            binding = {"configuration_digest": config["digest"], "roots": roots}
+            binding["digest"] = digest(binding)
+            name = "provider-native-root-observation:" + binding["digest"]
+            existing = store.setting(name)
+            if existing is not None and existing != binding:
+                _fail("provider_native_root_changed", "Retained native directory evidence conflicts.")
+            db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", (name, canonical_bytes(binding).decode()))
+            pointer = {"configuration_digest": config["digest"], "observation_digest": binding["digest"]}
+            pointer["digest"] = digest(pointer)
+            db.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(name) DO UPDATE SET document=excluded.document",
+                       ("provider-native-roots:" + config["digest"], canonical_bytes(pointer).decode()))
         db.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(name) DO UPDATE SET document=excluded.document",
                    ("provider:" + provider, raw))
     return _view(config)
@@ -129,6 +180,7 @@ def prepare(store, provider, *, request):
 
 def budget(store, provider, *, request):
     config = _configuration(store, provider)
+    _check_native_roots(store, config)
     plan = prepare(store, provider, request=request)
     prompt = render_prompt(plan)
     limits = ProviderLimits.from_dict(config["limits"])
@@ -243,6 +295,7 @@ def run(store, provider, *, request, output=None):
     if sys.platform not in {"darwin", "linux"}:
         _fail("provider_platform_unsupported", "The configured process owner currently supports macOS and Linux.")
     config = _configuration(store, provider)
+    native_binding = _check_native_roots(store, config)
     plan = prepare(store, provider, request=request)
     prompt = render_prompt(plan)
     if len(prompt) > 1048576:
@@ -268,6 +321,8 @@ def run(store, provider, *, request, output=None):
         "remaining_budget": limits.to_dict(), "context_policy": plan["context_policy"],
         "requested_model": plan["model"], "requested_effort": plan["reasoning_effort"],
         "artifact_format": plan["artifact_format"]}
+    if native_binding is not None:
+        prepared["native_root_binding"] = native_binding
     # Adapter projection and unsupported feature checks precede any claim.
     invocation = _adapters().adapter_invocation(_passive(config), prepared, prompt)
     decoder = _adapters().decoder(_passive(config), prepared, limits)
@@ -285,6 +340,8 @@ def run(store, provider, *, request, output=None):
         "descendant_cessation": "unknown", "automatic_retry_allowed": False, "patch_applied": False,
         "acceptance_allowed": False, "production_dispatch_allowed": False, "experimental": True,
         "limits": limits.to_dict()}
+    if native_binding is not None:
+        record["native_root_binding"] = native_binding
     record = _event(store, record, root, "preflight")
     capture = PrivateCapture(control / "capture", max_output_bytes=limits.max_output_bytes,
                              max_records=max(2, limits.max_protocol_records))
@@ -295,6 +352,7 @@ def run(store, provider, *, request, output=None):
     try:
         verify_task(plan, repository=request["repository"])
         _check_executables(config)
+        _check_native_roots(store, config, native_binding)
         _claim(store, record, plan)
         claimed = True
         record = _event(store, record, root, "starting", controller_submissions=1, remote_usage="unknown")
@@ -302,6 +360,7 @@ def run(store, provider, *, request, output=None):
         def spawned(receipt):
             nonlocal record
             _check_executables(config)
+            _check_native_roots(store, config, native_binding)
             verify_task(plan, repository=request["repository"])
             read_regular(control, "prompt.txt", max_bytes=len(prompt), expected_sha256=hashlib.sha256(prompt).hexdigest(),
                          private=True, expected_mode=0o400)

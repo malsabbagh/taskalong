@@ -54,6 +54,46 @@ PROPOSAL = {"bundle_digest": "c" * 64, "changes": {"new.txt": "hello\n"}}
 
 
 class LocalProviderAdapterTests(unittest.TestCase):
+    def test_profile_three_codex_roots_are_explicit_passive_and_copied(self):
+        raw = configuration() | {"format": "configured-provider-profile/3", "native_roots": {"CODEX_HOME": "/synthetic/native-root"}}
+        original = copy.deepcopy(raw)
+        with patch("builtins.open", side_effect=AssertionError("file I/O")):
+            normalized = normalize_configuration("codex", raw)
+            plan = adapter_invocation(normalized, binding(), b"Task")
+        self.assertEqual(normalized, original)
+        self.assertEqual(plan["env_overrides"], {"CODEX_HOME": "/synthetic/native-root"})
+        raw["native_roots"]["CODEX_HOME"] = "/changed"
+        self.assertEqual(normalized, original)
+        self.assertEqual(adapter_invocation(original | {"native_roots": {}}, binding(), b"Task")["env_overrides"], {})
+
+    def test_profile_three_rejects_unknown_roots_invalid_paths_and_other_providers(self):
+        raw = configuration() | {"format": "configured-provider-profile/3", "native_roots": {}}
+        invalid = [None, [], {"HOME": "/synthetic"}, {"API_KEY": "canary"}]
+        invalid += [{"CODEX_HOME": value} for value in (None, True, "", "relative", "/", "/a/../b", "/a//b", "/bad\nroot", "/" + "a" * 4096)]
+        for roots in invalid:
+            with self.subTest(roots=roots), self.assertRaises(TaskAlongError):
+                normalize_configuration("codex", raw | {"native_roots": roots})
+        with self.assertRaises(TaskAlongError):
+            normalize_configuration("codex", {k: v for k, v in raw.items() if k != "native_roots"})
+        for provider in ("antigravity", "claude-code"):
+            with self.assertRaises(TaskAlongError):
+                normalize_configuration(provider, configuration(provider) | {"format": raw["format"], "native_roots": {}})
+        for version in (1, 2):
+            with self.assertRaises(TaskAlongError):
+                normalize_configuration("codex", raw | {"format": f"configured-provider-profile/{version}"})
+
+    def test_profile_three_keeps_default_and_all_other_budget_bounds(self):
+        raw = configuration() | {"format": "configured-provider-profile/3", "native_roots": {}}
+        self.assertEqual(normalize_configuration("codex", raw)["limits"], ProviderLimits().to_dict())
+        for seconds in (13, 720, 1440):
+            limits = raw["limits"] | {"attempt_seconds": seconds}
+            self.assertEqual(normalize_configuration("codex", raw | {"limits": limits})["limits"], limits)
+        for field, value in (("attempt_seconds", 1441), ("max_output_bytes", 4194305),
+                ("max_protocol_records", 8193), ("max_record_bytes", 1048577),
+                ("max_proposal_bytes", 65537), ("max_controller_submissions", 2)):
+            with self.subTest(field=field), self.assertRaises(TaskAlongError):
+                normalize_configuration("codex", raw | {"limits": raw["limits"] | {field: value}})
+
     def test_profile_versions_preserve_defaults_shorter_limits_and_identity(self):
         self.assertEqual(ProviderLimits().attempt_seconds, 720)
         for provider in ("codex", "antigravity", "claude-code"):

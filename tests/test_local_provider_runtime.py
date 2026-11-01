@@ -29,6 +29,7 @@ class ProviderOwnerTests(unittest.TestCase):
         self.repo.mkdir()
         self.env = patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
         self.env.start()
+        os.environ.pop("CODEX_HOME", None)  # Tests never inspect an operator root.
         for args in (("init", "-b", "main"), ("config", "user.name", "Synthetic Operator"),
                      ("config", "user.email", "synthetic@example.invalid"), ("config", "commit.gpgsign", "false")):
             self.git(*args)
@@ -57,10 +58,202 @@ class ProviderOwnerTests(unittest.TestCase):
                 "task": "Create the declared public module.", "read_paths": ["reference.txt"],
                 "writable_paths": ["new.py"]} | kw
 
-    def configure(self, provider="codex"):
+    def configure(self, provider="codex", **fields):
         config = configuration(provider)
+        config.update(fields)
         config["adapter_configuration"]["executable"] = {"path": str(self.exe), "sha256": self.sha, "version": "synthetic"}
         return self.service.configure_provider(provider, config)
+
+    def claims(self):
+        return self.service._store.db.execute("SELECT count(*) FROM settings WHERE name LIKE 'configured-provider-claim:%'").fetchone()[0]
+
+    def test_legacy_and_empty_roots_refuse_any_ambient_codex_home_before_claim(self):
+        for version in (1, 2, 3):
+            fields = {"format": f"configured-provider-profile/{version}"}
+            if version == 3:
+                fields["native_roots"] = {}
+            self.configure(**fields)
+            for value in ("", "relative", "/synthetic/ambient-root"):
+                with self.subTest(version=version, value=value), patch.dict(os.environ, {"CODEX_HOME": value}), \
+                        patch.object(owner, "_process") as native:
+                    with self.assertRaises(TaskAlongError) as caught:
+                        self.service.run_provider("codex", request=self.request())
+                    self.assertEqual((caught.exception.code, caught.exception.effect_outcome),
+                                     ("provider_native_root_unsupported", "not_sent"))
+                    with self.assertRaises(TaskAlongError):
+                        self.configure(**fields)
+                    native.assert_not_called()
+            self.assertEqual(self.claims(), 0)
+        self.assertEqual(self.service._store.db.execute("SELECT count(*) FROM settings WHERE name LIKE 'provider-run:%'").fetchone()[0], 0)
+
+    def test_profile_three_default_root_keeps_existing_owner_entry(self):
+        self.configure(format="configured-provider-profile/3", native_roots={})
+        from taskalong.executors.codex_cli import CodexCLI
+        original = CodexCLI.run
+        entries = []
+        def counted(executor, *args, **kwargs):
+            entries.append(executor.profile["format"])
+            return original(executor, *args, **kwargs)
+        def process(config, prepared, invocation, **callbacks):
+            self.assertEqual(invocation["env_overrides"], {})
+            return self.process(config, prepared, invocation, **callbacks)
+        with patch.object(CodexCLI, "run", counted), patch.object(owner, "_process", side_effect=process):
+            result = self.service.run_provider("codex", request=self.request())
+        self.assertEqual(result["state"], "proposal_ready")
+        self.assertEqual(entries, ["configured-provider-profile/3"])
+
+    def test_explicit_root_overrides_ambient_without_opening_native_contents(self):
+        root = self.root / "native-root"
+        root.mkdir(mode=0o755)
+        with patch.dict(os.environ, {"CODEX_HOME": "invalid ambient selection"}):
+            self.configure(format="configured-provider-profile/3", native_roots={"CODEX_HOME": str(root)})
+            def process(config, prepared, invocation, **callbacks):
+                self.assertEqual(invocation["env_overrides"], {"CODEX_HOME": str(root)})
+                return self.process(config, prepared, invocation, **callbacks)
+            with patch.object(owner, "_process", side_effect=process):
+                result = self.service.run_provider("codex", request=self.request())
+        self.assertEqual(result["state"], "proposal_ready")
+        config = self.service._store.setting("provider:codex")
+        pointer = self.service._store.setting("provider-native-roots:" + config["digest"])
+        bound = self.service._store.setting("provider-native-root-observation:" + pointer["observation_digest"])
+        self.assertEqual(bound["configuration_digest"], config["digest"])
+        self.assertEqual(bound["roots"]["CODEX_HOME"]["inode"], root.stat().st_ino)
+        self.assertEqual(list(root.iterdir()), [])
+
+    def test_native_root_must_exist_as_owned_directory_without_symlinks(self):
+        file = self.root / "file"
+        file.write_bytes(b"inert")
+        target = self.root / "target"
+        target.mkdir()
+        link = self.root / "link"
+        link.symlink_to(target, target_is_directory=True)
+        for root in (self.root / "missing", file, link, link / "child"):
+            with self.subTest(root=root), self.assertRaises(TaskAlongError) as caught:
+                self.configure(format="configured-provider-profile/3", native_roots={"CODEX_HOME": str(root)})
+            self.assertEqual(caught.exception.code, "provider_native_root_unavailable")
+        self.assertIsNone(self.service._store.setting("provider:codex"))
+        self.assertEqual(self.claims(), 0)
+
+    def test_replaced_root_refuses_until_explicit_reconfigure_retaining_history(self):
+        root = self.root / "native-root"
+        root.mkdir()
+        fields = {"format": "configured-provider-profile/3", "native_roots": {"CODEX_HOME": str(root)}}
+        self.configure(**fields)
+        config = self.service._store.setting("provider:codex")
+        old_pointer = self.service._store.setting("provider-native-roots:" + config["digest"])
+        old_binding = self.service._store.setting("provider-native-root-observation:" + old_pointer["observation_digest"])
+        self.configure(**fields)
+        self.assertEqual(self.service._store.setting("provider-native-roots:" + config["digest"]), old_pointer)
+        root.rename(self.root / "retained-original")
+        with patch.object(owner, "_process") as native, self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider("codex", request=self.request())
+        self.assertEqual((caught.exception.code, caught.exception.effect_outcome), ("provider_native_root_unavailable", "not_sent"))
+        native.assert_not_called()
+        root.mkdir()
+        with patch.object(owner, "_process") as native:
+            with self.assertRaises(TaskAlongError) as caught:
+                self.service.run_provider("codex", request=self.request())
+            self.assertEqual((caught.exception.code, caught.exception.effect_outcome), ("provider_native_root_changed", "not_sent"))
+            native.assert_not_called()
+        self.assertEqual(self.claims(), 0)
+        self.configure(**fields)
+        new_pointer = self.service._store.setting("provider-native-roots:" + config["digest"])
+        self.assertNotEqual(new_pointer, old_pointer)
+        self.assertEqual(self.service._store.setting("provider-native-root-observation:" + old_binding["digest"]), old_binding)
+        self.assertEqual(self.service._store.setting("provider:codex"), config)
+        with patch.object(owner, "_process", side_effect=self.process):
+            result = self.service.run_provider("codex", request=self.request())
+        self.assertEqual(result["state"], "proposal_ready")
+        self.assertEqual(result["native_root_binding"]["digest"], new_pointer["observation_digest"])
+
+    def test_root_change_after_preparation_refuses_before_submission_claim(self):
+        root = self.root / "native-root"
+        root.mkdir()
+        self.configure(format="configured-provider-profile/3", native_roots={"CODEX_HOME": str(root)})
+        original = owner.verify_task
+        def verify(*args, **kwargs):
+            root.rename(self.root / "retained-original")
+            root.mkdir()
+            return original(*args, **kwargs)
+        with patch.object(owner, "verify_task", side_effect=verify), patch.object(owner, "_process") as native, \
+                self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider("codex", request=self.request())
+        self.assertEqual((caught.exception.code, caught.exception.effect_outcome), ("provider_native_root_changed", "not_sent"))
+        self.assertEqual(self.claims(), 0)
+        native.assert_not_called()
+
+    def test_replaced_root_at_gate_release_stops_without_releasing_target(self):
+        root = self.root / "native-root"
+        root.mkdir()
+        self.configure(format="configured-provider-profile/3", native_roots={"CODEX_HOME": str(root)})
+        def process(config, prepared, invocation, **callbacks):
+            root.rename(self.root / "retained-original")
+            root.mkdir()
+            # A concurrent explicit reconfigure cannot replace this run's binding.
+            self.service.configure_provider("codex", owner._passive(config))
+            callbacks["spawned"](ProcessReceipt("synthetic", 100, 100, 101, 1234567, self.sha))
+            self.fail("target gate released")
+        with patch.object(owner, "_process", side_effect=process), self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider("codex", request=self.request())
+        self.assertEqual(caught.exception.code, "provider_native_root_changed")
+        self.assertEqual(self.claims(), 1)
+
+    def test_explicit_reconfigure_retains_consumed_claim_and_old_run_binding(self):
+        root = self.root / "native-root"
+        root.mkdir()
+        fields = {"format": "configured-provider-profile/3", "native_roots": {"CODEX_HOME": str(root)}}
+        self.configure(**fields)
+        with patch.object(owner, "_process", side_effect=self.process):
+            first = self.service.run_provider("codex", request=self.request())
+        old_binding = first["native_root_binding"]
+        root.rename(self.root / "retained-original")
+        root.mkdir()
+        self.configure(**fields)
+        with patch.object(owner, "_process") as native, self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider("codex", request=self.request())
+        self.assertEqual(caught.exception.code, "provider_already_submitted")
+        native.assert_not_called()
+        self.assertEqual(self.service.inspect(first["run_id"])["native_root_binding"], old_binding)
+        self.assertEqual(self.service._store.setting("provider-native-root-observation:" + old_binding["digest"]), old_binding)
+        with patch.object(owner, "_process", side_effect=self.process):
+            second = self.service.run_provider("codex", request=self.request(task="Create a separately authorized public module."))
+        self.assertNotEqual(second["native_root_binding"]["digest"], old_binding["digest"])
+        self.assertEqual(self.claims(), 2)
+
+    def test_root_version_and_selection_changes_cannot_reset_consumed_claim(self):
+        self.configure()
+        with patch.object(owner, "_process", side_effect=self.process):
+            self.service.run_provider("codex", request=self.request())
+        root = self.root / "native-root"
+        root.mkdir()
+        config = owner._passive(self.service._store.setting("provider:codex"))
+        config.update(format="configured-provider-profile/3", native_roots={"CODEX_HOME": str(root)})
+        config["limits"]["attempt_seconds"] = 1440
+        self.service.configure_provider("codex", config)
+        with patch.object(owner, "_process") as native, self.assertRaises(TaskAlongError) as caught:
+            self.service.run_provider("codex", request=self.request())
+        self.assertEqual(caught.exception.code, "provider_already_submitted")
+        native.assert_not_called()
+        self.assertEqual(self.claims(), 1)
+
+    def test_process_environment_forwards_only_explicit_root_and_no_secrets(self):
+        receipt = ProcessReceipt("synthetic", 100, 100, 101, 1234567, self.sha)
+        process = ProcessResult(0, b"", b"", False, False, True, True, False, receipt, 1, 0, "linux-child-subreaper", False, None)
+        prepared = {"remaining_budget": {"attempt_seconds": 720, "max_output_bytes": 1024},
+                    "absolute_deadline": __import__('time').time()*1000+720000, "workspace": str(self.root)}
+        ambient = {"HOME": "/synthetic/default-home", "CODEX_HOME": "/synthetic/ambient", "OPENAI_API_KEY": "synthetic-secret",
+                   "ANTHROPIC_API_KEY": "synthetic-secret", "HTTPS_PROXY": "http://synthetic.invalid", "API_TOKEN": "synthetic-secret"}
+        invocation = {"argv": [str(self.exe)], "stdin": b"", "env_overrides": {"CODEX_HOME": "/synthetic/selected"}}
+        with patch.dict(os.environ, ambient, clear=True), patch.object(owner.sys, "platform", "linux"), \
+                patch.object(owner, "run_bounded", return_value=process) as boundary:
+            self.assertNotIn("CODEX_HOME", owner.minimal_environment())
+            self.assertNotIn("CODEX_HOME", owner.minimal_environment(runtime_parent=True))
+            owner._process({}, prepared, invocation, output_chunk=lambda *_: None, cancelled=lambda: False, spawned=lambda _: None)
+        env = boundary.call_args.kwargs["env"]
+        self.assertEqual(env["CODEX_HOME"], "/synthetic/selected")
+        self.assertEqual(env["HOME"], ambient["HOME"])
+        for key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "HTTPS_PROXY", "API_TOKEN"):
+            self.assertNotIn(key, env)
 
     def process(self, config, prepared, invocation, *, output_chunk, cancelled, spawned):
         self.calls.append(prepared)
