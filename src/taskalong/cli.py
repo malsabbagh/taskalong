@@ -27,6 +27,7 @@ def parser():
     command("providers")
     p = command("provider-context"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--output", required=True)
     p = command("provider-budget"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--request", required=True)
+    p = command("prepare-provider-task"); p.add_argument("provider"); p.add_argument("--request", required=True)
     p = command("provider-successor-plan"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--predecessor", required=True)
     p.add_argument("--reason", choices=("timeout","capture"), default="timeout")
     p = command("provider-successor"); p.add_argument("provider", nargs="?", default="muse"); p.add_argument("--predecessor", required=True); p.add_argument("--key", required=True); p.add_argument("--plan-digest", required=True); p.add_argument("--output", required=True)
@@ -133,6 +134,7 @@ def main(argv=None):
             elif cmd == "providers": result = service.providers()
             elif cmd == "provider-context": result = service.provider_context(args.provider, output=args.output)
             elif cmd == "provider-budget": result = service.provider_budget(args.provider, request=load_json(args.request))
+            elif cmd == "prepare-provider-task": result = service.prepare_provider_task(args.provider, request=load_json(args.request))
             elif cmd == "provider-successor-plan": result = service.provider_successor_plan(args.provider, predecessor=args.predecessor, reason=args.reason)
             elif cmd == "provider-successor": result = service.provider_successor(args.provider, predecessor=args.predecessor, key=args.key, plan_digest=args.plan_digest, output=args.output, reason=args.reason)
             elif cmd in {"run", "supervised-pilot-run"}:
@@ -160,7 +162,10 @@ def main(argv=None):
                 if not 0 <= args.wait <= 60: raise TaskAlongError("invalid_wait", "Cancellation wait must be 0–60 seconds.")
                 result = service.cancel(args.run_id, **mutation)
                 until = time.monotonic() + args.wait
-                while result["state"] == "cancel_pending" and time.monotonic() < until:
+                configured_cancel = result.get("status") == "requested"
+                while (result.get("state") == "cancel_pending" or configured_cancel and (
+                    result.get("status") == "requested" or result.get("state") in {"starting", "running"}
+                )) and time.monotonic() < until:
                     time.sleep(0.1); result = service.inspect(args.run_id)
             elif cmd == "retire-workspace": result = service.retire_workspace(args.run_id, **mutation)
             elif cmd == "reconcile": result = service.reconcile(args.run_id, **mutation)

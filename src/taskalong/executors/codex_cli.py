@@ -236,13 +236,24 @@ class CodexCLI:
             cancel_requested: Callable[[], bool] | None = None,
             heartbeat: Callable[[], None] | None = None,
             on_spawn: Callable | None = None, mode: str = "start", thread_id: str | None = None,
-            capture_private_output: Callable[[bytes, bytes], None] | None = None) -> dict:
+            capture_private_output: Callable[[bytes, bytes], None] | None = None,
+            _configured_owner: Callable | None = None) -> dict:
         """Run under the existing owner; optionally retain bounded pipe originals.
 
         The trusted private sink runs after process cleanup, including protocol
         failures. It is not streaming crash persistence or a public result. The
         core owns durable capture references and any subsequent reconciliation.
         """
+        if self.profile.get("format") == "configured-provider-profile/1":
+            # Separate experimental owner contract. Legacy production preflight
+            # and start/resume refusals remain unchanged. A packet cannot select
+            # an arbitrary driver: only the in-process durable owner supplies it.
+            from ..local_provider_runtime import _execute_codex
+            return _execute_codex(self.profile, packet, workspace=workspace,
+                output_dir=output_dir, owner=_configured_owner, mode=mode,
+                thread_id=thread_id)
+        if _configured_owner is not None:
+            _reject("runtime_owner_invalid", "Configured ownership requires its versioned profile.")
         if capture_private_output is not None and not callable(capture_private_output):
             _reject("runtime_capture_invalid", "Private output capture requires a trusted callable.")
         budget = packet["remaining_budget"]

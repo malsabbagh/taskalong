@@ -456,6 +456,8 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
         record.update(format="local-provider-run/2",manual_successor=_successor)
     record = _event(store, record, root, "preflight")
     claimed = False
+    from .local_provider_capture import PrivateCapture
+    capture = PrivateCapture(root/"capture", max_output_bytes=config["max_output_bytes"], max_records=8192)
     try:
         context = _preflight(config, root)
         if _observe_file(config["binary"]["path"], executable=True) != config["binary"]:
@@ -485,9 +487,13 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
         capture_options = {"on_stdout_line": record_budget.observe, "max_line_bytes": config["max_output_bytes"]} if record_budget else {}
         result = run_foreground_experiment(argv, mode=FOREGROUND_EXPERIMENT, cwd=root/"workspace", env=env,
             timeout_seconds=config["attempt_seconds"], max_output_bytes=config["max_output_bytes"], signal_grace_seconds=.5,
-            on_spawn=spawned, cancel_requested=lambda:(root/"cancel-request.json").exists(), **capture_options)
+            on_spawn=spawned, cancel_requested=lambda:(root/"cancel-request.json").exists(),
+            _on_output_chunk=capture.write, **capture_options)
+        closure = capture.finalize()
         pilot._write(root,"stdout.bin",redact(result.stdout)); pilot._write(root,"stderr.bin",redact(result.stderr))
         process = _summary(result)
+        process["private_capture"] = closure
+        process["process_stream_complete"] = sum(closure["streams"][s]["observed_bytes"] for s in ("stdout", "stderr")) == process["observed_output_bytes"]
         if record_budget:
             process.update(protocol_records_observed=record_budget.observed,
                            protocol_record_limit=8192, protocol_record_limited=record_budget.limited)
@@ -517,6 +523,8 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
     except KeyboardInterrupt:
         _event(store,record,root,"interrupted",remote_usage="unknown" if claimed else "not_sent")
         raise
+    finally:
+        capture.close()
 
 
 def inspect(store, run_id):

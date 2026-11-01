@@ -1,0 +1,110 @@
+# Shared owner for configured experimental providers
+
+Status: proposed.
+
+## Context
+
+Configured Codex, Antigravity, and Claude Code need one usable local task path
+without copying process admission, capture, claims, cancellation, or recovery into
+each adapter. Claude's Anthropic and Ollama backends share a native CLI protocol,
+while their runtime closure and route declarations differ. Existing production
+qualification and refusal rules remain separate. Configuration enables the
+experimental route without an additional permanent activation gate; it does not
+qualify a release, installed native tools, or remote inference behavior.
+
+## Decision
+
+Use `local_provider_runtime` as the shared owner for `codex`, `antigravity`, and
+`claude-code`. Passive adapters validate a closed
+`configured-provider-profile/1`, project fixed argv/stdin/environment changes, and
+decode native observations. Only the owner checks actual source and runtime
+fingerprints, reserves a logical submission, releases its owned child, captures
+streams, and stages an independently validated manual proposal. Codex retains its
+existing `CodexCLI.run` handoff rather than adding another Codex process driver.
+
+Keep the public sequence configure → prepare/budget → run → status/result →
+cancel/reconcile. Source API names are `configure_provider`,
+`prepare_provider_task`, `provider_budget`, `run_provider`, `inspect`, `result`,
+`cancel`, and `reconcile`. The generic request explicitly supplies repository,
+exact base commit, task, read-only paths, writable paths, and artifact format.
+Preparation observes selected tracked text and truly absent new outputs; a new
+output has a null preimage. Read-only context cannot become write authority.
+Integrity validation of a serialized plan alone is not source authentication.
+The owner rechecks the actual caller-selected repository before release, and a
+human must verify it again before manual application.
+
+Support `file-replacements/1` for all three providers. Support `unified-diff/1` for
+Codex and Antigravity to avoid requiring whole-file output for a small large-file
+edit; refuse that representation for Claude before claiming a submission.
+Validate exact paths, counts, positions, context, hashes, presence, and modes;
+reject partial output, aliases, renames, binary forms, and arbitrary mode changes.
+The resulting artifact grants no execution, automatic application, retry,
+independent acceptance, or production authority.
+
+Preserve existing native context through the normal `include` policy. Full
+`exclude` fails explicitly. Where native options offer `native-only`, document it
+as partial reduction, with remaining managed/native policy and unqualified
+isolation. Native sandbox, permission, tool, structured-output, model, and effort
+flags are intent and protocol evidence, not proof of OS containment or effective
+backend behavior.
+
+Bind declared runtime closures. A Codex Node entrypoint includes fingerprints for
+Node, the entrypoint, and the declared native binary. Ollama binds the existing
+launcher and Claude executable, the launcher PATH, and the effective
+`$HOME/.ollama/config.json` bytes and exact saved-model pointer. Recheck HOME,
+PATH-resolved Claude identity, and saved selection before release. Do not add
+`--yes` or silently change saved model preferences. A loopback Ollama daemon may
+use local or cloud inference; preserve the explicit route distinction without
+claiming authenticated local-only execution. Native Anthropic live qualification
+is not established by the offline protocol or configuration tests.
+
+Use finite shared limits: at most 720 seconds, 4 MiB combined captured output,
+8,192 protocol records, 1 MiB per protocol record, 64 KiB canonical proposal, and
+one reserved controller submission. The owner uses an absolute deadline;
+bounded cleanup and evidence finalization may extend briefly beyond it. Keep
+raw streaming capture and immutable checkpoints, distinguish retained from
+observed bytes, and reject overflow or incomplete evidence as success. A local
+reservation is not a remote request count or settlement guarantee. Native retries,
+remote usage, remote cancellation, and complete descendant cessation can remain
+unknown. Preserve those obligations rather than refunding a consumed claim.
+
+Cancellation durably records an identity/revision-bound intent for the current
+owner. It never derives signal authority from a persisted PID. Reconcile reads
+retained evidence without redispatch, automatic marker replay, or mutation of the
+owner's attempt history. Interrupted publication remains unknown. Controller
+budget or artifact-format changes cannot create fresh submission authority.
+
+Keep Muse's legacy request/bundle and macOS execution route intact while using
+durable streaming capture and the shared cancel/reconcile controls. Its fixed
+implementation capture profile and existing explicitly authorized finite
+successor mechanism retain their own identities; ordinary run does not retry.
+Do not weaken any production refusal or claim that the experimental paths are
+production qualified.
+
+## Alternatives and consequences
+
+Per-adapter lifecycle owners would duplicate effect boundaries and could disagree
+about retries, capture closure, or cancellation. Reusing production qualification
+as a permanent experimental activation requirement would prevent the configured
+local path without adding evidence about the installed runtime. Treating native
+terminal records, flags, or one subprocess as complete cessation and billing
+proof would erase material unknowns. These alternatives are rejected.
+
+The shared owner supplies a consistent experimental path while preserving native
+protocol differences. Strict context and artifact support may refuse a requested
+combination; the caller must select an implemented combination explicitly.
+Synthetic tests and process canaries validate the implemented local contracts,
+not full release qualification or native backend guarantees. Runtime behavior and
+unknown remote obligations must remain visible in retained evidence.
+
+Rollback can refuse new configured profiles and shared runs while retaining
+configuration identities, claims, captures, control intents, and receipts.
+Rollback must not delete evidence or turn a prior consumed/uncertain claim into
+permission to rerun it.
+
+See [configured providers](../configured-providers.md) for current schemas,
+synthetic examples, limits, source references, and operating flow. Earlier
+proposed decisions [ADR0022](0022-configured-experimental-provider.md),
+[ADR0023](0023-finite-manual-muse-successors.md), and
+[ADR0024](0024-bounded-implementation-capture.md) describe the legacy Muse path and
+its bounded successors.
