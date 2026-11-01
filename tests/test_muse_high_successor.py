@@ -338,6 +338,49 @@ class MuseHighSuccessorTests(unittest.TestCase):
             self.assertFalse(successor._anchor(self.original).exists())
         self.assert_original()
 
+    def test_active_pointer_changed_after_reservation_refuses_before_preflight(self):
+        proof = self.plan(); real = muse.run
+        def reconfigured(*args, **kwargs):
+            self.assertEqual(self.store.setting("provider-successor:muse:" + self.original["run_id"]), kwargs["_successor"])
+            self.fixture.configure(reasoning_effort="high")
+            return real(*args, **kwargs)
+        with patch.object(muse, "run", side_effect=reconfigured), patch.object(muse, "_preflight") as preflight, \
+                patch.object(muse, "run_foreground_experiment") as owner, self.assertRaises(TaskAlongError) as caught:
+            self.execute(proof)
+        self.assertEqual(caught.exception.code, "provider_successor_plan_changed")
+        preflight.assert_not_called(); owner.assert_not_called()
+        reservation = self.store.setting("provider-successor:muse:" + self.original["run_id"])
+        self.assertEqual(reservation["ordinal"], 1)
+        with patch.object(muse, "run", side_effect=AssertionError("same key cannot resume")):
+            observed = self.execute(proof)
+        self.assertEqual(observed["state"], "reserved_incomplete")
+        self.assertEqual(observed["run_id"], reservation["run_id"])
+        self.fixture.configure()
+        self.assert_original()
+
+    def test_rehashed_reservation_cannot_select_a_configuration_image_under_the_wrong_digest_key(self):
+        proof = self.plan(); real = muse.run
+        def aliased(*args, **kwargs):
+            reservation = copy.deepcopy(kwargs["_successor"])
+            alias = "0" * 64
+            self.store.set_setting("provider-config:" + alias, self.high_config)
+            reservation["configuration_digest"] = alias
+            reservation["digest"] = digest(reservation)
+            for key in ("provider-successor:muse:" + self.original["run_id"],
+                        "provider-successor-run:muse:" + reservation["run_id"],
+                        "provider-successor-key:muse:" + reservation["key_digest"]):
+                self.store.set_setting(key, reservation)
+            path = successor._anchor(self.original) / "slot-1.json"
+            path.chmod(0o600); path.write_bytes(canonical_bytes(reservation)); path.chmod(0o400)
+            kwargs["_successor"] = reservation
+            return real(*args, **kwargs)
+        with patch.object(muse, "run", side_effect=aliased), \
+                patch.object(muse, "run_foreground_experiment", side_effect=self.fixture.child) as owner, self.assertRaises(TaskAlongError) as caught:
+            self.execute(proof)
+        self.assertEqual(caught.exception.code, "provider_successor_history_changed")
+        owner.assert_not_called()
+        self.assert_original()
+
     def test_changed_derived_high_config_is_not_loaded_before_owner(self):
         proof = self.plan(); real = muse.run
         def changed(*args, **kwargs):

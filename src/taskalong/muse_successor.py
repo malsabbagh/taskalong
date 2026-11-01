@@ -432,6 +432,8 @@ def configuration_for_successor(store, reservation):
     if type(identity) is not str or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
         _fail("provider_successor_history_changed")
     config = store.setting("provider-config:" + identity)
+    if type(config) is not dict or config.get("digest") != identity:
+        _fail("provider_successor_history_changed")
     return muse._checked_configuration(config)
 
 
@@ -491,6 +493,7 @@ def _configuration_matches(store, reservation, config):
             and type(config) is dict and type(current.get("digest")) is str and type(config.get("digest")) is str
             and current.get("digest") == amendment.get("original_configuration_digest")
             and store.setting("provider-config:" + current["digest"]) == current
+            and reservation.get("configuration_digest") == config.get("digest")
             and config.get("digest") == amendment.get("configuration_digest")
             and store.setting("provider-config:" + config["digest"]) == config)
 
