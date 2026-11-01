@@ -579,11 +579,26 @@ def _original(store, predecessor, config):
     return parent, root, manifest, session, receipt, artifacts
 
 
-def _material(store, predecessor, config, first, identity):
+def _material(store, predecessor, config, first, identity, *, effort=None):
     """Plan one linked replacement; all current absence facts are rechecked."""
     from . import muse_successor as owner
     try:
         parent, root, manifest, session, receipt, artifacts = first
+        dispatch_config, amendment = config, None
+        if effort is not None:
+            from .muse_effort_amendment import derive
+            dispatch_config, manifest, amendment = derive(config, manifest, effort)
+            muse._checked_configuration(dispatch_config)
+            reserved = store.setting("provider-successor:muse:" + predecessor)
+            for claim_digest in owner._effort_claim_digests(manifest):
+                derived_claim = store.setting("provider-claim:muse:" + claim_digest)
+                if derived_claim is not None and (claim_digest != manifest["digest"] or type(reserved) is not dict
+                        or reserved.get("format") != "manual-muse-successor/5"
+                        or reserved.get("digest") != digest(reserved)
+                        or reserved.get("effort_amendment") != amendment
+                        or derived_claim != {"run_id": reserved.get("run_id"), "bundle_digest": manifest["digest"],
+                                             "output": reserved.get("output")}):
+                    _fail("provider_successor_effort_already_submitted")
         if receipt_is_alive(receipt) is not False:
             _fail("provider_successor_original_process_present")
         native_run, capture = _capture(root, config, session)
@@ -604,13 +619,16 @@ def _material(store, predecessor, config, first, identity):
             "root_record_digest": parent["digest"], "bundle_digest": manifest["digest"],
             "state_scope": hashlib.sha256(str(store.root).encode()).hexdigest(), "deadlines_seconds": [config["attempt_seconds"]],
             "max_new_controller_submissions": 1, "native_lifecycle_policy": POLICY}
+        if amendment is not None:
+            enrollment.update(format="manual-muse-ladder/5", reason="interrupted-high",
+                              effort_amendment=amendment)
         registered = store.setting("provider-successor-root:muse:" + predecessor)
         if registered is not None and registered != enrollment:
             _fail()
         owner._anchor_view(store, parent, enrollment)
         value = {"format": "manual-muse-successor-plan/4", "reason": "interrupted", "provider": "muse", "ordinal": 1,
             "predecessor_run_id": predecessor, "predecessor_digest": parent["digest"], "root_run_id": predecessor,
-            "bundle_digest": manifest["digest"], "configuration_digest": config["digest"], "attempt_seconds": config["attempt_seconds"],
+            "bundle_digest": manifest["digest"], "configuration_digest": dispatch_config["digest"], "attempt_seconds": config["attempt_seconds"],
             "max_output_bytes": config["max_output_bytes"], "max_protocol_records": muse._max_records(config), "max_proposal_bytes": config["max_proposal_bytes"],
             "artifact_hashes": artifacts, "enrollment": enrollment, "remaining_controller_slots_including_this": 1,
             "remaining_local_meta_seconds_including_this": config["attempt_seconds"], "native_lifecycle_policy": POLICY,
@@ -618,10 +636,12 @@ def _material(store, predecessor, config, first, identity):
             "original_state": "interrupted", "original_capture": capture, "native_journal": journal,
             "native_model_task_starts_observed_lower_bound": capture["native_lifecycle"]["model_tasks_started"],
             "native_model_task_starts_source": "retained_complete_stdout_lifecycle_frames",
-            "requested_model": config["model"], "requested_effort": config["reasoning_effort"],
+            "requested_model": dispatch_config["model"], "requested_effort": dispatch_config["reasoning_effort"],
             "current_recorded_pid_and_group_absent": True, "absence_observations": 2,
             "plan_authorizes_dispatch": False, "automatic_retry_allowed": False, "remote_usage_settled": False,
             "complete_descendant_cessation_proven": False, "hard_native_attempt_limit_enforced": False, "model_free": True}
+        if amendment is not None:
+            value.update(format="manual-muse-successor-plan/5", reason="interrupted-high", amendment=amendment)
         value["digest"] = digest(value)
         return value, parent, root, manifest
     except (TaskAlongError, OSError, ValueError, TypeError, KeyError, AttributeError, UnicodeError, RecursionError, OverflowError) as exc:
@@ -630,11 +650,11 @@ def _material(store, predecessor, config, first, identity):
         _fail()
 
 
-def material(store, predecessor, config):
+def material(store, predecessor, config, *, effort=None):
     try:
         first = _original(store, predecessor, config)
         with _original_observation(first) as identity:
-            return _material(store, predecessor, config, first, identity)
+            return _material(store, predecessor, config, first, identity, effort=effort)
     except (TaskAlongError, OSError, ValueError, TypeError, KeyError, AttributeError, UnicodeError, RecursionError, OverflowError) as exc:
         if isinstance(exc, TaskAlongError) and exc.code.startswith("provider_successor_"):
             raise
