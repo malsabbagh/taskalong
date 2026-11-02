@@ -208,9 +208,9 @@ def original(store, record, root):
 
 class JournalTasks:
     """Cross-check durable model-task events without interpreting user text."""
-    def __init__(self, session, native_run):
+    def __init__(self, session, native_run, *, guard_type=NativeModelTaskGuard):
         self.session, self.native_run = session, native_run
-        self.guard = NativeModelTaskGuard(session)
+        self.guard = guard_type(session)
         self.count = self.created = 0
 
     def observe(self, row):

@@ -15,6 +15,7 @@ import re
 import sys
 
 from . import supervised_pilot as pilot
+from . import muse_response_schema as schema
 from .artifact_io import read_regular, _file_state, _parent, _regular, _unchanged_directories
 from .errors import TaskAlongError
 from .experimental_process import FOREGROUND_EXPERIMENT, run_foreground_experiment
@@ -27,7 +28,7 @@ from .validation import canonical_bytes, digest, loads, screen_sensitive
 _CONFIG = "provider:muse"
 _EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 _CONTEXT = {"include", "native-only", "exclude"}
-_KEYS = {"executable", "account_home", "muse_home", "model", "reasoning_effort", "context", "catalog_digest", "public_context_hashes", "context_hashes", "native_roots", "attempt_seconds", "max_output_bytes", "max_proposal_bytes", "capture_profile", "max_protocol_records"}
+_KEYS = {"executable", "account_home", "muse_home", "model", "reasoning_effort", "context", "catalog_digest", "public_context_hashes", "context_hashes", "native_roots", "attempt_seconds", "max_output_bytes", "max_proposal_bytes", "capture_profile", "max_protocol_records", "response_contract"}
 _IMPLEMENTATION = (720, 4*1048576, 65536, 8192)
 _MEGABYTE = "local-muse-provider/6"
 _MEGABYTE_RAW = 64 * 1048576
@@ -36,10 +37,21 @@ _MEGABYTE_FRAME = 16 * 1048576
 _NATIVE_STOP_POLICY = "stop-on-first-model-failure-or-second-model-task/1"
 
 
+def _megabyte(config):
+    return config.get("format") in {_MEGABYTE, schema.FORMAT}
+
+
+def _prompt(config, manifest):
+    original = pilot._prompt(manifest["request"], manifest["digest"])
+    return schema.prompt(original) if config.get("format") == schema.FORMAT else original
+
+
 def _native_guard(successor, config, session):
     # Old sealed operations retain their exact execution contract. The explicit
     # interrupted successor adds a local observer, not a hard remote-call cap.
-    if successor is None or successor.get("format") not in {"manual-muse-successor/4", "manual-muse-successor/5"}:
+    if config.get("format") == schema.FORMAT:
+        return schema.SingleAttemptGuard(session, max_records=_max_records(config), max_frame_bytes=_MEGABYTE_FRAME)
+    if successor is None or successor.get("format") not in {"manual-muse-successor/4", "manual-muse-successor/5", "manual-muse-successor/6"}:
         return None
     if successor.get("native_lifecycle_policy") != _NATIVE_STOP_POLICY:
         _fail("provider_successor_invalid", "The interrupted successor requires its bound native stop policy.")
@@ -49,7 +61,7 @@ def _native_guard(successor, config, session):
 
 def _max_records(config):
     # Never reinterpret an old cohort by adding defaults to its sealed bytes.
-    return config["max_protocol_records"] if config["format"] in {"local-muse-provider/5", _MEGABYTE} else 8192 if config["format"] == "local-muse-provider/4" else 2048
+    return config["max_protocol_records"] if config["format"] in {"local-muse-provider/5", _MEGABYTE, schema.FORMAT} else 8192 if config["format"] == "local-muse-provider/4" else 2048
 
 
 class _RecordBudget:
@@ -96,6 +108,9 @@ def configure(store, value):
     profile = value.get("capture_profile")
     if profile is not None and (type(profile) is not str or profile not in {"implementation", "large-task", "megabyte-proposal"}):
         _fail("provider_config_invalid", "Select the supported implementation capture profile or omit it.")
+    contract = value.get("response_contract")
+    if contract is not None and (contract != schema.CONTRACT or profile != "megabyte-proposal"):
+        _fail("provider_config_invalid", "Schema transport requires its explicit version and megabyte-proposal profile.")
     large_task = profile == "large-task"
     megabyte = profile == "megabyte-proposal"
     seconds = value.get("attempt_seconds", 1440 if large_task else 720 if profile else 20)
@@ -133,12 +148,14 @@ def configure(store, value):
     with Path(binary["path"]).open("rb") as stream:
         if stream.read(2) == b"#!":
             _fail("provider_native_binary_required", "Select the installed direct native binary, not an updater or shell wrapper.")
-    config = {"format": _MEGABYTE if megabyte else "local-muse-provider/5" if large_task else "local-muse-provider/4" if profile else "local-muse-provider/3", "provider": "muse", "experimental": True,
+    config = {"format": schema.FORMAT if contract else _MEGABYTE if megabyte else "local-muse-provider/5" if large_task else "local-muse-provider/4" if profile else "local-muse-provider/3", "provider": "muse", "experimental": True,
               "binary": binary, "account_home": str(home), "muse_home": str(muse_home), "native_roots": native_roots, "model": model,
               "reasoning_effort": effort, "context": context, "catalog_digest": catalog_digest, "public_context_hashes": public_hashes, "context_hashes": context_hashes,
               "attempt_seconds": seconds, "max_output_bytes": maximum, "max_proposal_bytes": proposal_maximum}
     if profile:
         config.update(capture_profile=profile, max_protocol_records=records)
+    if contract:
+        config["response_contract"] = contract
     config["digest"] = digest(config)
     with store.transaction() as db:
         db.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", ("provider-config:" + config["digest"], canonical_bytes(config).decode()))
@@ -163,11 +180,14 @@ def _configuration(store):
 
 
 def _checked_configuration(config):
-    if type(config) is not dict or config.get("format") not in ("local-muse-provider/1", "local-muse-provider/2", "local-muse-provider/3", "local-muse-provider/4", "local-muse-provider/5", _MEGABYTE) or config.get("digest") != digest(config):
+    if type(config) is not dict or config.get("format") not in ("local-muse-provider/1", "local-muse-provider/2", "local-muse-provider/3", "local-muse-provider/4", "local-muse-provider/5", _MEGABYTE, schema.FORMAT) or config.get("digest") != digest(config):
         _fail("provider_configuration_changed", "The local provider configuration is inconsistent; configure it again.")
     large_task = config["format"] == "local-muse-provider/5"
-    megabyte = config["format"] == _MEGABYTE
-    implementation = config["format"] in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE}
+    megabyte = _megabyte(config)
+    if (config["format"] == schema.FORMAT and config.get("response_contract") != schema.CONTRACT
+            or config["format"] != schema.FORMAT and "response_contract" in config):
+        _fail("provider_configuration_changed", "The response contract does not match this sealed configuration version.")
+    implementation = config["format"] in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE, schema.FORMAT}
     if implementation:
         if (config.get("capture_profile") != ("megabyte-proposal" if megabyte else "large-task" if large_task else "implementation")
                 or type(config.get("max_protocol_records")) is not int
@@ -190,7 +210,7 @@ def _checked_configuration(config):
     return config
 
 
-def _argv(config, *, provider, workspace, prompt, session):
+def _argv(config, *, provider, workspace, prompt, session, output_schema=None):
     argv = [config["binary"]["path"], "exec", "--json", "--provider", provider, "--session-id", session,
             "--preset", "empty", "--permission-profile", ":read-only", "--workspace", str(workspace),
             "--prompt-file", str(prompt), "--max-model-steps", "1", "--disable-reminders", "--disable-web-tools",
@@ -198,6 +218,12 @@ def _argv(config, *, provider, workspace, prompt, session):
     if config["context"] == "native-only": argv.append("--no-foreign-personal-context")
     if provider == "meta":
         argv += ["--model", config["model"], "--reasoning-effort", config["reasoning_effort"], "--no-parallel-tool-calls"]
+    if config.get("format") == schema.FORMAT and provider == "meta":
+        if output_schema is None:
+            _fail("provider_schema_missing", "Schema transport requires its private bound schema file.")
+        argv += ["--output-schema", str(output_schema)]
+    elif output_schema is not None:
+        _fail("provider_schema_invalid", "Legacy invocations cannot acquire a new response contract.")
     return argv
 
 
@@ -327,7 +353,7 @@ def _journal_identity(config, session, *, native_run=None, started_unix_ms=None)
     Legacy context discovery continues through the separate four-MiB reader.
     """
     try:
-        if (config.get("format") != _MEGABYTE or type(session) is not str
+        if (not _megabyte(config) or type(session) is not str
                 or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session) is None):
             raise ValueError("journal binding")
         home = pilot._root(config["muse_home"])
@@ -485,7 +511,7 @@ def _budget(config, prompt):
     # turn.input.user and run.lifecycle.started. Count minimal JSON frames,
     # including UTF-8 and JSON string escaping. Omitted native metadata, stderr,
     # output deltas and the final response can only require additional space.
-    if config.get("format") == _MEGABYTE and len(prompt) > 1048576:
+    if _megabyte(config) and len(prompt) > 1048576:
         _fail("provider_prompt_too_large", "The prompt exceeds the unchanged one MiB input limit.")
     text = prompt.decode("utf-8")
     minimum = sum(len(json.dumps({"payload_type": kind, "payload": {"prompt": text}},
@@ -500,7 +526,7 @@ def _budget(config, prompt):
             "input_echoes_fit": minimum < maximum,
             "remaining_after_minimum_echo_bytes": max(0, maximum - minimum),
             "response_fit_guaranteed": False}
-    if config.get("format") in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE}:
+    if config.get("format") in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE, schema.FORMAT}:
         value.update(capture_profile=config["capture_profile"], max_protocol_records=_max_records(config))
     return value
 
@@ -509,7 +535,10 @@ def budget(store, *, request):
     """Pure local measurement: no native process, claim, output directory or run."""
     config = _configuration(store)
     pilot._request(request); screen_sensitive(request); _task_model(config, request)
-    manifest, prompt = pilot._manifest(request)
+    manifest, _ = pilot._manifest(request)
+    prompt = _prompt(config, manifest)
+    if config["format"] == schema.FORMAT:
+        schema.document(request, manifest["digest"], config["max_proposal_bytes"])
     return {**_budget(config, prompt), "bundle_digest": manifest["digest"]}
 
 
@@ -606,7 +635,7 @@ def _session_records(raw, session, *, max_records=2048):
         _fail("provider_response_unrecognized", "The captured native output has no unambiguous completed response; preserve it without redispatch.", outcome="uncertain")
 
 
-def _decode_megabyte(raw, session, *, max_proposal_bytes, max_records):
+def _decode_megabyte(raw, session, *, max_proposal_bytes, max_records, _terminal_only=False):
     """Iterate bounded wire frames, retaining only one terminal response."""
     from .provider_wire import loads_wire
     try:
@@ -667,6 +696,8 @@ def _decode_megabyte(raw, session, *, max_proposal_bytes, max_records):
             raise ValueError()
         if len(terminal.encode("utf-8")) > 4194304:
             raise ValueError()
+        if _terminal_only:
+            return terminal, run
         text = terminal.strip()
         if text.startswith("```json\n") and text.endswith("\n```"):
             text = text[8:-4].strip()
@@ -763,7 +794,7 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
     if _successor is not None and manifest["digest"] != _successor["bundle_digest"]:
         _fail("provider_successor_invalid", "The successor must keep the original task intent unchanged.")
     screen_sensitive(manifest["request"])
-    prompt = pilot._prompt(manifest["request"], manifest["digest"])
+    prompt = _prompt(config, manifest)
     capture_budget = _budget(config, prompt)
     if not capture_budget["input_echoes_fit"]:
         _fail("provider_capture_budget_insufficient",
@@ -771,16 +802,24 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
     root.mkdir(mode=0o700); (root/"workspace").mkdir(mode=0o700); (root/"tmp").mkdir(mode=0o700)
     if request is not None: pilot.prepare(request, output=str(bundle_root))
     pilot._write(root, "prompt.txt", prompt)
+    transport = None
+    if config["format"] == schema.FORMAT:
+        schema_bytes = canonical_bytes(schema.document(manifest["request"], manifest["digest"], config["max_proposal_bytes"]))
+        pilot._write(root, "output-schema.json", schema_bytes)
+        transport = {"contract": schema.CONTRACT, "schema_sha256": hashlib.sha256(schema_bytes).hexdigest(),
+                     "schema_bytes": len(schema_bytes), "prompt_sha256": hashlib.sha256(prompt).hexdigest()}
     record = {"format":"local-provider-run/1","provider":"muse","experimental":True,"run_id":run_id,"revision":0,
               "configuration_digest":config["digest"],"bundle_digest":manifest["digest"],"bundle":str(bundle_root),"output":str(root),
               "controller_submissions":0,"automatic_retry_allowed":False,"patch_applied":False,"acceptance_allowed":False,"capture_budget":capture_budget,
               "production_dispatch_allowed":False,"remote_usage":"not_sent","native_internal_retries":"unknown","descendant_cessation":"unknown"}
+    if transport is not None:
+        record["response_transport"] = transport
     if _successor is not None:
         record.update(format="local-provider-run/2",manual_successor=_successor)
     record = _event(store, record, root, "preflight")
     claimed = False
     from .local_provider_capture import PrivateCapture
-    capture_options = {"schema_version": "2.0"} if config["format"] == _MEGABYTE else {}
+    capture_options = {"schema_version": "2.0"} if _megabyte(config) else {}
     capture = PrivateCapture(root/"capture", max_output_bytes=config["max_output_bytes"], max_records=8192, **capture_options)
     try:
         context = _preflight(config, root)
@@ -796,26 +835,35 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
         claimed = True
         record = _event(store, record, root, "starting", controller_submissions=1, remote_usage="unknown", context=context)
         session = _uuid7()
-        argv = _argv(config, provider="meta", workspace=root/"workspace", prompt=root/"prompt.txt", session=session)
-        pilot._write(root, "invocation.json", canonical_bytes({"argv":argv,"session_id":session,"configuration_digest":config["digest"],"bundle_digest":manifest["digest"]}))
+        def check_schema():
+            if transport is not None:
+                read_regular(root, "output-schema.json", max_bytes=65536, expected_sha256=transport["schema_sha256"],
+                             expected_bytes=transport["schema_bytes"], private=True, expected_mode=0o400)
+        check_schema()
+        schema_options = {"output_schema": root/"output-schema.json"} if transport is not None else {}
+        argv = _argv(config, provider="meta", workspace=root/"workspace", prompt=root/"prompt.txt", session=session, **schema_options)
+        invocation = {"argv":argv,"session_id":session,"configuration_digest":config["digest"],"bundle_digest":manifest["digest"]}
+        if transport is not None: invocation["response_transport"] = transport
+        pilot._write(root, "invocation.json", canonical_bytes(invocation))
         def spawned(receipt):
             nonlocal record
             if _observe_file(config["binary"]["path"], executable=True) != config["binary"]:
                 _fail("provider_executable_changed", "The native binary changed before gate release.")
+            check_schema()
             read_regular(root,"prompt.txt",max_bytes=len(prompt),expected_sha256=hashlib.sha256(prompt).hexdigest(),private=True,expected_mode=0o400)
             if _successor is not None:
                 _check(store, _successor, config)
             record = _event(store, record, root, "running", process_receipt=receipt.to_dict())
         env = _environment(config, root)
-        record_budget = _RecordBudget(_max_records(config)) if config["format"] in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE} else None
+        record_budget = _RecordBudget(_max_records(config)) if config["format"] in {"local-muse-provider/4", "local-muse-provider/5", _MEGABYTE, schema.FORMAT} else None
         native_guard = _native_guard(_successor, config, session)
         def observe_line(line):
             if record_budget:
                 record_budget.observe(line)
             if native_guard:
                 native_guard.observe(line)
-        capture_options = {"on_stdout_line": observe_line, "max_line_bytes": _MEGABYTE_FRAME if config["format"] == _MEGABYTE else config["max_output_bytes"]} if record_budget else {}
-        if config["format"] == _MEGABYTE:
+        capture_options = {"on_stdout_line": observe_line, "max_line_bytes": _MEGABYTE_FRAME if _megabyte(config) else config["max_output_bytes"]} if record_budget else {}
+        if _megabyte(config):
             capture_options["_retain_output"] = False
         result = run_foreground_experiment(argv, mode=FOREGROUND_EXPERIMENT, cwd=root/"workspace", env=env,
             timeout_seconds=config["attempt_seconds"], max_output_bytes=config["max_output_bytes"], signal_grace_seconds=.5,
@@ -827,10 +875,11 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
             pilot._write(root, "process-owner.json", canonical_bytes({**_summary(result),
                 "native_lifecycle": native_guard.summary(), "capture_finalized": False}))
         closure = capture.finalize()
-        if config["format"] != _MEGABYTE:
+        check_schema()
+        if not _megabyte(config):
             pilot._write(root,"stdout.bin",redact(result.stdout)); pilot._write(root,"stderr.bin",redact(result.stderr))
         process = _summary(result)
-        if config["format"] == _MEGABYTE:
+        if _megabyte(config):
             process.update(retained_stdout_bytes=closure["streams"]["stdout"]["retained_bytes"],
                            retained_stderr_bytes=closure["streams"]["stderr"]["retained_bytes"],
                            retained_output_bytes=sum(closure["streams"][s]["retained_bytes"] for s in ("stdout", "stderr")))
@@ -842,15 +891,17 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
         if native_guard:
             process["native_lifecycle"] = native_guard.summary()
         pilot._write(root,"process.json",canonical_bytes(process))
-        if result.root_exit_code != 0 or result.timed_out or result.cancelled or result.output_limited or _owner_failed(result) or record_budget and record_budget.limited or native_guard and native_guard.stop_requested or config["format"] == _MEGABYTE and not process["process_stream_complete"]:
+        if result.root_exit_code != 0 or result.timed_out or result.cancelled or result.output_limited or _owner_failed(result) or record_budget and record_budget.limited or native_guard and native_guard.stop_requested or _megabyte(config) and not process["process_stream_complete"]:
             return _event(store,record,root,"failed",process=process,
                           error="provider_protocol_record_limit" if record_budget and record_budget.limited else "provider_native_lifecycle_stop" if native_guard and native_guard.stop_requested else "provider_local_failure",remote_usage="unknown")
-        decode_options = {"megabyte": True} if config["format"] == _MEGABYTE else {}
-        source = capture.iter_records("stdout", max_record_bytes=_MEGABYTE_FRAME) if config["format"] == _MEGABYTE else result.stdout
+        decode_options = {"megabyte": True} if _megabyte(config) else {}
+        source = capture.iter_records("stdout", max_record_bytes=_MEGABYTE_FRAME) if _megabyte(config) else result.stdout
         response, native_run = _decode(source, session, max_proposal_bytes=config.get("max_proposal_bytes", 65536), max_records=_max_records(config), **decode_options)
-        replacement_options = {"replacement_profile": "megabyte-proposal/1"} if config["format"] == _MEGABYTE else {}
+        if transport is not None:
+            response = schema.normalize(response, manifest["request"], manifest["digest"], config["max_proposal_bytes"])
+        replacement_options = {"replacement_profile": "megabyte-proposal/1"} if _megabyte(config) else {}
         screen_sensitive(response); pilot._proposal(manifest,response, **replacement_options)
-        if config["format"] == _MEGABYTE:
+        if _megabyte(config):
             configured_count, metadata = _journal_identity(config, session, native_run=native_run,
                 started_unix_ms=process.get("receipt", {}).get("started_unix_ms"))
         else:
@@ -864,7 +915,7 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
         response_bytes = canonical_bytes(response)
         pilot._write(root,"response.json",response_bytes)
         proposal = pilot.stage(bundle=str(bundle_root),response=response,output=str(root/"proposal"), **replacement_options)
-        response_reference = {"response_ref": {"path": "response.json", "sha256": hashlib.sha256(response_bytes).hexdigest(), "bytes": len(response_bytes)}} if config["format"] == _MEGABYTE else {}
+        response_reference = {"response_ref": {"path": "response.json", "sha256": hashlib.sha256(response_bytes).hexdigest(), "bytes": len(response_bytes)}} if _megabyte(config) else {}
         return _event(store,record,root,"proposal_ready",process=process,execution=observations,
                       proposal_path=str(root/"proposal/proposed.patch"),review_path=str(root/"proposal/review.json"),proposal_digest=proposal["digest"],remote_usage="unknown", **response_reference)
     except (TaskAlongError, ProcessBoundaryError, OSError) as exc:
