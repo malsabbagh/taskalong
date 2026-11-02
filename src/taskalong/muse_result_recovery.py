@@ -239,11 +239,15 @@ def _journal(material, native_run):
             metadata = {}
             committed = None
             schema = None
-            if "high_lineage" in material:
+            if "validated_native_lifecycle" in material:
                 from .muse_interrupted_recovery import _JournalSchema
                 schema = _JournalSchema(session, native_run, config["model"])
                 from .muse_high_result_recovery import JournalTasks
-                tasks = JournalTasks(session, native_run)
+                options = {}
+                if material.get("single_native_attempt") is True:
+                    from .muse_response_schema import SingleAttemptGuard
+                    options["guard_type"] = SingleAttemptGuard
+                tasks = JournalTasks(session, native_run, **options)
             with os.fdopen(os.dup(fd), "rb", buffering=65536) as source:
                 while True:
                     line = source.readline(16777218)
@@ -255,6 +259,8 @@ def _journal(material, native_run):
                         _fail()
                     hashed.update(line)
                     row = muse._native_json(line[:-1], max_bytes=16777216, _journal_numbers=True)
+                    if material.get("single_native_attempt") is True and (row.get("record_type") != "event" or row.get("durability") != "durable"):
+                        _fail()
                     if phase == 4:
                         _fail()
                     payload, event, details = capture_proof._parts(row)

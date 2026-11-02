@@ -662,3 +662,58 @@ service traffic is not fully controlled by these overrides. New runtime versions
 need their configuration semantics qualified before admission. Changing routes,
 profiles or limits cannot refund a consumed task intent or replay a failed call.
 Live qualification is separate from the offline route projection tests.
+
+### Opt-in native schema transport
+
+Muse configuration may explicitly add
+`"response_contract": "json-schema-file-changes/1"` alongside the
+`megabyte-proposal` capture profile. This creates configuration version
+`local-muse-provider/7`; omitting the option preserves existing configuration
+versions and their prompt, argv and response contracts. The finite deadline,
+raw capture, record, frame and proposal limits do not grow with this option.
+
+Version 7 passes a private, immutable `--output-schema` file to Meta. Its closed
+response envelope contains `bundle_digest` and a `changes` array of objects with
+`path` and `content` (text or null). Paths come from the selected task snapshot;
+that selection does not distinguish read-only references from write targets.
+The runner binds the schema and actual projected prompt hashes to its invocation
+and run, rechecks the schema before gate release and after execution, and checks
+both the native envelope and the normalized response against the same canonical
+UTF-8 proposal limit. Array normalization changes only the container; it never
+unescapes twice, repairs source text, or applies a patch. All ordinary proposal
+validation and manual review remain required. A schema request is not evidence
+that the provider honored it; success requires an observed, valid result.
+
+New schema runs also stop locally when the observed lifecycle reports a model
+failure, another model task, or a native retry. Observation and local termination
+do not impose a hard provider-internal request cap or settle remote usage.
+
+### Explicit retry after a malformed completed response
+
+An operator can request a model-free plan with:
+
+```sh
+taskalong --state-dir STATE provider-successor-plan muse \
+  --predecessor FAILED_RUN --reason malformed-response
+```
+
+Use the returned digest with the corresponding `provider-successor` command and
+an explicit operation key and new output directory. This is a single linked
+submission, not result recovery or automatic retry. It is eligible only for an
+original version-6 run that failed strict response parsing after a complete,
+successfully closed local process. The retained full lifecycle must show one
+completed model task without observed retries; delta text, completed terminal
+text and the committed native journal response must agree. Only otherwise
+complete JSON with invalid string escapes or literal control characters is
+eligible. Usable JSON, truncated/conflicting output, unknown process closure,
+changed evidence, previous results and previously reserved successors refuse.
+
+The replacement keeps the original task, model, effort, account, context and all
+finite budgets. Its only configuration amendment is opt-in schema transport;
+the original configuration pointer, failed claim and evidence remain unchanged.
+An exclusive retained anchor reserves the one slot before preflight. Repeating
+its command observes the existing operation, including setup failures; copying
+or restoring State cannot create another slot. The original completed terminal
+is not cancellation proof. Native retries, escaped descendants and remote usage
+remain observations or unknowns, and neither failed submission is refunded.
+This path does not admit split tasks, oversized proposals or unrelated failures.
