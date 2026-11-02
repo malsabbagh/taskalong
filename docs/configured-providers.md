@@ -717,3 +717,14 @@ or restoring State cannot create another slot. The original completed terminal
 is not cancellation proof. Native retries, escaped descendants and remote usage
 remain observations or unknowns, and neither failed submission is refunded.
 This path does not admit split tasks, oversized proposals or unrelated failures.
+
+The malformed-response proof also decodes the known first-line native
+`session_permission_transaction` frame. It verifies the raw-child checksum and
+the definition, enforcement and resulting-snapshot content fingerprints using
+the versioned native encodings. Both closed durable permission children join
+the same consecutive sequence and unique-ID checks as the flat journal events.
+Only the observed built-in read-only startup policy is supported; unknown frame
+versions, later permission changes, embedded records, altered policy, incorrect
+fingerprints and non-durable records refuse. These content hashes establish
+record consistency, not vendor signatures or proof of OS containment. Legacy
+result-recovery cohorts keep their original journal interpretation.

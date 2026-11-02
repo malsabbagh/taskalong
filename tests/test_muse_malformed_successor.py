@@ -28,6 +28,7 @@ class MalformedSuccessorTests(unittest.TestCase):
         self.config = self.store.setting('provider:muse')
         self.text = getattr(self, 'case_text', '{"bundle_digest":"DIGEST","changes":{"source.py":"bad \\x01"}}')
         self.mutation = getattr(self, 'case_mutation', None)
+        self.framed = getattr(self, 'case_framed', False)
         self.make_original()
 
     def owner(self, argv, **options):
@@ -42,6 +43,15 @@ class MalformedSuccessorTests(unittest.TestCase):
         self.helper.over_limit = False; self.helper.mutate = self.mutation; self.helper.replacement = 'Synthetic schema replacement.\n'
         with patch.object(helpers.json, 'dumps', side_effect=encode):
             result = self.helper.completed_owner(argv,**options)
+        rows=[json.loads(line) for line in self.helper.high_journal.read_bytes().splitlines()]
+        for index,row in enumerate(rows,1): row['id']=f'{index:08x}-7777-4777-8777-777777777777'
+        if self.framed:
+            from test_muse_retained_frames import fixture
+            session=argv[argv.index('--session-id')+1]
+            frame,_=fixture(session)
+            for row in rows: row['sequence']+=2
+            rows=[frame,*rows]
+        self.helper.high_journal.write_bytes(b''.join((json.dumps(row,ensure_ascii=False,separators=(',',':')).encode() if 'retained_frame' in row else canonical_bytes(row))+b'\n' for row in rows))
         result.cancelled = False
         summary = result.to_dict() | {'cancelled':False}
         result.to_dict = lambda:summary
@@ -218,3 +228,14 @@ class MalformedSuccessorTests(unittest.TestCase):
         self.assertIsNotNone(child)
         self.assertFalse((Path(child['output'])/'response.json').exists())
         self.assert_original()
+
+    def test_complete_framed_permission_journal_is_admitted_and_rechecked(self):
+        fixture=MalformedSuccessorTests();fixture.case_framed=True
+        fixture.setUp();self.addCleanup(fixture.doCleanups)
+        proof=fixture.plan()
+        self.assertEqual(proof['remaining_controller_slots_including_this'],1)
+        fixture.assert_original()
+        rows=[json.loads(line) for line in fixture.journal.read_bytes().splitlines()]
+        rows[0]['content_sha256']='sha256:'+'0'*64
+        fixture.journal.write_bytes(b''.join(canonical_bytes(row)+b'\n' for row in rows))
+        with self.assertRaises(TaskAlongError):fixture.plan()

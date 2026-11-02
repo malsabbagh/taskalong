@@ -239,6 +239,8 @@ def _journal(material, native_run):
             metadata = {}
             committed = None
             schema = None
+            normalized_records = 0
+            record_ids = set()
             if "validated_native_lifecycle" in material:
                 from .muse_interrupted_recovery import _JournalSchema
                 schema = _JournalSchema(session, native_run, config["model"])
@@ -259,69 +261,82 @@ def _journal(material, native_run):
                         _fail()
                     hashed.update(line)
                     row = muse._native_json(line[:-1], max_bytes=16777216, _journal_numbers=True)
-                    if material.get("single_native_attempt") is True and (row.get("record_type") != "event" or row.get("durability") != "durable"):
-                        _fail()
-                    if phase == 4:
-                        _fail()
-                    payload, event, details = capture_proof._parts(row)
-                    if "stream" in row and row["stream"] != {"kind": "session", "id": session}:
-                        _fail()
-                    if "schema_version" in row and (type(row["schema_version"]) is not int or row["schema_version"] != 1):
-                        _fail()
-                    if "sequence" in row:
-                        if type(row["sequence"]) is not int or row["sequence"] <= sequence:
-                            _fail()
-                        sequence = row["sequence"]
-                    if schema is not None:
-                        from .muse_interrupted_recovery import _bindings
-                        slots = schema.observe(row)
-                        tasks.observe(row)
-                        _bindings(row, session, native_run, command_slots=slots)
+                    if material.get("single_native_attempt") is True:
+                        from .muse_retained_frames import expand
+                        rows = expand(row, ordinal=records, session=session)
                     else:
-                        for binding in (row, payload, event, details):
-                            capture_proof._bindings(binding, session, native_run)
-                    markers = _activity_markers(row)
-                    outcome = capture_proof._terminal(row)
-                    if outcome is not None:
-                        if (outcome != ("journal", "completed") or phase != 2 or payload.get("run_id") != native_run
-                                or event.get("reason") is not None or markers):
+                        rows = [row]
+                    for row in rows:
+                        normalized_records += 1
+                        if normalized_records > 131072:
                             _fail()
-                        phase = 3
-                        continue
-                    if markers and (len(markers) != 1 or markers[0] is not event
-                            or event.get("kind") not in ("model_request_configured", "assistant_message_committed")):
-                        _fail()
-                    if row.get("payload_type") == "session.end" or payload.get("kind") == "session_end":
-                        if phase != 3:
+                        if phase == 4:
                             _fail()
-                        _session_end(row, session, native_run, config)
-                        phase = 4
-                        continue
-                    if phase == 3 and not capture_proof._trailing_metadata(row):
-                        _fail()
-                    if event.get("kind") == "model_request_configured":
-                        if (phase != 0 or payload.get("kind") != "run" or payload.get("run_id") != native_run
-                                or event.get("toolset", {}).get("active_tools") != [] or event.get("reminder_roster", {}).get("agents") != []):
+                        payload, event, details = capture_proof._parts(row)
+                        if "stream" in row and row["stream"] != {"kind": "session", "id": session}:
                             _fail()
-                        phase = 1
-                    elif event.get("kind") == "assistant_message_committed":
-                        if (phase != 1 or payload.get("kind") != "run" or payload.get("run_id") != native_run
-                                or type(event.get("text")) is not str or len(event["text"].encode()) > 4194304):
+                        if "schema_version" in row and (type(row["schema_version"]) is not int or row["schema_version"] != 1):
                             _fail()
-                        committed = event["text"]
-                        phase = 2
-                    elif phase == 2 and row.get("payload_type", "").startswith(("run.output.", "run.model.")):
-                        _fail()
-                    if payload.get("kind") == "metadata":
-                        if len(json.dumps(details, ensure_ascii=False, separators=(",", ":")).encode()) > 65536:
+                        if material.get("single_native_attempt") is True:
+                            from .muse_retained_frames import _uuid
+                            identity = _uuid(row.get("id"))
+                            if identity in record_ids or type(row.get("sequence")) is not int or row["sequence"] != sequence + 1:
+                                _fail()
+                            record_ids.add(identity)
+                        if "sequence" in row:
+                            if type(row["sequence"]) is not int or row["sequence"] <= sequence:
+                                _fail()
+                            sequence = row["sequence"]
+                        if schema is not None:
+                            from .muse_interrupted_recovery import _bindings
+                            slots = schema.observe(row)
+                            tasks.observe(row)
+                            _bindings(row, session, native_run, command_slots=slots)
+                        else:
+                            for binding in (row, payload, event, details):
+                                capture_proof._bindings(binding, session, native_run)
+                        markers = _activity_markers(row)
+                        outcome = capture_proof._terminal(row)
+                        if outcome is not None:
+                            if (outcome != ("journal", "completed") or phase != 2 or payload.get("run_id") != native_run
+                                    or event.get("reason") is not None or markers):
+                                _fail()
+                            phase = 3
+                            continue
+                        if markers and (len(markers) != 1 or markers[0] is not event
+                                or event.get("kind") not in ("model_request_configured", "assistant_message_committed")):
                             _fail()
-                        metadata = {}
-                        for key in ("provider_id", "model_id", "reasoning_effort"):
-                            if key in details:
-                                value = details[key]
-                                if not (key == "reasoning_effort" and value is None) and (type(value) is not str or not 1 <= len(value.encode()) <= 256):
-                                    _fail()
-                                metadata[key] = value
+                        if row.get("payload_type") == "session.end" or payload.get("kind") == "session_end":
+                            if phase != 3:
+                                _fail()
+                            _session_end(row, session, native_run, config)
+                            phase = 4
+                            continue
+                        if phase == 3 and not capture_proof._trailing_metadata(row):
+                            _fail()
+                        if event.get("kind") == "model_request_configured":
+                            if (phase != 0 or payload.get("kind") != "run" or payload.get("run_id") != native_run
+                                    or event.get("toolset", {}).get("active_tools") != [] or event.get("reminder_roster", {}).get("agents") != []):
+                                _fail()
+                            phase = 1
+                        elif event.get("kind") == "assistant_message_committed":
+                            if (phase != 1 or payload.get("kind") != "run" or payload.get("run_id") != native_run
+                                    or type(event.get("text")) is not str or len(event["text"].encode()) > 4194304):
+                                _fail()
+                            committed = event["text"]
+                            phase = 2
+                        elif phase == 2 and row.get("payload_type", "").startswith(("run.output.", "run.model.")):
+                            _fail()
+                        if payload.get("kind") == "metadata":
+                            if len(json.dumps(details, ensure_ascii=False, separators=(",", ":")).encode()) > 65536:
+                                _fail()
+                            metadata = {}
+                            for key in ("provider_id", "model_id", "reasoning_effort"):
+                                if key in details:
+                                    value = details[key]
+                                    if not (key == "reasoning_effort" and value is None) and (type(value) is not str or not 1 <= len(value.encode()) <= 256):
+                                        _fail()
+                                    metadata[key] = value
             if schema is not None:
                 schema.finish()
                 tasks.finish(material["model_task_sha256"])
@@ -344,6 +359,7 @@ def _journal(material, native_run):
                 _fail()
             guard()
             return committed, {"sha256": hashed.hexdigest(), "bytes": total, "records": records,
+                               **({"normalized_records": normalized_records, "normalization": "native-startup-permission-frame/1"} if material.get("single_native_attempt") is True else {}),
                                "reported_provider": metadata["provider_id"], "reported_model": metadata["model_id"],
                                "reported_effort": metadata.get("reasoning_effort")}
         finally:
