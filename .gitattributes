@@ -1,3 +1,5 @@
+# Qualification receipts bind exact tracked checkout bytes on every platform.
+* -text
 # The distribution auditor binds the approved notice's exact bytes.
 LICENSE text eol=lf
 # npm bin-links rewrites CRLF shebangs during installation.
