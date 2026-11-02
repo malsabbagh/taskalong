@@ -587,6 +587,7 @@
     "tests/test_muse_response_schema.py",
     "tests/test_muse_result_recovery.py",
     "tests/test_muse_retained_frames.py",
+    "tests/test_muse_schema_compatibility.py",
     "tests/test_muse_store.py",
     "tests/test_muse_successor.py",
     "tests/test_ollama_driver.py",

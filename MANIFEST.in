@@ -442,3 +442,4 @@ include tests/test_muse_response_schema.py
 include tests/test_muse_malformed_successor.py
 include src/taskalong/muse_retained_frames.py
 include tests/test_muse_retained_frames.py
+include tests/test_muse_schema_compatibility.py
