@@ -436,3 +436,10 @@ include src/taskalong/muse_high_result_recovery.py
 include tests/test_muse_high_result_recovery.py
 include tools/release_manifest.py
 include tools/tests/test_release_manifest.py
+include src/taskalong/muse_response_schema.py
+include src/taskalong/muse_malformed_successor.py
+include tests/test_muse_response_schema.py
+include tests/test_muse_malformed_successor.py
+include src/taskalong/muse_retained_frames.py
+include tests/test_muse_retained_frames.py
+include tests/test_muse_schema_compatibility.py
