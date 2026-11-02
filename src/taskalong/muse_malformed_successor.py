@@ -1,4 +1,4 @@
-"""One explicit schema-transport successor of a complete malformed response.
+"""Explicit successors of fully captured, completed rejected responses.
 
 Completion is evidence of a finished native turn, never cancellation or remote
 settlement. No provider text is repaired, staged, executed or accepted here.
@@ -20,6 +20,7 @@ from .errors import TaskAlongError
 REASON = 'malformed-response'
 FORMAT = 'manual-muse-successor/6'
 PLAN = 'manual-muse-successor-plan/6'
+PROPOSAL_REASON = 'proposal-limit'
 
 
 def derive(previous):
@@ -30,10 +31,23 @@ def derive(previous):
     return value
 
 
-def _material(store, predecessor, config):
+def derive_proposal(previous):
+    """One fixed, opt-in cap amendment; all other execution fields stay sealed."""
+    if (previous.get('format') != schema.FORMAT or previous.get('response_contract') != schema.CONTRACT
+            or type(previous.get('max_proposal_bytes')) is not int or previous['max_proposal_bytes'] != 32768):
+        successor._fail('provider_successor_configuration_mismatch')
+    value = {**previous, 'max_proposal_bytes':131072}
+    value['digest'] = digest(value)
+    return value
+
+
+def _material(store, predecessor, config, *, reason=REASON):
+    proposal = reason == PROPOSAL_REASON
+    if reason not in {REASON, PROPOSAL_REASON}:
+        successor._fail('provider_successor_invalid')
     record, root = successor._read_run(store, predecessor)
     if (record.get('format') != 'local-provider-run/1' or record.get('manual_successor') is not None
-            or record.get('state') != 'failed' or record.get('error') != 'provider_response_unrecognized'
+            or record.get('state') != 'failed' or record.get('error') != ('provider_proposal_too_large' if proposal else 'provider_response_unrecognized')
             or type(record.get('controller_submissions')) is not int or record['controller_submissions'] != 1
             or any(record.get(k) != 'unknown' for k in ('remote_usage','native_internal_retries','descendant_cessation'))
             or any(record.get(k) is not False for k in ('automatic_retry_allowed','patch_applied','acceptance_allowed','production_dispatch_allowed'))):
@@ -41,7 +55,7 @@ def _material(store, predecessor, config):
     previous = store.setting('provider-config:' + record['configuration_digest'])
     if previous != config or previous.get('digest') != record['configuration_digest']:
         successor._fail('provider_successor_configuration_mismatch')
-    candidate = muse._checked_configuration(derive(previous))
+    candidate = muse._checked_configuration((derive_proposal if proposal else derive)(previous))
     bundle, manifest = pilot._bundle(record['bundle'])
     if manifest['digest'] != record['bundle_digest']:
         successor._fail('provider_successor_history_changed')
@@ -83,11 +97,23 @@ def _material(store, predecessor, config):
             successor._fail('provider_successor_history_changed')
     invocation = loads(read('invocation.json'))
     session = successor._id(invocation.get('session_id'))
-    if invocation != {'argv':muse._argv(previous,provider='meta',workspace=root/'workspace',prompt=root/'prompt.txt',session=session),
-            'session_id':session,'configuration_digest':previous['digest'],'bundle_digest':manifest['digest']}:
-        successor._fail('provider_successor_history_changed')
     prompt = read('prompt.txt')
-    if prompt != pilot._prompt(manifest['request'],manifest['digest']):
+    if prompt != muse._prompt(previous,manifest):
+        successor._fail('provider_successor_history_changed')
+    schema_options = {}
+    expected = {'session_id':session,'configuration_digest':previous['digest'],'bundle_digest':manifest['digest']}
+    if proposal:
+        schema_raw = canonical_bytes(schema.document(manifest['request'],manifest['digest'],previous['max_proposal_bytes']))
+        if read('output-schema.json',65536) != schema_raw:
+            successor._fail('provider_successor_history_changed')
+        transport = {'contract':schema.CONTRACT,'schema_sha256':hashlib.sha256(schema_raw).hexdigest(),
+            'schema_bytes':len(schema_raw),'prompt_sha256':hashlib.sha256(prompt).hexdigest()}
+        if record.get('response_transport') != transport:
+            successor._fail('provider_successor_history_changed')
+        expected['response_transport'] = transport
+        schema_options['output_schema'] = root/'output-schema.json'
+    expected['argv'] = muse._argv(previous,provider='meta',workspace=root/'workspace',prompt=root/'prompt.txt',session=session,**schema_options)
+    if invocation != expected:
         successor._fail('provider_successor_history_changed')
     capture = read_capture(root/'capture')
     if (capture != process.get('private_capture') or capture.get('status') != 'closed'
@@ -144,17 +170,19 @@ def _material(store, predecessor, config):
             successor._fail("provider_successor_capture_unrecognized")
     if not fragments or "".join(fragments) != text:
         successor._fail("provider_successor_capture_unrecognized")
-    try:
-        json.loads(text)
-    except json.JSONDecodeError as exc:
-        # Narrowly cover demonstrated escaping defects, not all semantic errors
-        # or arbitrary truncated/empty/model refusal responses.
-        if not (exc.msg == 'Invalid \\escape' or exc.msg.startswith('Invalid control character')) or not schema.escaping_failure(text):
+    if proposal:
+        response, checked_run = muse._decode_megabyte(iter(lines),session,max_proposal_bytes=131072,
+            max_records=previous['max_protocol_records'])
+        size = len(json.dumps(response,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode())
+        if checked_run != native_run or size <= previous['max_proposal_bytes']:
             successor._fail('provider_successor_capture_unrecognized')
-        malformed = {'kind':'invalid_escape' if exc.msg == 'Invalid \\escape' else 'unescaped_control_character',
-                     'text_sha256':hashlib.sha256(text.encode()).hexdigest(),'text_bytes':len(text.encode())}
+        # Validate scope and schema without staging or accepting the old output.
+        normalized = schema.normalize(response,manifest['request'],manifest['digest'],131072)
+        pilot._proposal(manifest,normalized,replacement_profile='megabyte-proposal/1')
+        rejected = {'kind':'proposal_limit','text_sha256':hashlib.sha256(text.encode()).hexdigest(),
+            'canonical_bytes':size,'previous_max_proposal_bytes':32768,'max_proposal_bytes':131072}
     else:
-        successor._fail('provider_successor_result_exists')
+        rejected = _malformed(text)
     from .muse_result_recovery import _journal
     journal_material = {'record':record,'config':previous,'session':session,
         'validated_native_lifecycle':guard.summary(),'single_native_attempt':True,'model_task_sha256':guard.completed_model_task_sha256()}
@@ -167,19 +195,19 @@ def _material(store, predecessor, config):
                 'run_id':predecessor,'output':str(root),'bundle_digest':manifest['digest']}):
         successor._fail('provider_successor_history_changed')
     artifacts.update(capture=digest(capture),journal=digest(journal),submission_marker=hashlib.sha256(marker).hexdigest())
-    enrollment = {'format':'manual-muse-ladder/6','reason':REASON,'root_run_id':predecessor,
+    enrollment = {'format':'manual-muse-ladder/7' if proposal else 'manual-muse-ladder/6','reason':reason,'root_run_id':predecessor,
         'root_record_digest':record['digest'],'bundle_digest':manifest['digest'],
         'state_scope':hashlib.sha256(str(store.root).encode()).hexdigest(),
         'deadlines_seconds':[previous['attempt_seconds']],'max_new_controller_submissions':1,
         'native_lifecycle_policy':muse._NATIVE_STOP_POLICY,'response_contract':schema.CONTRACT}
     successor._anchor_view(store,record,enrollment)
-    value = {'format':PLAN,'reason':REASON,'provider':'muse','predecessor_run_id':predecessor,
+    value = {'format':'manual-muse-successor-plan/7' if proposal else PLAN,'reason':reason,'provider':'muse','predecessor_run_id':predecessor,
         'predecessor_digest':record['digest'],'root_run_id':predecessor,'ordinal':1,
         'bundle_digest':manifest['digest'],'configuration_digest':candidate['digest'],
         'original_configuration_digest':previous['digest'],'response_contract':schema.CONTRACT,
         'attempt_seconds':previous['attempt_seconds'],'max_output_bytes':previous['max_output_bytes'],
-        'max_protocol_records':previous['max_protocol_records'],'max_proposal_bytes':previous['max_proposal_bytes'],
-        'artifact_hashes':artifacts,'malformed_response':malformed,'enrollment':enrollment,
+        'max_protocol_records':previous['max_protocol_records'],'max_proposal_bytes':candidate['max_proposal_bytes'],
+        'artifact_hashes':artifacts,'proposal_amendment' if proposal else 'malformed_response':rejected,'enrollment':enrollment,
         'native_lifecycle_policy':muse._NATIVE_STOP_POLICY,
         'history':[{'run_id':predecessor,'controller_submissions':1,'remote_usage':'unknown',
             'descendant_cessation':'unknown','native_internal_retries':'unknown'}],
@@ -189,9 +217,23 @@ def _material(store, predecessor, config):
     return value,record,root,manifest
 
 
-def material(store, predecessor, config):
+def _malformed(text):
     try:
-        return _material(store,predecessor,config)
+        json.loads(text)
+    except json.JSONDecodeError as exc:
+        # Narrowly cover demonstrated escaping defects, not all semantic errors
+        # or arbitrary truncated/empty/model refusal responses.
+        if not (exc.msg == 'Invalid \\escape' or exc.msg.startswith('Invalid control character')) or not schema.escaping_failure(text):
+            successor._fail('provider_successor_capture_unrecognized')
+        return {'kind':'invalid_escape' if exc.msg == 'Invalid \\escape' else 'unescaped_control_character',
+                     'text_sha256':hashlib.sha256(text.encode()).hexdigest(),'text_bytes':len(text.encode())}
+    else:
+        successor._fail('provider_successor_result_exists')
+
+
+def material(store, predecessor, config, *, reason=REASON):
+    try:
+        return _material(store,predecessor,config,reason=reason)
     except (TaskAlongError,OSError,ValueError,TypeError,KeyError,AttributeError,UnicodeError,RecursionError) as exc:
         if isinstance(exc,TaskAlongError) and exc.code.startswith('provider_successor_'):
             raise

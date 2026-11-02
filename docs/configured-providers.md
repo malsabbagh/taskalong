@@ -728,3 +728,39 @@ versions, later permission changes, embedded records, altered policy, incorrect
 fingerprints and non-durable records refuse. These content hashes establish
 record consistency, not vendor signatures or proof of OS containment. Legacy
 result-recovery cohorts keep their original journal interpretation.
+
+### Explicit retry after an oversized completed proposal
+
+`provider-successor-plan muse --predecessor FAILED_RUN --reason proposal-limit`
+plans one linked replacement of an original schema-transport `/7` run that
+failed with `provider_proposal_too_large`. This version admits exactly a
+32,768 to 131,072-byte canonical proposal amendment. It preserves the original
+request, binary, account, model, effort, context, deadline, raw capture and record
+limits. Keep the active original configuration unchanged; the successor stores
+its derived configuration separately. The plan digest binds the original
+configuration, amendment, rejected output hash and all retained evidence.
+
+Admission requires complete closed raw capture, observed zero root exit and
+group termination, one completed native model attempt without observed retries,
+and matching delta, terminal and committed journal text. The original response
+must be valid, scoped schema output above 32 KiB and within 128 KiB; it is only
+inspected as evidence and is never staged or accepted by this operation. Partial,
+malformed, oversized-beyond-target, conflicting, unknown-cleanup, already-staged
+and successor results refuse. Original failed events, claims, usage uncertainty
+and descendant uncertainty remain unchanged.
+
+Explicitly execute the reviewed plan using the same State:
+
+```sh
+taskalong --state-dir STATE provider-successor muse --reason proposal-limit \
+  --predecessor FAILED_RUN --plan-digest EXACT_DIGEST --key UNIQUE_KEY \
+  --output NEW_PRIVATE_OUTPUT
+```
+
+The exclusive anchor and reservation consume one slot before any preflight.
+The same key only observes; another key, crash, copied State or further failure
+cannot allocate another replacement. No automatic retry, cap growth, result
+salvage, patch application or remote settlement is implied. Older clients reject
+the new reason/reservation version; existing recovery cohorts retain their
+original rules. A completed native terminal is completion evidence, not a remote
+cancellation or account-usage guarantee.
