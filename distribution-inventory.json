@@ -583,6 +583,7 @@
     "tests/test_muse_native_stop_process.py",
     "tests/test_muse_preparation.py",
     "tests/test_muse_production.py",
+    "tests/test_muse_proposal_successor.py",
     "tests/test_muse_protocol.py",
     "tests/test_muse_response_schema.py",
     "tests/test_muse_result_recovery.py",
