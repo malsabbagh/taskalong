@@ -16,6 +16,8 @@ _SHA=re.compile('[0-9a-f]{40}')
 _CI='.github/workflows/ci.yml';_DISTWF='.github/workflows/npm-consumer.yml'
 _WFJOBS={_CI:_rm._CORE_JOBS,_DISTWF:_rm._DISTRIBUTION_JOBS}
 _VERSIONS=dict(_rm._VERSIONS);_GH='https://api.github.com/repos/'+_REPO
+_ID='[1-9][0-9]{0,15}';_H40='[0-9a-f]{40}'
+_GHPATH=re.compile('/repos/'+_REPO+'/(?:actions/runs/'+_ID+'(?:/attempts/'+_ID+'(?:/jobs)?|/jobs|/artifacts)?|actions/(?:jobs|artifacts)/'+_ID+'|commits/'+_H40+'|git/(?:commits|tags)/'+_H40+'|git/ref/tags/v0[.]1[.]0a1|environments/(?:pypi|npm)(?:/deployment-branch-policies(?:/'+_ID+')?)?)')
 def _ustr(v):
     try: v.encode('utf-8')
     except Exception: raise ReleaseGateError('invalid Unicode in JSON value') from None
@@ -81,14 +83,8 @@ def _url_kind(url,for_json):
     if u.scheme!='https' or u.fragment or u.username or u.password or port is not None or u.netloc.lower()!=host:
         raise ReleaseGateError('URL not allowed')
     _meta=host=='registry.npmjs.org' and re.fullmatch('/@taskalong(?i:%2f)cli/0[.]1[.]0-alpha[.]1',u.path) is not None
-    if not _meta:
-        if '%2f' in u.path.lower() or '%5c' in u.path.lower(): raise ReleaseGateError('URL not allowed')
-        for s in u.path.split('/'):
-            d=urllib.parse.unquote(s)
-            if d in ('.','..') or '/' in d or chr(92) in d: raise ReleaseGateError('URL not allowed')
     if host=='api.github.com':
-        pre='/repos/'+_REPO+'/'
-        if not u.path.startswith(pre) or len(u.path)<=len(pre): raise ReleaseGateError('URL not allowed')
+        if _GHPATH.fullmatch(u.path) is None: raise ReleaseGateError('URL not allowed')
         if u.query:
             if len(u.query)>1024 or any(not 32<ord(c)<127 for c in u.query): raise ReleaseGateError('URL not allowed')
             keys=[k.lower() for k,v in urllib.parse.parse_qsl(u.query,keep_blank_values=True)]

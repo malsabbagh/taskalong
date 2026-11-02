@@ -76,24 +76,36 @@ class T(unittest.TestCase):
             with self.assertRaises(GE): c.get_json(u)
         self.assertEqual(len(op.reqs),n)
         with mock.patch.dict(os.environ,{'GH_TOKEN':'envtok','GITHUB_TOKEN':'other'}):
-            op2=Op(lambda req: Resp(b'{}'));rr.HttpsClient(opener=op2).get_json(GH+'/x')
+            op2=Op(lambda req: Resp(b'{}'));rr.HttpsClient(opener=op2).get_json(GH+'/actions/runs/1')
             self.assertEqual(op2.reqs[-1].get_header('Authorization'),'Bearer envtok')
         big=Resp(b'x'*20);c2=rr.HttpsClient(opener=Op(lambda req: big))
         with self.assertRaises(GE): c2.get_bytes('https://registry.npmjs.org/@taskalong/cli/-/cli-0.1.0-alpha.1.tgz',max_bytes=4)
         self.assertEqual(big.sizes,[5])
         for data in ['{"a":1,"a":2}'.encode(),'{"a":NaN}'.encode(),bytes([255])]:
             cc=rr.HttpsClient(github_token='sekret',opener=Op(lambda req,data=data: Resp(data)))
-            with self.assertRaises(GE) as cm: cc.get_json(GH+'/x')
+            with self.assertRaises(GE) as cm: cc.get_json(GH+'/actions/runs/1')
             self.assertNotIn('sekret',str(cm.exception))
         def err(code):
             def f(req): raise urllib.error.HTTPError(req.full_url,code,'m',None,io.BytesIO(b'sekret'))
             return f
-        with self.assertRaises(NF): rr.HttpsClient(opener=Op(err(404))).get_json(GH+'/x')
+        with self.assertRaises(NF): rr.HttpsClient(opener=Op(err(404))).get_json(GH+'/actions/runs/1')
         for fn,exc in [(err(403),'x'),(lambda req: Resp(b'',302),'x')]:
-            with self.assertRaises(GE) as cm: rr.HttpsClient(github_token='sekret',opener=Op(fn)).get_json(GH+'/x')
+            with self.assertRaises(GE) as cm: rr.HttpsClient(github_token='sekret',opener=Op(fn)).get_json(GH+'/actions/runs/1')
             self.assertNotIsInstance(cm.exception,NF);self.assertNotIn('sekret',str(cm.exception))
-        with self.assertRaises(GE) as cm: rr.HttpsClient(opener=Op(lambda req: (_ for _ in ()).throw(TimeoutError('sekret')))).get_json(GH+'/x')
+        with self.assertRaises(GE) as cm: rr.HttpsClient(opener=Op(lambda req: (_ for _ in ()).throw(TimeoutError('sekret')))).get_json(GH+'/actions/runs/1')
         self.assertNotIsInstance(cm.exception,NF);self.assertNotIn('sekret',str(cm.exception))
+    def test_github_routes(self):
+        op=Op(lambda req: Resp(b'{}'));c=rr.HttpsClient(github_token='t',opener=op);S=SHA
+        pos=['actions/runs/1','actions/runs/12/attempts/2','actions/runs/12/attempts/2/jobs?per_page=100&page=1','actions/runs/12/jobs?per_page=100&page=2','actions/runs/12/artifacts','actions/jobs/3','actions/artifacts/4','commits/'+S,'git/commits/'+S,'git/ref/tags/v0.1.0a1','git/tags/'+S,'environments/pypi','environments/npm','environments/pypi/deployment-branch-policies?per_page=100&page=1','environments/npm/deployment-branch-policies/9']
+        for p in pos: c.get_json(GH+'/'+p)
+        self.assertEqual(len(op.reqs),len(pos));self.assertTrue(all(r.get_header('Authorization')=='Bearer t' for r in op.reqs))
+        c.get_json('https://pypi.org/pypi/taskalong/0.1.0a1/json');self.assertIsNone(op.reqs[-1].get_header('Authorization'))
+        bad=['x','actions/runs/1/extra','actions/runs/1/','actions//runs/1','actions/runs/0','actions/runs/01','actions/runs/+1','actions/runs/'+'1'*17,'actions/runs/1a','commits/'+'A'*40,'commits/'+'a'*39,'git/tags/'+S+'/x','git/ref/tags/v0.1.0a2','environments/prod','environments/pypi/x','contents/x','actions/runs/%31','%2e%2e/actions/runs/1','actions/%2fruns/1','actions/runs/%252e%252e%252f1','actions/runs/%c0%ae%c0%af','actions/runs/%ff','actions/runs/%zz','actions/runs/1/../jobs/2','actions/runs/'+chr(0xff11),'x?next=/actions/runs/1','actions/runs/1?token=x']
+        urls=[GH+'/'+p for p in bad]+['https://api.github.com/repos/other/repo/actions/runs/1'];n=len(op.reqs)
+        for u in urls:
+            with self.assertRaises(GE): c.get_json(u)
+            with self.assertRaises(GE): c.get_bytes(u)
+        self.assertEqual(len(op.reqs),n)
     def test_git(self):
         cap={};proc=Proc(io.BytesIO(b'ok'),io.BytesIO(b'e'))
         def popen(argv,**kw): cap.update(argv=argv,kw=kw,called=cap.get('called',0)+1);return cap['proc']
