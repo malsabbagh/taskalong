@@ -566,7 +566,7 @@ def _connectivity_preflight(config, root):
     Use the same scrubbed environment as native execution, never a new proxy.
     """
     command = ["/usr/bin/curl", "--disable", "--silent", "--head",
-               "--proto", "=https", "--connect-timeout", "3", "--max-time", "5",
+               "--proto", "=https", "--tlsv1.2", "--connect-timeout", "3", "--max-time", "5",
                "--output", "/dev/null", "--write-out", "%{http_code}",
                "https://api.meta.ai/v1/responses"]
     observation = {"model_free": True, "authenticated": False, "method": "HEAD",
@@ -592,13 +592,21 @@ def _connectivity_preflight(config, root):
     observation["outcome"] = code or "reachable"
     # Persist bounded controller-generated facts only, never raw output or
     # exception text. A failure to retain this evidence also blocks dispatch.
-    pilot._write(root, "connectivity.json", canonical_bytes(observation))
+    try:
+        pilot._write(root, "connectivity.json", canonical_bytes(observation))
+    except (OSError, TaskAlongError):
+        error = _ConnectivityFailure(
+            "provider_transport_evidence_unavailable",
+            "The Meta connectivity observation could not be retained. No inference was started or claim consumed; inspect retained artifacts.",
+            exit_code=3, effect_outcome="not_sent")
+        error.observation = {**observation, "evidence_retained": False}
+        raise error from None
     if code:
         messages = {
             "provider_transport_unreachable": "The Meta connectivity probe could not establish a verified connection.",
             "provider_transport_http_rejected": "The Meta connectivity probe returned an unsupported HTTP response.",
             "provider_transport_timeout": "The Meta connectivity probe timed out.",
-            "provider_transport_probe_unavailable": "The local connectivity probe could not start; check its executable and workspace.",
+            "provider_transport_probe_unavailable": "The local connectivity probe could not start; check /usr/bin/curl and its workspace. No PATH fallback is used.",
         }
         status = observation["http_status"]
         message = messages[code] + (f" HTTP status: {status}." if status is not None else "")

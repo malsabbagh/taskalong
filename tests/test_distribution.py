@@ -40,8 +40,10 @@ class QualificationShardTests(unittest.TestCase):
         self.assertFalse(tests - set(inventory['sdist_sources']))
         manifest = set((root / 'MANIFEST.in').read_text().splitlines())
         self.assertTrue({'include ' + path for path in tests} <= manifest)
-        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().strip('\0').split('\0')
-        producer = {'source_files': {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in tracked}}
+        inputs = {'tools/qualify_installed.py', 'tools/qualify_runtime.py', 'requirements-dev.lock'} | {
+            path for path in inventory['sdist_sources']
+            if path.startswith('tests/') and path != 'tests/test_distribution.py'}
+        producer = {'source_files': {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in inputs}}
         with tempfile.TemporaryDirectory() as directory:
             observed = qualifier.snapshot_harness(root, Path(directory))
         self.assertEqual(observed, self.shards.harness_digest(producer))
