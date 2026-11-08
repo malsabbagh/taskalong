@@ -640,6 +640,22 @@ class ExperimentalMuseTests(unittest.TestCase):
         self.assertTrue((self.bundle/'provider-submission.json').exists())
         self.assertEqual((self.root/'output/prompt.txt').stat().st_mode&0o777,0o400)
 
+    def test_transport_preflight_failure_does_not_consume_submission(self):
+        self.configure()
+        failure = TaskAlongError('provider_transport_unreachable', 'Synthetic transport failure.')
+        with patch.object(muse.sys, 'platform', 'darwin'), patch.object(muse, '_preflight', side_effect=failure) as preflight, patch.object(muse, '_claim') as claim, patch.object(muse, 'run_foreground_experiment') as owner:
+            with self.assertRaises(TaskAlongError) as error:
+                self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'transport-output'))
+        self.assertEqual(error.exception.effect_outcome, 'not_sent')
+        self.assertTrue(preflight.call_args.kwargs['connectivity'])
+        claim.assert_not_called()
+        owner.assert_not_called()
+        self.assertFalse((self.bundle/'provider-submission.json').exists())
+        record = json.loads((self.root/'transport-output/events/0002.json').read_text())
+        self.assertEqual(record['state'], 'blocked')
+        self.assertEqual(record['controller_submissions'], 0)
+        self.assertEqual(record['remote_usage'], 'not_sent')
+
     def test_repeated_bundle_refuses_without_another_provider_or_preflight_call(self):
         self.configure();self.run_fixture()
         with patch.object(muse.sys,'platform','darwin'),patch.object(muse,'_preflight') as preflight,patch.object(muse,'run_foreground_experiment') as owner,self.assertRaises(TaskAlongError) as exc:

@@ -764,3 +764,18 @@ salvage, patch application or remote settlement is implied. Older clients reject
 the new reason/reservation version; existing recovery cohorts retain their
 original rules. A completed native terminal is completion evidence, not a remote
 cancellation or account-usage guarantee.
+
+### Muse transport prevention
+
+Before a new Muse submission consumes its claim, TaskAlong performs one
+unauthenticated HTTPS HEAD against the pinned Meta responses endpoint using the
+same scrubbed environment as native execution. It sends no prompt or credentials,
+follows no redirects, disables curl configuration, performs no retries and keeps
+TLS verification enabled. The probe has a five-second network limit and a
+six-second outer process limit. A failed probe records a blocked, not-sent run
+with zero controller submissions and no provider claim.
+
+This is only a reachability check, not proof of authentication, model availability,
+quota, or future inference success. Local context inspection remains network-free.
+Previously consumed claims and unknown usage/descendant effects remain unchanged;
+this check does not authorize replay or add a transport-failure successor.
