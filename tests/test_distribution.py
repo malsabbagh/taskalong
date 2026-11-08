@@ -33,6 +33,19 @@ _QUALIFIER_SPEC.loader.exec_module(qualifier)
 class QualificationShardTests(unittest.TestCase):
     """The final gate must fail closed when a shard result is incomplete."""
 
+    def test_all_repository_behavior_tests_are_packaged_in_harness(self):
+        root = Path(__file__).resolve().parents[1]
+        inventory = auditor.load_inventory(root)
+        tests = {str(path.relative_to(root)) for path in (root / 'tests').rglob('test_*.py')}
+        self.assertFalse(tests - set(inventory['sdist_sources']))
+        manifest = set((root / 'MANIFEST.in').read_text().splitlines())
+        self.assertTrue({'include ' + path for path in tests} <= manifest)
+        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().strip('\0').split('\0')
+        producer = {'source_files': {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in tracked}}
+        with tempfile.TemporaryDirectory() as directory:
+            observed = qualifier.snapshot_harness(root, Path(directory))
+        self.assertEqual(observed, self.shards.harness_digest(producer))
+
     @classmethod
     def setUpClass(cls):
         # Distribution tests stay outside the installed behavior inventory.
