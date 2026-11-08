@@ -555,6 +555,10 @@ def _owner_failed(result):
     return bool(getattr(result, "failure_code", None) or _summary(result).get("boundary_failures"))
 
 
+class _ConnectivityFailure(TaskAlongError):
+    """Controller-generated transport observation accompanying a refusal."""
+
+
 def _connectivity_preflight(config, root):
     """One unauthenticated HEAD, with no redirect, retry, task body or login.
 
@@ -565,21 +569,44 @@ def _connectivity_preflight(config, root):
                "--proto", "=https", "--connect-timeout", "3", "--max-time", "5",
                "--output", "/dev/null", "--write-out", "%{http_code}",
                "https://api.meta.ai/v1/responses"]
+    observation = {"model_free": True, "authenticated": False, "method": "HEAD",
+                   "http_status": None, "inference_admission": False}
+    code = None
     try:
         result = subprocess.run(command, env=_environment(config, root),
                                 cwd=root / "workspace", stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 timeout=6, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        result = None
-    # 401 is the expected unauthenticated endpoint response. Do not follow
-    # redirects or treat an arbitrary proxy/error response as admission.
-    if result is None or result.returncode != 0 or result.stdout not in {b"200", b"401", b"405"}:
-        _fail("provider_transport_unreachable",
-              "The unauthenticated Meta connectivity check failed before submission. "
-              "No inference was started or claim consumed. Check this execution environment's network access; do not replay an older consumed task.")
-    return {"model_free": True, "authenticated": False, "method": "HEAD",
-            "http_status": int(result.stdout), "inference_admission": False}
+        if re.fullmatch(rb"[1-5][0-9]{2}", result.stdout):
+            observation["http_status"] = int(result.stdout)
+        if result.returncode == 28:
+            code = "provider_transport_timeout"
+        elif result.returncode != 0:
+            code = "provider_transport_unreachable"
+        elif result.stdout not in {b"200", b"401", b"405"}:
+            code = "provider_transport_http_rejected"
+    except subprocess.TimeoutExpired:
+        code = "provider_transport_timeout"
+    except OSError:
+        code = "provider_transport_probe_unavailable"
+    observation["outcome"] = code or "reachable"
+    # Persist bounded controller-generated facts only, never raw output or
+    # exception text. A failure to retain this evidence also blocks dispatch.
+    pilot._write(root, "connectivity.json", canonical_bytes(observation))
+    if code:
+        messages = {
+            "provider_transport_unreachable": "The Meta connectivity probe could not establish a verified connection.",
+            "provider_transport_http_rejected": "The Meta connectivity probe returned an unsupported HTTP response.",
+            "provider_transport_timeout": "The Meta connectivity probe timed out.",
+            "provider_transport_probe_unavailable": "The local connectivity probe could not start; check its executable and workspace.",
+        }
+        status = observation["http_status"]
+        message = messages[code] + (f" HTTP status: {status}." if status is not None else "")
+        error = _ConnectivityFailure(code, message + " No inference was started or claim consumed; do not replay an older consumed task.",
+                                     exit_code=3, effect_outcome="not_sent")
+        error.observation = observation
+        raise error
+    return observation
 
 
 def _preflight(config, root, *, connectivity=False):
@@ -950,7 +977,8 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
                       proposal_path=str(root/"proposal/proposed.patch"),review_path=str(root/"proposal/review.json"),proposal_digest=proposal["digest"],remote_usage="unknown", **response_reference)
     except (TaskAlongError, ProcessBoundaryError, OSError) as exc:
         code = exc.code if hasattr(exc,"code") else "provider_local_io"
-        record = _event(store,record,root,"blocked" if not claimed else "failed",error=code,remote_usage="unknown" if claimed else "not_sent")
+        details = {"connectivity": exc.observation} if isinstance(exc, _ConnectivityFailure) else {}
+        record = _event(store,record,root,"blocked" if not claimed else "failed",error=code,remote_usage="unknown" if claimed else "not_sent", **details)
         if isinstance(exc,TaskAlongError):
             raise TaskAlongError(exc.code,exc.message,exit_code=exc.exit_code,effect_outcome="uncertain" if claimed else "not_sent",
                                  recovery=[{"action":"inspect_provider_run","run_id":run_id,"output":str(root)},*exc.recovery]) from None

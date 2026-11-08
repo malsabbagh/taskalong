@@ -779,3 +779,11 @@ This is only a reachability check, not proof of authentication, model availabili
 quota, or future inference success. Local context inspection remains network-free.
 Previously consumed claims and unknown usage/descendant effects remain unchanged;
 this check does not authorize replay or add a transport-failure successor.
+
+The probe retains a bounded `connectivity.json` receipt for success and failure;
+blocked transport events retain the same observation. Local launch failures,
+timeouts, connection failures and unsupported HTTP responses have distinct codes.
+Only HTTP 200, 401 and 405 pass the conservative endpoint check. Other responses,
+including 403 and 429, retain their status and block without claiming that the
+network is unreachable. This may conservatively reject a route whose authenticated
+POST would work; no response is permission to bypass the existing route or guards.
