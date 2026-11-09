@@ -40,7 +40,7 @@ class QualificationShardTests(unittest.TestCase):
         self.assertFalse(tests - set(inventory['sdist_sources']))
         manifest = set((root / 'MANIFEST.in').read_text().splitlines())
         self.assertTrue({'include ' + path for path in tests} <= manifest)
-        inputs = {'tools/qualify_installed.py', 'tools/qualify_runtime.py', 'requirements-dev.lock'} | {
+        inputs = {'tools/qualify_installed.py', 'tools/qualify_runtime.py', 'tools/qualify_handoff.py', 'requirements-dev.lock'} | {
             path for path in inventory['sdist_sources']
             if path.startswith('tests/') and path != 'tests/test_distribution.py'}
         producer = {'source_files': {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in inputs}}
@@ -68,7 +68,7 @@ class QualificationShardTests(unittest.TestCase):
         binding = {'run_id': '1234', 'run_attempt': '2', 'event': 'pull_request',
                    'source_commit': 'c' * 40, 'source_tree': 'd' * 40,
                    'source_files': {name: 'a' * 64 for name in ('requirements-dev.lock',
-                       'tools/qualify_installed.py', 'tools/qualify_runtime.py', 'tests/test_a.py')}}
+                       'tools/qualify_installed.py', 'tools/qualify_runtime.py', 'tools/qualify_handoff.py', 'tests/test_a.py')}}
         producer = binding | {'format_version': 1, 'os_profile': system, 'python_profile': python,
             'producer_job_key': f'producer / {system} / Python {python}',
             'artifacts': {name: 'b' * 64 for name in q.ARTIFACTS.values()}}
@@ -760,6 +760,7 @@ packages = ["taskalong"]
             root.mkdir(); work.mkdir()
             files = {'tools/qualify_installed.py': b'original qualifier', 'requirements-dev.lock': b'original lock',
                      'tools/qualify_runtime.py': b'original runtime qualifier',
+                     'tools/qualify_handoff.py': b'original handoff preparation tool',
                      'tests/fixtures/fake_codex.py': b'original worker', 'tests/fixtures/fake_gh.py': b'original boundary',
                      'tests/test_a.py': b'original test'}
             for name, data in files.items():
@@ -769,6 +770,7 @@ packages = ["taskalong"]
             qualifier.verify_harness(work, expected)
             for relative in ('qualify_installed.py', 'requirements-dev.lock', 'installed-tests/test_a.py',
                              'tools/qualify_runtime.py',
+                             'tools/qualify_handoff.py',
                              'installed-tests/fixtures/fake_codex.py', 'fixtures/fake_codex.py'):
                 path = work / relative; original = path.read_bytes(); path.write_bytes(b'changed')
                 with self.subTest(path=relative), self.assertRaises(ValueError):
@@ -1304,6 +1306,7 @@ packages = ["taskalong"]
             root.mkdir()
             files = {"tools/qualify_installed.py": b"synthetic harness", "requirements-dev.lock": b"first lock",
                      "tools/qualify_runtime.py": b"first runtime qualifier",
+                     "tools/qualify_handoff.py": b"first handoff preparation tool",
                      "tests/test_example.py": b"first test", "tests/fixtures/fake_codex.py": b"first codex",
                      "tests/fixtures/fake_gh.py": b"first gh"}
             for relative, data in files.items():

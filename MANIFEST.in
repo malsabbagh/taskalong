@@ -221,6 +221,8 @@ include src/taskalong/resources/qualification/v1/proof-manifest.schema.json
 include tests/test_runtime_qualification.py
 include tests/fixtures/runtime_canary.py
 include tools/qualify_runtime.py
+include tools/qualify_handoff.py
+include tests/test_handoff_campaign.py
 include tests/fixtures/runtime-prior-contracts.json
 include docs/adr/0009-runtime-experiment-evidence.md
 include src/taskalong/trial.py

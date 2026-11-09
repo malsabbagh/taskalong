@@ -492,13 +492,14 @@ def snapshot_artifact(source: Path, directory: Path) -> tuple[Path, str]:
 def snapshot_harness(source: Path, work: Path) -> str:
     """Freeze reviewed test/fixture/lock inputs before slow installation begins."""
     inventory = json.loads((source / "distribution-inventory.json").read_text(encoding="utf-8"))
-    inputs = {"tools/qualify_installed.py", "tools/qualify_runtime.py", "requirements-dev.lock"} | {
+    inputs = {"tools/qualify_installed.py", "tools/qualify_runtime.py", "tools/qualify_handoff.py", "requirements-dev.lock"} | {
         path for path in inventory["sdist_sources"] if path.startswith("tests/") and path != "tests/test_distribution.py"}
     values = {relative: (source / relative).read_bytes() for relative in sorted(inputs)}
     (work / "qualify_installed.py").write_bytes(values["tools/qualify_installed.py"])
     (work / "requirements-dev.lock").write_bytes(values["requirements-dev.lock"])
     (work / "tools").mkdir()
     (work / "tools" / "qualify_runtime.py").write_bytes(values["tools/qualify_runtime.py"])
+    (work / "tools" / "qualify_handoff.py").write_bytes(values["tools/qualify_handoff.py"])
     (work / "fixtures").mkdir()
     for relative in FIXTURES:
         (work / "fixtures" / Path(relative).name).write_bytes(values[relative])
@@ -554,7 +555,7 @@ def verify_harness(work: Path, expected_sha256: str):
             raise ValueError('invalid frozen harness path')
         if relative in {'tools/qualify_installed.py', 'requirements-dev.lock'}:
             paths = [work / Path(relative).name]
-        elif relative == 'tools/qualify_runtime.py':
+        elif relative in {'tools/qualify_runtime.py', 'tools/qualify_handoff.py'}:
             paths = [work / relative]
         elif relative.startswith('tests/') and relative != 'tests/test_distribution.py':
             suffix = relative.removeprefix('tests/')
