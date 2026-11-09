@@ -6,6 +6,10 @@ use one fixed fixture and reject future-output selectors. Actual provider or
 cross-harness qualification remains separate in M12; this feature cannot enable
 a live route or publish a branch/PR.
 
+For a network-free manifest and evidence check, see
+[campaign preparation](handoff-campaign.md). It does not execute this workflow
+or supply actual-provider qualification.
+
 Use the existing trusted `RunService.configure_execution` registration path for
 each exact original fixture. Registration is separate from task authorization.
 The task's execution object lists one or two exact route records:

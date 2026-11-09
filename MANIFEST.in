@@ -450,3 +450,15 @@ include tools/release_remote.py
 include tools/tests/test_release_remote.py
 include tools/tests/test_release_remote_boundaries.py
 include tests/test_muse_connectivity.py
+include docs/handoff-campaign.md
+include docs/examples/handoff-campaign/artifacts/plan.txt
+include docs/examples/handoff-campaign/campaign.json
+include docs/examples/handoff-campaign/evidence/a-cancel.json
+include docs/examples/handoff-campaign/evidence/a-observe.json
+include docs/examples/handoff-campaign/evidence/a-result.json
+include docs/examples/handoff-campaign/evidence/a-start.json
+include docs/examples/handoff-campaign/evidence/b-cancel.json
+include docs/examples/handoff-campaign/evidence/b-observe.json
+include docs/examples/handoff-campaign/evidence/b-result.json
+include docs/examples/handoff-campaign/evidence/b-start.json
+include docs/examples/handoff-campaign/fixture.json
