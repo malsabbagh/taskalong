@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import subprocess
 
 from . import supervised_pilot as pilot
 from . import muse_response_schema as schema
@@ -554,7 +555,69 @@ def _owner_failed(result):
     return bool(getattr(result, "failure_code", None) or _summary(result).get("boundary_failures"))
 
 
-def _preflight(config, root):
+class _ConnectivityFailure(TaskAlongError):
+    """Controller-generated transport observation accompanying a refusal."""
+
+
+def _connectivity_preflight(config, root):
+    """One unauthenticated HEAD, with no redirect, retry, task body or login.
+
+    This is only transport evidence, not account/model admission or settlement.
+    Use the same scrubbed environment as native execution, never a new proxy.
+    """
+    command = ["/usr/bin/curl", "--disable", "--silent", "--head",
+               "--proto", "=https", "--tlsv1.2", "--connect-timeout", "3", "--max-time", "5",
+               "--output", "/dev/null", "--write-out", "%{http_code}",
+               "https://api.meta.ai/v1/responses"]
+    observation = {"model_free": True, "authenticated": False, "method": "HEAD",
+                   "http_status": None, "inference_admission": False}
+    code = None
+    try:
+        result = subprocess.run(command, env=_environment(config, root),
+                                cwd=root / "workspace", stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                timeout=6, check=False)
+        if re.fullmatch(rb"[1-5][0-9]{2}", result.stdout):
+            observation["http_status"] = int(result.stdout)
+        if result.returncode == 28:
+            code = "provider_transport_timeout"
+        elif result.returncode != 0:
+            code = "provider_transport_unreachable"
+        elif result.stdout not in {b"200", b"401", b"405"}:
+            code = "provider_transport_http_rejected"
+    except subprocess.TimeoutExpired:
+        code = "provider_transport_timeout"
+    except OSError:
+        code = "provider_transport_probe_unavailable"
+    observation["outcome"] = code or "reachable"
+    # Persist bounded controller-generated facts only, never raw output or
+    # exception text. A failure to retain this evidence also blocks dispatch.
+    try:
+        pilot._write(root, "connectivity.json", canonical_bytes(observation))
+    except (OSError, TaskAlongError):
+        error = _ConnectivityFailure(
+            "provider_transport_evidence_unavailable",
+            "The Meta connectivity observation could not be retained. No inference was started or claim consumed; inspect retained artifacts.",
+            exit_code=3, effect_outcome="not_sent")
+        error.observation = {**observation, "evidence_retained": False}
+        raise error from None
+    if code:
+        messages = {
+            "provider_transport_unreachable": "The Meta connectivity probe could not establish a verified connection.",
+            "provider_transport_http_rejected": "The Meta connectivity probe returned an unsupported HTTP response.",
+            "provider_transport_timeout": "The Meta connectivity probe timed out.",
+            "provider_transport_probe_unavailable": "The local connectivity probe could not start; check /usr/bin/curl and its workspace. No PATH fallback is used.",
+        }
+        status = observation["http_status"]
+        message = messages[code] + (f" HTTP status: {status}." if status is not None else "")
+        error = _ConnectivityFailure(code, message + " No inference was started or claim consumed; do not replay an older consumed task.",
+                                     exit_code=3, effect_outcome="not_sent")
+        error.observation = observation
+        raise error
+    return observation
+
+
+def _preflight(config, root, *, connectivity=False):
     if config["context"] == "exclude":
         _fail("provider_context_exclusion_unsupported", "This Muse client cannot fully exclude existing personal context while preserving its login. Choose include, explicit native-only partial exclusion, or another supported client configuration. No provider request was sent.")
     probe = root / "context-check"; probe.mkdir(mode=0o700)
@@ -597,6 +660,8 @@ def _preflight(config, root):
               recovery=[{"action":"review_context","file":str(probe/"context.json"),"catalog_digest":content_digest}])
     if any("hook" in v.get("payload", {}).get("event", {}).get("kind", "").lower() for v in rows):
         _fail("provider_hooks_observed", "Startup hook activity was observed in the local check; inspect it before this text-only task.")
+    if connectivity:
+        observation["connectivity"] = _connectivity_preflight(config, root)
     return observation
 
 
@@ -822,7 +887,7 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
     capture_options = {"schema_version": "2.0"} if _megabyte(config) else {}
     capture = PrivateCapture(root/"capture", max_output_bytes=config["max_output_bytes"], max_records=8192, **capture_options)
     try:
-        context = _preflight(config, root)
+        context = _preflight(config, root, connectivity=True)
         if _observe_file(config["binary"]["path"], executable=True) != config["binary"]:
             _fail("provider_executable_changed", "The installed binary changed before submission; configure it again.")
         _, fresh = pilot._bundle(str(bundle_root))
@@ -920,7 +985,8 @@ def run(store, *, bundle=None, request=None, output=None, _successor=None):
                       proposal_path=str(root/"proposal/proposed.patch"),review_path=str(root/"proposal/review.json"),proposal_digest=proposal["digest"],remote_usage="unknown", **response_reference)
     except (TaskAlongError, ProcessBoundaryError, OSError) as exc:
         code = exc.code if hasattr(exc,"code") else "provider_local_io"
-        record = _event(store,record,root,"blocked" if not claimed else "failed",error=code,remote_usage="unknown" if claimed else "not_sent")
+        details = {"connectivity": exc.observation} if isinstance(exc, _ConnectivityFailure) else {}
+        record = _event(store,record,root,"blocked" if not claimed else "failed",error=code,remote_usage="unknown" if claimed else "not_sent", **details)
         if isinstance(exc,TaskAlongError):
             raise TaskAlongError(exc.code,exc.message,exit_code=exc.exit_code,effect_outcome="uncertain" if claimed else "not_sent",
                                  recovery=[{"action":"inspect_provider_run","run_id":run_id,"output":str(root)},*exc.recovery]) from None

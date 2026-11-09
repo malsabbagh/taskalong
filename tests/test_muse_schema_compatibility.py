@@ -96,7 +96,8 @@ class SchemaCompatibilityTests(unittest.TestCase):
         proof = fixture.plan()
         self.assertIsNone(fixture.store.setting(key))
         fixture.assert_original()
-        def denied(config, root):
+        def denied(config, root, *, connectivity=False):
+            self.assertTrue(connectivity)
             self.assertEqual(fixture.store.setting(key), derived)
             raise TaskAlongError("preflight_denied", "synthetic")
         with patch.object(muse, "_preflight", side_effect=denied), patch.object(muse, "run_foreground_experiment", side_effect=AssertionError("no process")), self.assertRaises(TaskAlongError):

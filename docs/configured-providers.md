@@ -764,3 +764,38 @@ salvage, patch application or remote settlement is implied. Older clients reject
 the new reason/reservation version; existing recovery cohorts retain their
 original rules. A completed native terminal is completion evidence, not a remote
 cancellation or account-usage guarantee.
+
+### Muse transport prevention
+
+Before a new Muse submission consumes its claim, TaskAlong performs one
+unauthenticated HTTPS HEAD against the pinned Meta responses endpoint using the
+same scrubbed environment as native execution. It sends no prompt or credentials,
+follows no redirects, disables curl configuration, performs no retries and keeps
+TLS verification enabled with a TLS 1.2 minimum. The macOS runtime uses the fixed
+system executable `/usr/bin/curl`, with no PATH fallback. A missing or unstartable
+probe blocks dispatch. The probe has a five-second network limit and a six-second
+subprocess communication timeout. On timeout Python kills and waits for the direct
+child. Process creation and reaping are not an absolute six-second wall-clock
+guarantee, and this is not whole-process-group or descendant-cessation evidence.
+A failed probe records a blocked, not-sent run with zero controller submissions
+and no provider claim.
+
+This is only a reachability check, not proof of authentication, model availability,
+quota, or future inference success. Even HTTP 200 does not validate response body
+content or prove that an authenticated POST will work; bodies are discarded.
+Local context inspection remains network-free.
+Previously consumed claims and unknown usage/descendant effects remain unchanged;
+this check does not authorize replay or add a transport-failure successor.
+
+The probe retains a bounded `connectivity.json` receipt for success and failure;
+blocked transport events retain the same observation. Local launch failures,
+timeouts, connection failures and unsupported HTTP responses have distinct codes.
+If the receipt cannot be written, `provider_transport_evidence_unavailable` blocks
+dispatch and carries the sanitized observation with `evidence_retained: false`
+into the blocked event when storage permits. It preserves the observed transport
+outcome without exposing filesystem error text; it cannot promise durable evidence
+when all storage writes fail.
+Only HTTP 200, 401 and 405 pass the conservative endpoint check. Other responses,
+including 403 and 429, retain their status and block without claiming that the
+network is unreachable. This may conservatively reject a route whose authenticated
+POST would work; no response is permission to bypass the existing route or guards.

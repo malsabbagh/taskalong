@@ -110,7 +110,8 @@ class ProposalSuccessorTests(unittest.TestCase):
     def test_same_key_crash_observes_and_restored_state_is_fenced(self):
         f=self.f;proof=f.plan();snapshot=f.root/'saved.sqlite3'
         target=sqlite3.connect(snapshot);f.store.db.backup(target);target.close()
-        def denied(config,root):
+        def denied(config,root, *, connectivity=False):
+            self.assertTrue(connectivity)
             self.assertEqual(config['max_proposal_bytes'],131072)
             self.assertEqual(f.store.setting('provider-config:'+config['digest']),config)
             raise TaskAlongError('preflight_denied','synthetic')

@@ -640,6 +640,69 @@ class ExperimentalMuseTests(unittest.TestCase):
         self.assertTrue((self.bundle/'provider-submission.json').exists())
         self.assertEqual((self.root/'output/prompt.txt').stat().st_mode&0o777,0o400)
 
+    def test_real_preflight_persists_failed_connectivity_before_claim(self):
+        self.configure()
+        event = {'toolset': {'active_tools': []}, 'reminder_roster': {'agents': []}, 'run_context_messages': []}
+        def curl(argv, **options):
+            self.assertTrue(options['cwd'].is_dir())
+            self.assertEqual(options['cwd'], self.root/'transport-real'/'workspace')
+            return SimpleNamespace(returncode=0, stdout=b'429')
+        with patch.object(muse.sys, 'platform', 'darwin'), patch.object(muse, 'run_foreground_experiment', side_effect=self.process), patch.object(muse, '_journal', return_value=([], [event], {})), patch.object(muse.subprocess, 'run', side_effect=curl), patch.object(muse, '_claim') as claim:
+            with self.assertRaises(TaskAlongError) as error:
+                self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'transport-real'))
+        self.assertEqual(error.exception.effect_outcome, 'not_sent')
+        claim.assert_not_called()
+        self.assertEqual(len(self.calls), 1)  # The local echo only, never Meta.
+        receipt = json.loads((self.root/'transport-real/connectivity.json').read_text())
+        record = json.loads((self.root/'transport-real/events/0002.json').read_text())
+        self.assertEqual(record['connectivity'], receipt)
+        self.assertEqual(receipt['http_status'], 429)
+        self.assertEqual(receipt['method'], 'HEAD')
+        self.assertEqual(record['controller_submissions'], 0)
+        self.assertEqual(record['remote_usage'], 'not_sent')
+        self.assertFalse((self.bundle/'provider-submission.json').exists())
+
+    def test_connectivity_receipt_write_failure_preserves_observation_before_claim(self):
+        self.configure()
+        event = {'toolset': {'active_tools': []}, 'reminder_roster': {'agents': []}, 'run_context_messages': []}
+        write = muse.pilot._write
+        def fail_connectivity_receipt(root, name, data):
+            if name == 'connectivity.json':
+                raise OSError('private filesystem detail')
+            return write(root, name, data)
+        with patch.object(muse.sys, 'platform', 'darwin'), patch.object(muse, 'run_foreground_experiment', side_effect=self.process), patch.object(muse, '_journal', return_value=([], [event], {})), patch.object(muse.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=b'401')), patch.object(muse.pilot, '_write', side_effect=fail_connectivity_receipt), patch.object(muse, '_claim') as claim:
+            with self.assertRaises(TaskAlongError) as error:
+                self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'transport-write-failure'))
+        self.assertEqual(error.exception.code, 'provider_transport_evidence_unavailable')
+        self.assertEqual(error.exception.effect_outcome, 'not_sent')
+        self.assertNotIn('private filesystem detail', error.exception.message)
+        claim.assert_not_called()
+        self.assertEqual(len(self.calls), 1)  # Local echo only, never Meta.
+        record = json.loads((self.root/'transport-write-failure/events/0002.json').read_text())
+        self.assertEqual(record['connectivity']['http_status'], 401)
+        self.assertEqual(record['connectivity']['outcome'], 'reachable')
+        self.assertFalse(record['connectivity']['evidence_retained'])
+        self.assertEqual(record['controller_submissions'], 0)
+        self.assertEqual(record['remote_usage'], 'not_sent')
+        self.assertFalse((self.root/'transport-write-failure/connectivity.json').exists())
+        self.assertFalse((self.bundle/'provider-submission.json').exists())
+
+    def test_transport_preflight_failure_does_not_consume_submission(self):
+        self.configure()
+        failure = TaskAlongError('provider_transport_unreachable', 'Synthetic transport failure.')
+        with patch.object(muse.sys, 'platform', 'darwin'), patch.object(muse, '_preflight', side_effect=failure) as preflight, patch.object(muse, '_claim') as claim, patch.object(muse, 'run_foreground_experiment') as owner:
+            with self.assertRaises(TaskAlongError) as error:
+                self.service.run_provider('muse', bundle=str(self.bundle), output=str(self.root/'transport-output'))
+        self.assertEqual(error.exception.effect_outcome, 'not_sent')
+        self.assertTrue(preflight.call_args.kwargs['connectivity'])
+        claim.assert_not_called()
+        owner.assert_not_called()
+        self.assertFalse((self.bundle/'provider-submission.json').exists())
+        record = json.loads((self.root/'transport-output/events/0002.json').read_text())
+        self.assertEqual(record['state'], 'blocked')
+        self.assertEqual(record['controller_submissions'], 0)
+        self.assertEqual(record['remote_usage'], 'not_sent')
+
     def test_repeated_bundle_refuses_without_another_provider_or_preflight_call(self):
         self.configure();self.run_fixture()
         with patch.object(muse.sys,'platform','darwin'),patch.object(muse,'_preflight') as preflight,patch.object(muse,'run_foreground_experiment') as owner,self.assertRaises(TaskAlongError) as exc:

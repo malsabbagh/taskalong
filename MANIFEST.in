@@ -447,3 +447,4 @@ include tests/test_muse_schema_compatibility.py
 include tools/release_remote.py
 include tools/tests/test_release_remote.py
 include tools/tests/test_release_remote_boundaries.py
+include tests/test_muse_connectivity.py
