@@ -1,0 +1,865 @@
+{
+  "artifacts": [
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "fixture.json",
+      "sha256": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+      "size_bytes": 53
+    },
+    {
+      "classification": "public",
+      "media_type": "text/plain",
+      "path": "artifacts/plan.txt",
+      "sha256": "5363ad0c77a61f4af035fc1ac67b4c3926ccede010a0616c03103016f0590586",
+      "size_bytes": 23
+    },
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "evidence/a-start.json",
+      "sha256": "9653c08fe18a3a91a0e159b4498fdb59ce80a3654bb9b759dfd1bf6ba91a17bc",
+      "size_bytes": 45
+    },
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "evidence/a-observe.json",
+      "sha256": "ce10e615ddb0f34a494b695d0ccad29adfef1a2f6069755a2b4701a075632bd2",
+      "size_bytes": 47
+    },
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "evidence/a-cancel.json",
+      "sha256": "9834f0fb2d67ee56d5878fd87c1df481eb4ffbe7172e074c1922ed855fa1797d",
+      "size_bytes": 46
+    },
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "evidence/a-result.json",
+      "sha256": "de397cd504b4575a73751687fcd09acd916d6f9742ae8951b72e4def4bf6af89",
+      "size_bytes": 46
+    },
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "evidence/b-start.json",
+      "sha256": "10ed9d9dcc78a309b52ca8e2b3278de9b3e46502a33a38682b691c0f09ff5ea6",
+      "size_bytes": 45
+    },
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "evidence/b-observe.json",
+      "sha256": "1e993571c020815e7e91767482ca0c2395467b4c1835f8a514fe334c77c609f5",
+      "size_bytes": 47
+    },
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "evidence/b-cancel.json",
+      "sha256": "83464b4c57f0ad9f67f08daafd46df99e290086838c87fcfb5cc2c833882a203",
+      "size_bytes": 46
+    },
+    {
+      "classification": "public",
+      "media_type": "application/json",
+      "path": "evidence/b-result.json",
+      "sha256": "9913dbb968f2b90d37ba7f420259c5ee1141ebb4823a38eef94f9ed21365114d",
+      "size_bytes": 46
+    }
+  ],
+  "campaign_id": "generated-campaign",
+  "cleanup": {
+    "cross_harness_resume": "unsupported",
+    "local_cessation": "required",
+    "native_resume": "unsupported",
+    "unknown_effects": "block"
+  },
+  "fixture": {
+    "classification": "public",
+    "media_type": "application/json",
+    "path": "fixture.json",
+    "sha256": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+    "size_bytes": 53
+  },
+  "handoff_artifact": {
+    "classification": "public",
+    "media_type": "text/plain",
+    "path": "artifacts/plan.txt",
+    "sha256": "5363ad0c77a61f4af035fc1ac67b4c3926ccede010a0616c03103016f0590586",
+    "size_bytes": 23
+  },
+  "kind": "handoff_campaign_preparation",
+  "limits": {
+    "artifact_bytes": 1048576,
+    "capture_bytes": 1048576,
+    "provider_submissions": 4,
+    "wall_seconds": 1440
+  },
+  "routes": [
+    {
+      "binding": {
+        "budget": {
+          "hard_cost_cap_required": false,
+          "hard_token_cap_required": false,
+          "max_attempts": 1,
+          "max_cost_micro_usd": null,
+          "max_tokens": null,
+          "wall_seconds": 120
+        },
+        "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+        "digest": "0adcb5edd076c733d22b2cd40ae683e7cf415bd39655ce7242d9d22c2c2f6e9f",
+        "installation_digest": "dccea028a1ca078a68bffb04a2a77e5dd3e3b9203fe4166b0914239dc97ba167",
+        "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "kind": "execution_binding",
+        "native_resume": null,
+        "provider_profile_digest": "965cda121a3cbbbeaa5197370ef82fa4cf967e187deed7803ed72c1abbdc0ce2",
+        "required_capabilities": [
+          "start"
+        ],
+        "schema_version": "2.0",
+        "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+        "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "configuration_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "context": {
+        "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "prior_invocation_digest": null,
+        "session_digest": null,
+        "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac"
+      },
+      "installation": {
+        "adapter_id": "not-registered",
+        "cli_version": "fixture-1",
+        "digest": "dccea028a1ca078a68bffb04a2a77e5dd3e3b9203fe4166b0914239dc97ba167",
+        "driver_version": "1.0",
+        "executable_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "harness": "codex",
+        "installation_id": "synthetic-a",
+        "kind": "harness_installation",
+        "platform": {
+          "architecture": "x86_64",
+          "backend_id": "fixture-only",
+          "os": "linux"
+        },
+        "revision": 1,
+        "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "schema_version": "2.0"
+      },
+      "provider_profile": {
+        "allowed_disclosure": "provider-only",
+        "auth": {
+          "credential_ref": "synthetic-account",
+          "mode": "account"
+        },
+        "auxiliary_routes": [],
+        "digest": "965cda121a3cbbbeaa5197370ef82fa4cf967e187deed7803ed72c1abbdc0ce2",
+        "effort": null,
+        "endpoint": "https://synthetic.invalid",
+        "fallback": "forbidden",
+        "harness": "codex",
+        "kind": "provider_profile",
+        "model": {
+          "requested": "synthetic-model",
+          "resolved_digest": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "profile_id": "synthetic-a",
+        "provider": "openai-account",
+        "revision": 1,
+        "schema_version": "2.0",
+        "service_tier": null,
+        "unlisted_auxiliary_routes": "deny"
+      },
+      "receipts": [
+        {
+          "digest": "165b40b366556625d77d447f4fa23560fb0f4a669454d56a62213157921481ac",
+          "evidence_level": "offline_fixture",
+          "kind": "qualification_receipt",
+          "limitations": [
+            "Synthetic data is not actual provider evidence."
+          ],
+          "mode": "start",
+          "producer_id": "synthetic-qa",
+          "receipt_id": "a-start",
+          "results": [
+            {
+              "capability": "start",
+              "evidence_refs": [
+                {
+                  "classification": "public",
+                  "media_type": "application/json",
+                  "sha256": "9653c08fe18a3a91a0e159b4498fdb59ce80a3654bb9b759dfd1bf6ba91a17bc",
+                  "size_bytes": 45
+                }
+              ],
+              "outcome": "supported"
+            }
+          ],
+          "schema_version": "2.1",
+          "subject": {
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "backend_id": "fixture-only",
+            "binding_digest": "0adcb5edd076c733d22b2cd40ae683e7cf415bd39655ce7242d9d22c2c2f6e9f",
+            "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installation_digest": "dccea028a1ca078a68bffb04a2a77e5dd3e3b9203fe4166b0914239dc97ba167",
+            "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "native_resume_compatibility_digest": null,
+            "prior_invocation_digest": null,
+            "provider": "openai-account",
+            "provider_profile_digest": "965cda121a3cbbbeaa5197370ef82fa4cf967e187deed7803ed72c1abbdc0ce2",
+            "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "session_digest": null,
+            "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+            "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "usage": {
+            "cost_micro_usd": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "valid_until": "2027-01-01T00:00:00Z"
+        },
+        {
+          "digest": "5e606cf95d76cd6f1838568e3318e074f1c25ad585a0fbe29c633643cc67f6ab",
+          "evidence_level": "offline_fixture",
+          "kind": "qualification_receipt",
+          "limitations": [
+            "Synthetic data is not actual provider evidence."
+          ],
+          "mode": "observe",
+          "producer_id": "synthetic-qa",
+          "receipt_id": "a-observe",
+          "results": [
+            {
+              "capability": "start",
+              "evidence_refs": [
+                {
+                  "classification": "public",
+                  "media_type": "application/json",
+                  "sha256": "ce10e615ddb0f34a494b695d0ccad29adfef1a2f6069755a2b4701a075632bd2",
+                  "size_bytes": 47
+                }
+              ],
+              "outcome": "supported"
+            }
+          ],
+          "schema_version": "2.1",
+          "subject": {
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "backend_id": "fixture-only",
+            "binding_digest": "0adcb5edd076c733d22b2cd40ae683e7cf415bd39655ce7242d9d22c2c2f6e9f",
+            "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installation_digest": "dccea028a1ca078a68bffb04a2a77e5dd3e3b9203fe4166b0914239dc97ba167",
+            "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "native_resume_compatibility_digest": null,
+            "prior_invocation_digest": null,
+            "provider": "openai-account",
+            "provider_profile_digest": "965cda121a3cbbbeaa5197370ef82fa4cf967e187deed7803ed72c1abbdc0ce2",
+            "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "session_digest": null,
+            "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+            "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "usage": {
+            "cost_micro_usd": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "valid_until": "2027-01-01T00:00:00Z"
+        },
+        {
+          "digest": "9db79062eb2cfd54668bf6a8332034d86f53b4e28d1abb714fe47d325b1945ee",
+          "evidence_level": "offline_fixture",
+          "kind": "qualification_receipt",
+          "limitations": [
+            "Synthetic data is not actual provider evidence."
+          ],
+          "mode": "cancel",
+          "producer_id": "synthetic-qa",
+          "receipt_id": "a-cancel",
+          "results": [
+            {
+              "capability": "start",
+              "evidence_refs": [
+                {
+                  "classification": "public",
+                  "media_type": "application/json",
+                  "sha256": "9834f0fb2d67ee56d5878fd87c1df481eb4ffbe7172e074c1922ed855fa1797d",
+                  "size_bytes": 46
+                }
+              ],
+              "outcome": "supported"
+            }
+          ],
+          "schema_version": "2.1",
+          "subject": {
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "backend_id": "fixture-only",
+            "binding_digest": "0adcb5edd076c733d22b2cd40ae683e7cf415bd39655ce7242d9d22c2c2f6e9f",
+            "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installation_digest": "dccea028a1ca078a68bffb04a2a77e5dd3e3b9203fe4166b0914239dc97ba167",
+            "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "native_resume_compatibility_digest": null,
+            "prior_invocation_digest": null,
+            "provider": "openai-account",
+            "provider_profile_digest": "965cda121a3cbbbeaa5197370ef82fa4cf967e187deed7803ed72c1abbdc0ce2",
+            "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "session_digest": null,
+            "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+            "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "usage": {
+            "cost_micro_usd": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "valid_until": "2027-01-01T00:00:00Z"
+        },
+        {
+          "digest": "79605d2fcf4a2dafe35b21f5c4d24cf3ba998e8d8716bd21b95facb964661456",
+          "evidence_level": "offline_fixture",
+          "kind": "qualification_receipt",
+          "limitations": [
+            "Synthetic data is not actual provider evidence."
+          ],
+          "mode": "result",
+          "producer_id": "synthetic-qa",
+          "receipt_id": "a-result",
+          "results": [
+            {
+              "capability": "start",
+              "evidence_refs": [
+                {
+                  "classification": "public",
+                  "media_type": "application/json",
+                  "sha256": "de397cd504b4575a73751687fcd09acd916d6f9742ae8951b72e4def4bf6af89",
+                  "size_bytes": 46
+                }
+              ],
+              "outcome": "supported"
+            }
+          ],
+          "schema_version": "2.1",
+          "subject": {
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "backend_id": "fixture-only",
+            "binding_digest": "0adcb5edd076c733d22b2cd40ae683e7cf415bd39655ce7242d9d22c2c2f6e9f",
+            "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installation_digest": "dccea028a1ca078a68bffb04a2a77e5dd3e3b9203fe4166b0914239dc97ba167",
+            "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "native_resume_compatibility_digest": null,
+            "prior_invocation_digest": null,
+            "provider": "openai-account",
+            "provider_profile_digest": "965cda121a3cbbbeaa5197370ef82fa4cf967e187deed7803ed72c1abbdc0ce2",
+            "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "session_digest": null,
+            "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+            "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "usage": {
+            "cost_micro_usd": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "valid_until": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "route_id": "a"
+    },
+    {
+      "binding": {
+        "budget": {
+          "hard_cost_cap_required": false,
+          "hard_token_cap_required": false,
+          "max_attempts": 1,
+          "max_cost_micro_usd": null,
+          "max_tokens": null,
+          "wall_seconds": 120
+        },
+        "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+        "digest": "4a1d7e31db51e51e9beb8602b7aa6a2cee1787eccbd8ad6286c37ddcf4b0a317",
+        "installation_digest": "e240f7aea615a875e5e252cbe86b466dbe125428e77eac9f52c83a4a3677dd7c",
+        "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "kind": "execution_binding",
+        "native_resume": null,
+        "provider_profile_digest": "e80daaee3f71a6bfc99e83a662b9f215cf4207635e5536323dae7a8e252c457d",
+        "required_capabilities": [
+          "start"
+        ],
+        "schema_version": "2.0",
+        "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+        "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "configuration_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "context": {
+        "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "prior_invocation_digest": null,
+        "session_digest": null,
+        "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac"
+      },
+      "installation": {
+        "adapter_id": "not-registered",
+        "cli_version": "fixture-1",
+        "digest": "e240f7aea615a875e5e252cbe86b466dbe125428e77eac9f52c83a4a3677dd7c",
+        "driver_version": "1.0",
+        "executable_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "harness": "claude-code",
+        "installation_id": "synthetic-b",
+        "kind": "harness_installation",
+        "platform": {
+          "architecture": "x86_64",
+          "backend_id": "fixture-only",
+          "os": "linux"
+        },
+        "revision": 1,
+        "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "schema_version": "2.0"
+      },
+      "provider_profile": {
+        "allowed_disclosure": "local-only",
+        "auth": {
+          "credential_ref": null,
+          "mode": "local-no-secret"
+        },
+        "auxiliary_routes": [],
+        "digest": "e80daaee3f71a6bfc99e83a662b9f215cf4207635e5536323dae7a8e252c457d",
+        "effort": null,
+        "endpoint": "http://127.0.0.1:11434",
+        "fallback": "forbidden",
+        "harness": "claude-code",
+        "kind": "provider_profile",
+        "model": {
+          "requested": "synthetic-model",
+          "resolved_digest": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "profile_id": "synthetic-b",
+        "provider": "ollama-local",
+        "revision": 1,
+        "schema_version": "2.0",
+        "service_tier": null,
+        "unlisted_auxiliary_routes": "deny"
+      },
+      "receipts": [
+        {
+          "digest": "8dc8be2be42523c736a7212c3ae9312f3a5b2bf97570ea15cc6f74a544ba20b6",
+          "evidence_level": "offline_fixture",
+          "kind": "qualification_receipt",
+          "limitations": [
+            "Synthetic data is not actual provider evidence."
+          ],
+          "mode": "start",
+          "producer_id": "synthetic-qa",
+          "receipt_id": "b-start",
+          "results": [
+            {
+              "capability": "start",
+              "evidence_refs": [
+                {
+                  "classification": "public",
+                  "media_type": "application/json",
+                  "sha256": "10ed9d9dcc78a309b52ca8e2b3278de9b3e46502a33a38682b691c0f09ff5ea6",
+                  "size_bytes": 45
+                }
+              ],
+              "outcome": "supported"
+            }
+          ],
+          "schema_version": "2.1",
+          "subject": {
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "backend_id": "fixture-only",
+            "binding_digest": "4a1d7e31db51e51e9beb8602b7aa6a2cee1787eccbd8ad6286c37ddcf4b0a317",
+            "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installation_digest": "e240f7aea615a875e5e252cbe86b466dbe125428e77eac9f52c83a4a3677dd7c",
+            "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "native_resume_compatibility_digest": null,
+            "prior_invocation_digest": null,
+            "provider": "ollama-local",
+            "provider_profile_digest": "e80daaee3f71a6bfc99e83a662b9f215cf4207635e5536323dae7a8e252c457d",
+            "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "session_digest": null,
+            "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+            "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "usage": {
+            "cost_micro_usd": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "valid_until": "2027-01-01T00:00:00Z"
+        },
+        {
+          "digest": "e4c65c2bb8ae7528ccbc07e5086d01017d7dc268ab534e5a2f247a70846bb94f",
+          "evidence_level": "offline_fixture",
+          "kind": "qualification_receipt",
+          "limitations": [
+            "Synthetic data is not actual provider evidence."
+          ],
+          "mode": "observe",
+          "producer_id": "synthetic-qa",
+          "receipt_id": "b-observe",
+          "results": [
+            {
+              "capability": "start",
+              "evidence_refs": [
+                {
+                  "classification": "public",
+                  "media_type": "application/json",
+                  "sha256": "1e993571c020815e7e91767482ca0c2395467b4c1835f8a514fe334c77c609f5",
+                  "size_bytes": 47
+                }
+              ],
+              "outcome": "supported"
+            }
+          ],
+          "schema_version": "2.1",
+          "subject": {
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "backend_id": "fixture-only",
+            "binding_digest": "4a1d7e31db51e51e9beb8602b7aa6a2cee1787eccbd8ad6286c37ddcf4b0a317",
+            "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installation_digest": "e240f7aea615a875e5e252cbe86b466dbe125428e77eac9f52c83a4a3677dd7c",
+            "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "native_resume_compatibility_digest": null,
+            "prior_invocation_digest": null,
+            "provider": "ollama-local",
+            "provider_profile_digest": "e80daaee3f71a6bfc99e83a662b9f215cf4207635e5536323dae7a8e252c457d",
+            "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "session_digest": null,
+            "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+            "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "usage": {
+            "cost_micro_usd": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "valid_until": "2027-01-01T00:00:00Z"
+        },
+        {
+          "digest": "c5388f2350cabc7e181f0d7b3c518df8e3f368fd93c8f2c10e0099c3e0f652ba",
+          "evidence_level": "offline_fixture",
+          "kind": "qualification_receipt",
+          "limitations": [
+            "Synthetic data is not actual provider evidence."
+          ],
+          "mode": "cancel",
+          "producer_id": "synthetic-qa",
+          "receipt_id": "b-cancel",
+          "results": [
+            {
+              "capability": "start",
+              "evidence_refs": [
+                {
+                  "classification": "public",
+                  "media_type": "application/json",
+                  "sha256": "83464b4c57f0ad9f67f08daafd46df99e290086838c87fcfb5cc2c833882a203",
+                  "size_bytes": 46
+                }
+              ],
+              "outcome": "supported"
+            }
+          ],
+          "schema_version": "2.1",
+          "subject": {
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "backend_id": "fixture-only",
+            "binding_digest": "4a1d7e31db51e51e9beb8602b7aa6a2cee1787eccbd8ad6286c37ddcf4b0a317",
+            "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installation_digest": "e240f7aea615a875e5e252cbe86b466dbe125428e77eac9f52c83a4a3677dd7c",
+            "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "native_resume_compatibility_digest": null,
+            "prior_invocation_digest": null,
+            "provider": "ollama-local",
+            "provider_profile_digest": "e80daaee3f71a6bfc99e83a662b9f215cf4207635e5536323dae7a8e252c457d",
+            "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "session_digest": null,
+            "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+            "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "usage": {
+            "cost_micro_usd": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "valid_until": "2027-01-01T00:00:00Z"
+        },
+        {
+          "digest": "528682404b2d1afb03ac9fdb9feb997477947758f7c11bb1734b1d9943d6719f",
+          "evidence_level": "offline_fixture",
+          "kind": "qualification_receipt",
+          "limitations": [
+            "Synthetic data is not actual provider evidence."
+          ],
+          "mode": "result",
+          "producer_id": "synthetic-qa",
+          "receipt_id": "b-result",
+          "results": [
+            {
+              "capability": "start",
+              "evidence_refs": [
+                {
+                  "classification": "public",
+                  "media_type": "application/json",
+                  "sha256": "9913dbb968f2b90d37ba7f420259c5ee1141ebb4823a38eef94f9ed21365114d",
+                  "size_bytes": 46
+                }
+              ],
+              "outcome": "supported"
+            }
+          ],
+          "schema_version": "2.1",
+          "subject": {
+            "artifact_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "backend_id": "fixture-only",
+            "binding_digest": "4a1d7e31db51e51e9beb8602b7aa6a2cee1787eccbd8ad6286c37ddcf4b0a317",
+            "check_binding_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+            "effective_context_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "host_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "installation_digest": "e240f7aea615a875e5e252cbe86b466dbe125428e77eac9f52c83a4a3677dd7c",
+            "instruction_bundle_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "model_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+            "native_resume_compatibility_digest": null,
+            "prior_invocation_digest": null,
+            "provider": "ollama-local",
+            "provider_profile_digest": "e80daaee3f71a6bfc99e83a662b9f215cf4207635e5536323dae7a8e252c457d",
+            "runtime_closure_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+            "session_digest": null,
+            "test_inputs_digest": "831fc0786019ab5ea63598e89b826df3af19d870adecead8db8538c292f2fbac",
+            "tool_policy_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+            "worker_sandbox_digest": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "usage": {
+            "cost_micro_usd": null,
+            "input_tokens": null,
+            "output_tokens": null
+          },
+          "valid_from": "2026-01-01T00:00:00Z",
+          "valid_until": "2027-01-01T00:00:00Z"
+        }
+      ],
+      "route_id": "b"
+    }
+  ],
+  "schema_version": "1.0",
+  "source": {
+    "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "dependency_lock_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "sdist_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "wheel_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "task_spec": {
+    "budget": {
+      "attempt_output_bytes": 65536,
+      "attempt_seconds": 30,
+      "hard_cost_usd": null,
+      "hard_tokens": null,
+      "max_attempts": 4,
+      "max_output_bytes": 1048576,
+      "total_active_seconds": 240
+    },
+    "checks": [
+      {
+        "argv": [
+          "python3",
+          "-m",
+          "unittest"
+        ],
+        "criterion_ids": [
+          "arithmetic"
+        ],
+        "cwd": ".",
+        "expected_exit_code": 0,
+        "id": "unit",
+        "required": true,
+        "timeout_seconds": 20
+      }
+    ],
+    "criteria": [
+      {
+        "check_ids": [
+          "unit"
+        ],
+        "description": "The function passes its declared unittest.",
+        "id": "arithmetic"
+      }
+    ],
+    "digest": "824aee86ae6ff832070a738f93140d2b4d7bbcff8c443f624fb472fa691fa033",
+    "execution": {
+      "check_route_id": "a",
+      "routes": [
+        {
+          "binding_digest": "0adcb5edd076c733d22b2cd40ae683e7cf415bd39655ce7242d9d22c2c2f6e9f",
+          "configuration_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "disclosure_destination_id": "destination-a",
+          "route_id": "a"
+        },
+        {
+          "binding_digest": "4a1d7e31db51e51e9beb8602b7aa6a2cee1787eccbd8ad6286c37ddcf4b0a317",
+          "configuration_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "disclosure_destination_id": "destination-b",
+          "route_id": "b"
+        }
+      ]
+    },
+    "extensions": {},
+    "final_verification": {
+      "max_output_bytes": 65536,
+      "max_passes": 1,
+      "total_active_seconds": 120
+    },
+    "goal": "Correct the bounded synthetic arithmetic function.",
+    "kind": "task_spec",
+    "non_goals": [],
+    "permissions": {
+      "allowed_effects": [
+        "commit_candidate",
+        "execute",
+        "verify"
+      ],
+      "disclosure_destination_ids": [
+        "destination-a",
+        "destination-b"
+      ],
+      "local_commit": true,
+      "local_edit": true
+    },
+    "publication": null,
+    "qualification": "synthetic",
+    "repository": {
+      "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "base_ref": "main",
+      "registration_id": "11111111-1111-4111-8111-111111111111"
+    },
+    "review": {
+      "config_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "contract": "0.8.8/v1",
+      "integration": "reviewsensei",
+      "require_full_coverage": true,
+      "required": true
+    },
+    "revision": 1,
+    "schema_version": "2.10",
+    "scope": {
+      "files": [
+        "arithmetic.py",
+        "plan.txt"
+      ],
+      "operations": [
+        "add",
+        "modify"
+      ]
+    },
+    "steps": [
+      {
+        "goal": "Write a generated plan.",
+        "import_scope": {
+          "files": [],
+          "operations": [
+            "modify"
+          ]
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "allowed_disclosure_destination_ids": [
+              "destination-b"
+            ],
+            "allowed_target_binding_digests": [
+              "4a1d7e31db51e51e9beb8602b7aa6a2cee1787eccbd8ad6286c37ddcf4b0a317"
+            ],
+            "artifact_kind": "utf8_text",
+            "classification": "synthetic_fixture",
+            "max_bytes": 1024,
+            "output_id": "plan",
+            "path": "plan.txt"
+          }
+        ],
+        "required": true,
+        "route_id": "a",
+        "scope": {
+          "files": [
+            "plan.txt"
+          ],
+          "operations": [
+            "add"
+          ]
+        },
+        "step_id": "plan"
+      },
+      {
+        "goal": "Read that exact plan and propose one edit.",
+        "import_scope": {
+          "files": [],
+          "operations": [
+            "modify"
+          ]
+        },
+        "inputs": [
+          {
+            "expected_kind": "utf8_text",
+            "from_step_id": "plan",
+            "kind": "step_output",
+            "max_bytes": 1024,
+            "output_id": "plan"
+          }
+        ],
+        "outputs": [],
+        "required": true,
+        "route_id": "b",
+        "scope": {
+          "files": [
+            "arithmetic.py"
+          ],
+          "operations": [
+            "modify"
+          ]
+        },
+        "step_id": "edit"
+      }
+    ],
+    "task_id": "synthetic-task"
+  }
+}

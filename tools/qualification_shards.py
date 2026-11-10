@@ -62,7 +62,7 @@ def validate_producer(value: dict, binding: dict, system: str, python: str):
 
 
 def harness_digest(producer):
-    inputs = {'tools/qualify_installed.py', 'tools/qualify_runtime.py', 'requirements-dev.lock'} | {
+    inputs = {'tools/qualify_installed.py', 'tools/qualify_runtime.py', 'tools/qualify_handoff.py', 'requirements-dev.lock'} | {
         path for path in producer['source_files'] if path.startswith('tests/') and path != 'tests/test_distribution.py'}
     return json_digest([{'path': path, 'sha256': producer['source_files'][path]} for path in sorted(inputs)])
 
