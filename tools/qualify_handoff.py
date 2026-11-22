@@ -188,14 +188,17 @@ def prepare(document, *, blobs, now, approved_destinations=frozenset(), trust=No
             from taskalong.artifact_handoff import disjoint
             from taskalong.paths import safe_relative
             disjoint(list(f['files']))
+            fixture_digests = {}
             for path, text in f['files'].items():
-                safe_relative(path); _require(type(text) is str and len(text.encode()) <= 65536, 'fixture.files')
+                safe_relative(path)
+                _require(type(text) is str, 'fixture.files')
+                content = text.encode('utf-8', 'strict')
+                _require(len(content) <= 65536, 'fixture.files')
+                fixture_digests[path] = hashlib.sha256(content).hexdigest()
             sensitive(f)
-        except Exception:
+        except (CampaignError, TaskAlongError, UnicodeError):
             issue('fixture_invalid')
         else:
-            fixture_digests = {path: hashlib.sha256(text.encode('utf-8')).hexdigest()
-                               for path, text in f['files'].items()}
             for step in task['steps']:
                 for entry in step['inputs']:
                     if 'path' not in entry:
@@ -221,8 +224,10 @@ def prepare(document, *, blobs, now, approved_destinations=frozenset(), trust=No
             text = checked[handoff['sha256']].decode('utf-8', 'strict')
             _require('\0' not in text, 'handoff_artifact.content')
             sensitive(text)
-        except (CampaignError, TaskAlongError, UnicodeError):
+        except (CampaignError, UnicodeDecodeError):
             issue('handoff_artifact_invalid_text', artifact=handoff['sha256'])
+        except TaskAlongError:
+            issue('handoff_artifact_content_rejected', artifact=handoff['sha256'])
     route_refs = {r['route_id']: r for r in task['execution']['routes']}
     reports = []
     evidence = Evidence.from_blobs({sha: raw for sha, raw in checked.items() if raw})

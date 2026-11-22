@@ -153,6 +153,7 @@ class CampaignTests(unittest.TestCase):
             with self.subTest(path=path, expected=expected):
                 document = copy.deepcopy(self.manifest)
                 task = document['task_spec']
+                task['steps'][0]['inputs'].append({'path': 'arithmetic.py', 'sha256': hashlib.sha256(source).hexdigest()})
                 task['steps'][1]['inputs'].append({'path': path, 'sha256': hashlib.sha256(content).hexdigest()})
                 document['task_spec'] = seal_versioned('task-spec', task, version='2.10')
                 issues = [item for item in self.report(document)['issues'] if item['code'].startswith('fixture_input_')]
@@ -161,8 +162,23 @@ class CampaignTests(unittest.TestCase):
                     'route_id': 'b', 'step_id': 'edit',
                 }])
 
+    def test_fixture_reports_path_conflicts_or_unencodable_source(self):
+        for raw in (b'{"files":{"a":"plain","a/b":"nested"}}', br'{"files":{"a":"\ud800"}}'):
+            with self.subTest(raw=raw):
+                document = copy.deepcopy(self.manifest)
+                original = document['fixture']
+                replacement = reference(raw) | {'path': original['path']}
+                document['artifacts'][document['artifacts'].index(original)] = replacement
+                document['fixture'] = replacement
+                for route in document['routes']:
+                    route['context']['test_inputs_digest'] = replacement['sha256']
+                blobs = dict(self.blobs)
+                del blobs[original['sha256']]
+                blobs[replacement['sha256']] = raw
+                self.assertIn('fixture_invalid', self.codes(self.report(document, blobs=blobs)))
+
     def test_hash_matching_handoff_bytes_still_need_valid_text(self):
-        for raw in (b'\xff', b'note\x00'):
+        for raw, valid in ((b'\xff', False), (b'note\x00', False), ('Public note — done.\n'.encode(), True)):
             with self.subTest(raw=raw):
                 document = copy.deepcopy(self.manifest)
                 original = document['handoff_artifact']
@@ -173,8 +189,8 @@ class CampaignTests(unittest.TestCase):
                 del blobs[original['sha256']]
                 blobs[replacement['sha256']] = raw
                 report = self.report(document, blobs=blobs)
-                self.assertIn({'code': 'handoff_artifact_invalid_text',
-                               'artifact_digest': replacement['sha256']}, report['issues'])
+                issue = {'code': 'handoff_artifact_invalid_text', 'artifact_digest': replacement['sha256']}
+                self.assertEqual(issue in report['issues'], not valid)
                 self.assertNotIn('artifact_tampered', self.codes(report))
                 self.assertEqual(report['controller_submissions'], 0)
 
