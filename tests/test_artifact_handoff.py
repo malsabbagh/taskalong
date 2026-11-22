@@ -295,7 +295,15 @@ class SharedHandoffContract:
         self.assertEqual([s["status"] for s in final["steps"]],["completed","completed"],final)
         self.assertEqual(self.invocations()[1]["staged"],[{"sha256":hashlib.sha256(b"").hexdigest(),"bytes":0}])
 
-    def test_output_bytes_must_match_the_stopped_checkpoint(self):
+    def track_declared_output_in_base(self):
+        note = self.repo / "handoff" / "note.txt"
+        note.parent.mkdir()
+        note.write_bytes(PAYLOAD)
+        git(self.repo, "add", "handoff/note.txt")
+        git(self.repo, "commit", "-m", "Add unchanged handoff fixture note")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+
+    def assert_output_mismatch_blocks(self):
         from taskalong import artifact_io, workflow
         from taskalong._supervisor import run_guard
 
@@ -317,6 +325,22 @@ class SharedHandoffContract:
         self.assertEqual(stopped["steps"][0]["status"], "failed")
         self.assertIsNone(stopped["steps"][0]["output_manifest_blob_sha256"])
         self.assertIn("artifact_producer_changed", {item["code"] for item in stopped["blockers"]})
+
+    def test_output_bytes_must_match_the_stopped_checkpoint(self):
+        self.assert_output_mismatch_blocks()
+
+    def test_unchanged_output_bytes_must_match_the_immutable_base(self):
+        self.track_declared_output_in_base()
+        self.assert_output_mismatch_blocks()
+
+    def test_unchanged_declared_output_transfers_exact_base_bytes(self):
+        self.track_declared_output_in_base()
+        first, _ = self.first()
+        self.advance(first)
+        final = self.wait(first["run_id"], timeout=35)
+        self.assertEqual([step["status"] for step in final["steps"]], ["completed", "completed"], final)
+        self.assertEqual(self.invocations()[1]["staged"],
+                         [{"sha256": hashlib.sha256(PAYLOAD).hexdigest(), "bytes": len(PAYLOAD)}])
 
     def test_selector_missing_wrong_kind_and_unauthorized_target_refuse_before_workers(self):
         for change in ("missing","kind","target"):
