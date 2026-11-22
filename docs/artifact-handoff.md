@@ -63,6 +63,8 @@ inputs remain `{path,sha256}` and bind the original repository base. Core keeps
 the submitted task bytes unchanged and resolves a separate immutable input
 document only after the designated producer's actual cessation and completion.
 Missing, wrong-kind, changed, undeclared or unauthorized inputs block the target.
+The captured output bytes must also match the stopped workspace checkpoint.
+For an unchanged declared output, the immutable base tree supplies the identity.
 
 Use the same public CLI flow as the [ordered fixture](ordered-tasks.md):
 

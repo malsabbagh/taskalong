@@ -295,6 +295,29 @@ class SharedHandoffContract:
         self.assertEqual([s["status"] for s in final["steps"]],["completed","completed"],final)
         self.assertEqual(self.invocations()[1]["staged"],[{"sha256":hashlib.sha256(b"").hexdigest(),"bytes":0}])
 
+    def test_output_bytes_must_match_the_stopped_checkpoint(self):
+        from taskalong import artifact_io, workflow
+        from taskalong._supervisor import run_guard
+
+        run, _ = self.submit(self.handoff_task())
+        with patch.object(self.service._workflow, "_launch_supervisor"):
+            prepared = self.start(run)
+        read = artifact_io.read_regular
+        replacement = PAYLOAD.replace(b"reviewed", b"recorded")
+
+        def read_different_output(root, path, **options):
+            raw = read(root, path, **options)
+            return replacement if path == "handoff/note.txt" else raw
+
+        with patch.object(artifact_io, "read_regular", side_effect=read_different_output):
+            with run_guard(self.state, run["run_id"]):
+                workflow.drive_run(self.state, run["run_id"], prepared["active_attempt_id"])
+
+        stopped = self.assert_no_target(run["run_id"])
+        self.assertEqual(stopped["steps"][0]["status"], "failed")
+        self.assertIsNone(stopped["steps"][0]["output_manifest_blob_sha256"])
+        self.assertIn("artifact_producer_changed", {item["code"] for item in stopped["blockers"]})
+
     def test_selector_missing_wrong_kind_and_unauthorized_target_refuse_before_workers(self):
         for change in ("missing","kind","target"):
             with self.subTest(change=change):
