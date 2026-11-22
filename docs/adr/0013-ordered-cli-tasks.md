@@ -56,3 +56,8 @@ Qualification uses public CLI subprocesses and the existing original fixture,
 with independent audit cases for ordering/replay, failure/retry, reservations,
 cancellation, scope/input/checkpoint/result tampering, interruptions, migration
 and source/installed-wheel/rebuilt-sdist/core-only distribution boundaries.
+
+After `retire-workspace` releases an accepted run's repository lease, the
+`status` and `result` commands verify its preserved candidate and receipts
+through the validated historical workspace. Mutating commands still require
+the current execution fence.
