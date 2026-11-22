@@ -228,12 +228,31 @@ def capture_outputs(store, run, attempt, result, receipt_sha):
             or admission["trust_digest"] != attempt["dispatch_admission"]["trust_digest"]):
         refuse("artifact_route_changed")
     from .workflow import Workflow
+    from .workspace import _tree, git
     manager = Workflow(store)._manager(run)
-    if manager.snapshot(attempt["workspace"],spec["scope"],expected_head=spec["repository"]["base_commit"])["content_digest"] != result["checkpoint"]["content_digest"]:
+    workspace_path = attempt["workspace"]["path"]
+    base_commit = spec["repository"]["base_commit"]
+    checkpoint_digest = result["checkpoint"]["content_digest"]
+    snapshot = manager.snapshot(attempt["workspace"], spec["scope"], expected_head=base_commit)
+    if snapshot["content_digest"] != checkpoint_digest:
         refuse("artifact_producer_changed")
+    # The snapshot manifest contains only changed paths relative to the base.
+    checkpoint_files = {item["path"]: item for item in snapshot["manifest"]}
+    baseline = None
     outputs = []
     for declaration in spec["steps"][attempt["step_index"]]["outputs"]:
-        raw = read_regular(attempt["workspace"]["path"], declaration["path"], max_bytes=declaration["max_bytes"])
+        path = declaration["path"]
+        raw = read_regular(workspace_path, path, max_bytes=declaration["max_bytes"])
+        checkpoint_file = checkpoint_files.get(path)
+        if checkpoint_file is not None:
+            if len(raw) != checkpoint_file["bytes"] or hashlib.sha256(raw).hexdigest() != checkpoint_file["sha256"]:
+                refuse("artifact_producer_changed")
+        else:
+            if baseline is None:
+                baseline = _tree(workspace_path, base_commit)
+            original = baseline.get(path)
+            if original is None or raw != git(workspace_path, "cat-file", "blob", original[1], binary=True):
+                refuse("artifact_producer_changed")
         if declaration["artifact_kind"] == "utf8_text":
             try:
                 raw.decode("utf-8", "strict")
@@ -255,7 +274,7 @@ def capture_outputs(store, run, attempt, result, receipt_sha):
             declaration = next(o for o in spec["steps"][attempt["step_index"]]["outputs"] if o["output_id"] == output["output_id"])
             if volume > declaration["max_bytes"]:
                 refuse("artifact_size_limit")
-    if manager.snapshot(attempt["workspace"],spec["scope"],expected_head=spec["repository"]["base_commit"])["content_digest"] != result["checkpoint"]["content_digest"]:
+    if manager.snapshot(attempt["workspace"], spec["scope"], expected_head=base_commit)["content_digest"] != checkpoint_digest:
         refuse("artifact_producer_changed")
     document = seal_versioned("output-manifest", subject(run, attempt) | {
         "producer_receipt_blob_sha256":receipt_sha,"packet_digest":attempt["packet"]["digest"],
