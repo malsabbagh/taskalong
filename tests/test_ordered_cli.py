@@ -419,7 +419,41 @@ with sqlite3.connect(sys.argv[1]) as db:
         self.assertEqual(calls[0]["cwd"], calls[1]["cwd"])
         self.assertIn("return 2", calls[1]["a_before"])
         self.assertTrue((self.root / "checks.jsonl").exists())
-        self.probe.call("result", self.run_id)
+        accepted = self.probe.call("result", self.run_id)["data"]
+
+        candidate_file = Path(calls[-1]["cwd"]) / "a.py"
+        original = candidate_file.read_bytes()
+        try:
+            candidate_file.write_bytes(original + b"\n# unreviewed fixture edit\n")
+            refused = self.probe.call("result", self.run_id, ok=False)
+            self.assertEqual(refused["errors"][0]["code"], "checkpoint_stale")
+        finally:
+            candidate_file.write_bytes(original)
+
+        deadline = time.monotonic() + 5
+        while True:
+            receipt = self.probe.mutation("retire-workspace", final, "retire-accepted", ok=None)
+            if receipt["ok"]:
+                break
+            self.assertIn(receipt["errors"][0]["code"], {"supervisor_owned", "operation_in_progress"})
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.025)
+        self.assertEqual(self.probe.status(self.run_id)["steps"], final["steps"])
+        retired = self.probe.call("result", self.run_id)["data"]
+        for key in ("acceptance_digest", "execution_chain_digest", "reservation_totals", "step_results"):
+            self.assertEqual(retired[key], accepted[key])
+        self.assertTrue(retired["independently_accepted"])
+        self.assertEqual(retired["next_actions"], [])
+
+        step_receipt = self.probe.state / "blobs" / prior_step["receipt_digest"]
+        original = step_receipt.read_bytes()
+        try:
+            step_receipt.write_bytes(original + b"\ncorrupted fixture receipt\n")
+            refused = self.probe.call("result", self.run_id, ok=False)
+            self.assertEqual(refused["errors"][0]["code"], "blob_integrity")
+        finally:
+            step_receipt.write_bytes(original)
+        self.assertEqual(self.probe.invocations(), calls)
 
 
 if __name__ == "__main__":

@@ -164,7 +164,7 @@ def reserve(run, spec, *, reservation_id, kind, owner_id):
     return reservation
 
 
-def validate_chain(store, run, *, live=False, complete=False):
+def validate_chain(store, run, *, live=False, complete=False, historical=False):
     """Re-read every successful attempt and immutable receipt at each boundary."""
     spec = store.spec(run)
     validate_versioned("task-run", run, expected_version=spec["schema_version"])
@@ -239,7 +239,8 @@ def validate_chain(store, run, *, live=False, complete=False):
         refuse("step_order_invalid", "The current step is inconsistent with its completed predecessors.")
     if live and run["attempts"]:
         item = store.detail("attempts", run["attempts"][-1]["attempt_id"])
-        workspace = store.lease(run)["workspace"]
+        lease = store.retired_lease(run) if historical else store.lease(run)
+        workspace = lease["workspace"]
         from .workflow import Workflow
         manager = Workflow(store)._manager(run)
         manager.validate(workspace, run["lease_generation"])
@@ -281,7 +282,8 @@ def view(store, run):
     accepted = bool(acceptance and acceptance["decision"] == "accepted" and run["state"] == "accepted")
     if accepted:
         validate("acceptance", acceptance)
-        chain = validate_chain(store, run, live=True, complete=True)
+        retired = "taskalong:workspace_retirement" in run["extensions"]
+        chain = validate_chain(store, run, live=True, complete=True, historical=retired)
         if (acceptance["extensions"].get("taskalong:execution_chain_digest") != chain
                 or acceptance["candidate"] != run["candidate"] or acceptance["spec_digest"] != run["spec_digest"]):
             refuse("ordered_acceptance_changed", "Final acceptance does not match the actual ordered results and candidate.")
