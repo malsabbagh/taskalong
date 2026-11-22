@@ -241,6 +241,7 @@
     "docs/adr/0023-finite-manual-muse-successors.md",
     "docs/adr/0024-bounded-implementation-capture.md",
     "docs/adr/0026-configured-provider-owner.md",
+    "docs/adr/0027-execution-modes-and-session-sharing.md",
     "docs/antigravity-protocol.md",
     "docs/architecture.md",
     "docs/artifact-handoff.md",

@@ -62,6 +62,7 @@ signals only its own completion marker; no persisted identity is used for
 cleanup. Fault injection separates registration/poll errors from fork events.
 Default process tests preserve their existing strict result and serialization.
 
-Remove the separate API and observation sink to roll back; there is no persisted
-state or compatibility migration. The optional future Docker/remote backend and
-session sharing in issue #30 remain separate work.
+Remove the separate API and observation sink to roll back. The mode adds no
+persisted state or compatibility migration. See the
+[execution-mode design](0027-execution-modes-and-session-sharing.md) for optional
+Docker backends and session sharing.

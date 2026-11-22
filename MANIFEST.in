@@ -387,6 +387,7 @@ include tools/tests/test_release_version.py
 
 # Configured provider owner, adapters and offline conformance.
 include docs/adr/0026-configured-provider-owner.md
+include docs/adr/0027-execution-modes-and-session-sharing.md
 include docs/configured-providers.md
 include src/taskalong/executors/antigravity_native.py
 include src/taskalong/executors/antigravity_native_protocol.py
