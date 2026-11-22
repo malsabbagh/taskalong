@@ -143,6 +143,57 @@ class CampaignTests(unittest.TestCase):
         changed.pop(sha)
         self.assertIn('artifact_missing',self.codes(self.report(blobs=changed)))
 
+    def test_repository_inputs_match_the_generated_fixture(self):
+        source = b'def value(): return 1\n'
+        for path, content, expected in (
+            ('arithmetic.py', source, None),
+            ('arithmetic.py', b'older content\n', 'fixture_input_changed'),
+            ('missing.py', source, 'fixture_input_missing'),
+        ):
+            with self.subTest(path=path, expected=expected):
+                document = copy.deepcopy(self.manifest)
+                task = document['task_spec']
+                task['steps'][0]['inputs'].append({'path': 'arithmetic.py', 'sha256': hashlib.sha256(source).hexdigest()})
+                task['steps'][1]['inputs'].append({'path': path, 'sha256': hashlib.sha256(content).hexdigest()})
+                document['task_spec'] = seal_versioned('task-spec', task, version='2.10')
+                issues = [item for item in self.report(document)['issues'] if item['code'].startswith('fixture_input_')]
+                self.assertEqual(issues, [] if expected is None else [{
+                    'code': expected, 'artifact_digest': document['fixture']['sha256'],
+                    'route_id': 'b', 'step_id': 'edit',
+                }])
+
+    def test_fixture_reports_path_conflicts_or_unencodable_source(self):
+        for raw in (b'{"files":{"a":"plain","a/b":"nested"}}', br'{"files":{"a":"\ud800"}}'):
+            with self.subTest(raw=raw):
+                document = copy.deepcopy(self.manifest)
+                original = document['fixture']
+                replacement = reference(raw) | {'path': original['path']}
+                document['artifacts'][document['artifacts'].index(original)] = replacement
+                document['fixture'] = replacement
+                for route in document['routes']:
+                    route['context']['test_inputs_digest'] = replacement['sha256']
+                blobs = dict(self.blobs)
+                del blobs[original['sha256']]
+                blobs[replacement['sha256']] = raw
+                self.assertIn('fixture_invalid', self.codes(self.report(document, blobs=blobs)))
+
+    def test_hash_matching_handoff_bytes_still_need_valid_text(self):
+        for raw, valid in ((b'\xff', False), (b'note\x00', False), ('Public note — done.\n'.encode(), True)):
+            with self.subTest(raw=raw):
+                document = copy.deepcopy(self.manifest)
+                original = document['handoff_artifact']
+                replacement = reference(raw, 'text/plain') | {'path': original['path']}
+                document['artifacts'][document['artifacts'].index(original)] = replacement
+                document['handoff_artifact'] = replacement
+                blobs = dict(self.blobs)
+                del blobs[original['sha256']]
+                blobs[replacement['sha256']] = raw
+                report = self.report(document, blobs=blobs)
+                issue = {'code': 'handoff_artifact_invalid_text', 'artifact_digest': replacement['sha256']}
+                self.assertEqual(issue in report['issues'], not valid)
+                self.assertNotIn('artifact_tampered', self.codes(report))
+                self.assertEqual(report['controller_submissions'], 0)
+
     def test_invalid_budget_types_and_ceilings_refuse(self):
         for key in self.manifest['limits']:
             for value in [None,True,0,-1,1.5,2**53]:

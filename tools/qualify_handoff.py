@@ -152,6 +152,8 @@ def validate_manifest(document):
 
 def prepare(document, *, blobs, now, approved_destinations=frozenset(), trust=None):
     """Assess explicit immutable snapshots. This result can never start work."""
+    from taskalong.errors import TaskAlongError
+
     value = validate_manifest(document)
     (_, Binding, Installation, Provider, Receipt, Trust, Evidence, evaluate, canonical, loads, sensitive) = _models()
     when = _time(now, 'now')
@@ -162,12 +164,13 @@ def prepare(document, *, blobs, now, approved_destinations=frozenset(), trust=No
     declared = {r['sha256']: r for r in value['artifacts']}
     _require(set(blobs) <= set(declared), 'blobs.undeclared')
     issues, checked = [], {}
-    def issue(code, *, route=None, mode=None, artifact=None, receipt=None):
+    def issue(code, *, route=None, mode=None, artifact=None, receipt=None, step=None):
         item = {'code': code}
         if route is not None: item['route_id'] = route
         if mode is not None: item['mode'] = mode
         if artifact is not None: item['artifact_digest'] = artifact
         if receipt is not None: item['receipt_digest'] = receipt
+        if step is not None: item['step_id'] = step
         if item not in issues: issues.append(item)
     for sha, ref in declared.items():
         raw = blobs.get(sha)
@@ -176,28 +179,55 @@ def prepare(document, *, blobs, now, approved_destinations=frozenset(), trust=No
         elif type(raw) is not bytes or len(raw) != ref['size_bytes'] or len(raw) > MAX_ARTIFACT or hashlib.sha256(raw).hexdigest() != sha:
             issue('artifact_tampered', artifact=sha)
         else: checked[sha] = raw
+    task = value['task_spec']
     fixture = checked.get(value['fixture']['sha256'])
     if fixture is not None:
         try:
             f = loads(fixture); _closed(f, 'files', 'fixture.content')
             _require(type(f['files']) is dict and 1 <= len(f['files']) <= 16, 'fixture.files')
+            from taskalong.artifact_handoff import disjoint
             from taskalong.paths import safe_relative
+            disjoint(list(f['files']))
+            fixture_digests = {}
             for path, text in f['files'].items():
-                safe_relative(path); _require(type(text) is str and len(text.encode()) <= 65536, 'fixture.files')
+                safe_relative(path)
+                _require(type(text) is str, 'fixture.files')
+                content = text.encode('utf-8', 'strict')
+                _require(len(content) <= 65536, 'fixture.files')
+                fixture_digests[path] = hashlib.sha256(content).hexdigest()
             sensitive(f)
-        except Exception:
+        except (CampaignError, TaskAlongError, UnicodeError):
             issue('fixture_invalid')
+        else:
+            for step in task['steps']:
+                for entry in step['inputs']:
+                    if 'path' not in entry:
+                        continue
+                    sha = fixture_digests.get(entry['path'])
+                    if sha != entry['sha256']:
+                        issue('fixture_input_missing' if sha is None else 'fixture_input_changed',
+                              route=step['route_id'], step=step['step_id'],
+                              artifact=value['fixture']['sha256'])
     handoff = value['handoff_artifact']
     if handoff is None: issue('producer_artifact_missing')
     elif handoff['size_bytes'] > value['limits']['artifact_bytes']:
         issue('handoff_artifact_too_large')
-    task = value['task_spec']; producer, consumer = task['steps']
+    producer, consumer = task['steps']
     selectors = [x for x in consumer['inputs'] if x.get('kind') == 'step_output']
     _require(len(producer['outputs']) == 1 and len(selectors) == 1, 'task_spec.handoff')
     output, selector = producer['outputs'][0], selectors[0]
     _require(selector['from_step_id'] == producer['step_id'] and selector['output_id'] == output['output_id'] and output['artifact_kind'] == 'utf8_text', 'task_spec.handoff')
     if handoff is not None and (handoff['size_bytes'] > output['max_bytes'] or handoff['size_bytes'] > selector['max_bytes']):
         issue('handoff_artifact_mismatch')
+    if handoff is not None and handoff['sha256'] in checked:
+        try:
+            text = checked[handoff['sha256']].decode('utf-8', 'strict')
+            _require('\0' not in text, 'handoff_artifact.content')
+            sensitive(text)
+        except (CampaignError, UnicodeDecodeError):
+            issue('handoff_artifact_invalid_text', artifact=handoff['sha256'])
+        except TaskAlongError:
+            issue('handoff_artifact_content_rejected', artifact=handoff['sha256'])
     route_refs = {r['route_id']: r for r in task['execution']['routes']}
     reports = []
     evidence = Evidence.from_blobs({sha: raw for sha, raw in checked.items() if raw})
