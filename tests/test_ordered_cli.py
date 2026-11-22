@@ -419,7 +419,23 @@ with sqlite3.connect(sys.argv[1]) as db:
         self.assertEqual(calls[0]["cwd"], calls[1]["cwd"])
         self.assertIn("return 2", calls[1]["a_before"])
         self.assertTrue((self.root / "checks.jsonl").exists())
-        self.probe.call("result", self.run_id)
+        accepted = self.probe.call("result", self.run_id)["data"]
+
+        deadline = time.monotonic() + 5
+        while True:
+            receipt = self.probe.mutation("retire-workspace", final, "retire-accepted", ok=None)
+            if receipt["ok"]:
+                break
+            self.assertIn(receipt["errors"][0]["code"], {"supervisor_owned", "operation_in_progress"})
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.025)
+        self.assertEqual(self.probe.status(self.run_id)["steps"], final["steps"])
+        retired = self.probe.call("result", self.run_id)["data"]
+        for key in ("acceptance_digest", "execution_chain_digest", "reservation_totals", "step_results"):
+            self.assertEqual(retired[key], accepted[key])
+        self.assertTrue(retired["independently_accepted"])
+        self.assertEqual(retired["next_actions"], [])
+        self.assertEqual(self.probe.invocations(), calls)
 
 
 if __name__ == "__main__":

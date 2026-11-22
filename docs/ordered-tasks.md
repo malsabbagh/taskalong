@@ -62,6 +62,9 @@ usage, execution-chain digest, acceptance digest and stop reason. Success requir
 `state: accepted`, `outcome: accepted` and `independently_accepted: true` together.
 A failed final check remains a failure; completing every worker alone is not
 acceptance. No branch push or PR transport is available for this task family.
+After `retire-workspace` releases an accepted run's repository lease, `status`
+and `result` still verify the retained candidate and receipts against the
+historical workspace. Reading them grants no execution or verification authority.
 
 A settled failed step reports `next_actions: ["retry"]`. Use `retry RUN_ID
 --step-id B --key NEW_KEY --expected-revision CURRENT_REVISION`. It retains A,
