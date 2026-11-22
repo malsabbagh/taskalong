@@ -6,6 +6,7 @@ from pathlib import Path
 import hashlib
 import json
 import platform
+import subprocess
 import sys
 from importlib import resources
 from unittest.mock import patch
@@ -259,6 +260,32 @@ class ExecutionAdmissionTests(BindingFixture, unittest.TestCase):
         self.assertEqual(database_state(self.service._store.db), before)
         launch.assert_not_called()
         reconcile.assert_not_called()
+
+    def test_cli_exposes_offline_capability_assessment_without_dispatch(self):
+        from taskalong.maintenance import database_state
+
+        run = self.configure_and_submit()
+        before = database_state(self.service._store.db)
+        command = [sys.executable, "-m", "taskalong", "--state-dir", str(self.state),
+                   "capabilities", run["run_id"], "--json"]
+
+        for mode, supported in (("start", True), ("native_resume", False)):
+            with self.subTest(mode=mode):
+                result = subprocess.run([*command, "--mode", mode], capture_output=True,
+                                        text=True, check=True, timeout=15)
+                report = json.loads(result.stdout)["data"]
+                self.assertEqual(report["run_id"], run["run_id"])
+                self.assertEqual(report["mode"], mode)
+                self.assertIs(report["requirements_satisfied"], supported)
+                self.assertFalse(report["production_dispatch_allowed"])
+                if not supported:
+                    self.assertIn("execution_mode_unsupported", report["reason_codes"])
+        result = subprocess.run([*command, "--mode", "unknown"], capture_output=True,
+                                text=True, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["errors"][0]["code"], "execution_mode_unsupported")
+        self.assertEqual(database_state(self.service._store.db), before)
+        self.assertEqual(self.invocations(), [])
 
     def test_revocation_at_owned_gate_never_executes_target(self):
         from taskalong.executors.codex_cli import CodexCLI

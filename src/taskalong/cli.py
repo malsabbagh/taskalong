@@ -69,6 +69,9 @@ def parser():
         if name == "cancel": p.add_argument("--wait", type=int, default=0)
     for name in ("status", "result", "publish-intent"):
         p = command(name); p.add_argument("run_id")
+    p = command("capabilities"); p.add_argument("run_id")
+    p.add_argument("--mode", default="start",
+                   help="Operation to assess: start, restart, native_resume, observe, cancel, or result.")
     p = command("events"); p.add_argument("run_id"); p.add_argument("--after-seq", type=int, default=0); p.add_argument("--jsonl", action="store_true")
     p = command("export"); p.add_argument("run_id"); p.add_argument("--output", required=True)
     p = command("doctor"); p.add_argument("--profile-id"); p.add_argument("--workspace"); p.add_argument("--git-common-dir")
@@ -176,6 +179,7 @@ def main(argv=None):
             elif cmd == "verify": result = service.verify(args.run_id, **mutation)
             elif cmd == "status": result = service.inspect(args.run_id)
             elif cmd == "result": result = service.result(args.run_id)
+            elif cmd == "capabilities": result = service.capabilities(args.run_id, mode=args.mode)
             elif cmd == "publish-intent": result = service.publish_intent(args.run_id)
             elif cmd == "publish": result = service.publish(args.run_id, intent_digest=args.intent_digest, **mutation)
             elif cmd == "export": result = service.export(args.run_id, output=args.output)
