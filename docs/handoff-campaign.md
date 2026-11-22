@@ -58,6 +58,11 @@ and context digests, and start/observe/cancel/result receipts. Artifact referenc
 pin local relative paths, hashes, byte sizes, media types and public classification.
 `fixture`, `handoff_artifact`, finite `limits` and the closed `cleanup` policy
 complete the wrapper. Unknown fields and native/cross-harness resume modes refuse.
+The dry-run checks that every declared repository-file input has matching UTF-8
+bytes in the generated fixture and that fixture files can coexist at their paths.
+The proposed text handoff must be valid UTF-8 without NUL bytes and pass the same
+content screen as an M11 text output. Diagnostics identify the affected fixture,
+step or artifact by its declared identity.
 
 The manifest cannot grant its own trust or destination permission. An operator
 can provide destination IDs independently with repeated `--allow-destination ID`
