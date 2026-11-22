@@ -37,6 +37,27 @@ profiles are test boundaries for external fixtures, not a live-execution bypass.
 No other installed CLI is automatically admitted and no provider/model fallback
 is selected. macOS results do not qualify Linux or a real model/backend.
 
+### Executor support
+
+| Route | Synthetic core | Configured local CLI | Production qualification |
+| --- | --- | --- | --- |
+| Codex | Single-step, ordered tasks and synthetic handoff | Experimental proposals | Pending exact-route qualification |
+| Claude Code with Anthropic | Single-step and synthetic handoff | Experimental proposals | Pending exact-route qualification |
+| Claude Code with Ollama | Local and cloud fixture profiles | Experimental proposals with selected existing Ollama route | Pending exact-route qualification |
+| Cursor | Single-step fixture | No configured adapter | Pending configured adapter and qualification |
+| Antigravity | Single-step fixture | Experimental proposals | Pending exact-route qualification |
+| Muse | Offline capture and lifecycle | Experimental proposals on macOS with a bounded disposable coding trial | Pending exact-route qualification |
+
+`taskalong providers --json` lists the configured experimental routes. For a
+submitted core task, `taskalong capabilities RUN_ID --mode start --json` reads the
+existing exact-mode assessment. Modes include `observe`, `cancel`, `result`,
+`restart` and `native_resume`. Check the returned `requirements_satisfied`,
+`reason_codes` and `production_dispatch_allowed` fields for that run and mode.
+The assessment confers no dispatch authority. Fixture, installed, and
+actual-provider evidence are tracked in the [qualification guide](docs/qualification.md).
+Actual two-harness handoff and the bug-to-reviewed-PR trial remain in
+[issue #12](https://github.com/malsabbagh/taskalong/issues/12).
+
 ## Run a configured Muse provider
 
 Create a local JSON config containing the direct native executable path. Muse keeps
