@@ -314,6 +314,12 @@ class RunService:
             "canonical_packet_digest":packet_digest, "evidence_artifacts": [unique[key] for key in sorted(unique)],
             "production_dispatch_allowed":False}, version="2.2")
 
+    def handoff_proof(self, run_id, *, spec_digest, artifact_sha256=None):
+        """Read back a stopped handoff with the expected task and artifact identities."""
+        from .artifact_handoff import handoff_proof
+        return handoff_proof(self._store, self._store.run(run_id), spec_digest=spec_digest,
+                             artifact_sha256=artifact_sha256)
+
     def events(self, run_id, *, after_seq=0, limit=1000):
         return self._store.events(run_id, after_seq, limit)
 

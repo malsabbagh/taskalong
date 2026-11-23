@@ -4,7 +4,9 @@ The providers are original external fixtures. Store transactions, route
 admission, process ownership, immutable resolution and acceptance are real.
 """
 import copy
+from contextlib import redirect_stdout
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -255,6 +257,9 @@ class SharedHandoffContract:
         self.assertIsNone(first["candidate"])
         self.assertIsNone(first["acceptance_id"])
         self.assertEqual(len(self.invocations()),1)
+        with self.assertRaises(TaskAlongError) as incomplete:
+            self.service.handoff_proof(first["run_id"], spec_digest=task["digest"])
+        self.assertEqual(incomplete.exception.code, "handoff_proof_incomplete")
         self.advance(first)
         final = self.wait(first["run_id"],timeout=35)
         self.assertEqual([s["status"] for s in final["steps"]],["completed","completed"],final)
@@ -287,6 +292,33 @@ class SharedHandoffContract:
             self.assertTrue(any(e["type"] == "command" and e["result"] == "passed"
                 for e in self.export(final["run_id"])["evidence"]))
 
+        from taskalong.cli import main
+
+        artifact_sha = hashlib.sha256(PAYLOAD).hexdigest()
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = main(["--state-dir", str(self.state), "handoff-proof", final["run_id"],
+                              "--spec-digest", task["digest"], "--artifact-sha256", artifact_sha, "--json"])
+        self.assertEqual(exit_code, 0, stdout.getvalue())
+        proof = json.loads(stdout.getvalue())["data"]
+        self.assertEqual(proof["kind"], "handoff_proof")
+        self.assertEqual(proof["digest"], digest(proof))
+        self.assertEqual(proof["task_spec_digest"], task["digest"])
+        self.assertEqual(proof["artifact"], {"sha256": artifact_sha, "bytes": len(PAYLOAD), "media_type": "text/plain"})
+        self.assertEqual(proof["producer"]["output_manifest_sha256"], final["steps"][0]["output_manifest_blob_sha256"])
+        self.assertEqual(proof["consumer"]["resolved_inputs_sha256"], attempts[1]["resolved_inputs_blob_sha256"])
+        self.assertEqual(proof["execution_chain_digest"], result["execution_chain_digest"])
+        self.assertEqual(proof["independently_accepted"], result["independently_accepted"])
+        self.assertEqual(proof["acceptance_digest"], result["acceptance_digest"])
+        self.assertEqual(proof["qualification"], "synthetic")
+        self.assertFalse(proof["production_dispatch_allowed"])
+        self.assertEqual(self.service.inspect(final["run_id"]), final)
+        for spec_digest, expected, code in (("0" * 64, artifact_sha, "handoff_proof_task_mismatch"),
+                                            (task["digest"], "0" * 64, "handoff_proof_artifact_mismatch")):
+            with self.subTest(code=code), self.assertRaises(TaskAlongError) as refused:
+                self.service.handoff_proof(final["run_id"], spec_digest=spec_digest, artifact_sha256=expected)
+            self.assertEqual(refused.exception.code, code)
+
     def test_empty_declared_text_is_present_and_consumed(self):
         self.set_driver_mode(self.direction[0],"empty")
         first,_ = self.first(self.handoff_task(empty=True))
@@ -294,6 +326,32 @@ class SharedHandoffContract:
         final = self.wait(first["run_id"],timeout=35)
         self.assertEqual([s["status"] for s in final["steps"]],["completed","completed"],final)
         self.assertEqual(self.invocations()[1]["staged"],[{"sha256":hashlib.sha256(b"").hexdigest(),"bytes":0}])
+
+    def test_wire_artifact_mismatch_blocks_before_consumer_dispatch(self):
+        from taskalong import artifact_handoff, workflow
+        from taskalong._supervisor import run_guard
+
+        first, _ = self.first()
+        with patch.object(self.service._workflow, "_launch_supervisor"):
+            prepared = self.advance(first)
+        original = artifact_handoff._wire_handoff
+        calls = 0
+
+        def changed_on_compile(canonical, attempt, resolution):
+            nonlocal calls
+            metadata = original(canonical, attempt, resolution)
+            if attempt["attempt_id"] == prepared["active_attempt_id"]:
+                calls += 1
+                if calls == 1:
+                    metadata["staged_inputs"][0]["sha256"] = "0" * 64
+            return metadata
+
+        with patch.object(artifact_handoff, "_wire_handoff", side_effect=changed_on_compile):
+            with run_guard(self.state, first["run_id"]):
+                workflow.drive_run(self.state, first["run_id"], prepared["active_attempt_id"])
+        self.assertGreaterEqual(calls, 2)
+        stopped = self.assert_no_target(first["run_id"])
+        self.assertIn("artifact_packet_changed", {blocker["code"] for blocker in stopped["blockers"]})
 
     def track_declared_output_in_base(self):
         note = self.repo / "handoff" / "note.txt"
