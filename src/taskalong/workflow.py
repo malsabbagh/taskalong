@@ -283,12 +283,16 @@ class Workflow:
             return self.store.retire_lease(run_id, operation_key=operation_key,
                                           expected_revision=expected_revision, workspace_subject=subject)
 
-    def start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start", expected_step_id=None, predecessor_digest=None):
+    def start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start",
+              expected_step_id=None, predecessor_digest=None, expected_artifact_sha256=None):
         self._refuse_trial_run(run_id)
         with self.store.guard(run_id, "dispatch"):
-            return self._start(run_id, operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id, mode=mode, expected_step_id=expected_step_id, predecessor_digest=predecessor_digest)
+            return self._start(run_id, operation_key=operation_key, expected_revision=expected_revision,
+                               authority_id=authority_id, mode=mode, expected_step_id=expected_step_id,
+                               predecessor_digest=predecessor_digest, expected_artifact_sha256=expected_artifact_sha256)
 
-    def _start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start", expected_step_id=None, predecessor_digest=None):
+    def _start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start",
+               expected_step_id=None, predecessor_digest=None, expected_artifact_sha256=None):
         command = mode if mode in {"advance", "retry"} else "start" if mode == "start" else "resume"
         if mode == "retry":
             retained = self.store.run(run_id)
@@ -297,6 +301,12 @@ class Workflow:
         request = {"mode": mode, "authority_id": authority_id}
         if mode in {"advance", "retry"}:
             request.update(expected_step_id=expected_step_id, predecessor_digest=predecessor_digest)
+        if expected_artifact_sha256 is not None:
+            from .artifact_handoff import require_artifact_sha256
+            require_artifact_sha256(expected_artifact_sha256)
+            if mode != "advance":
+                raise TaskAlongError("handoff_pin_unsupported", "Only handoff advance accepts an expected artifact.", exit_code=3)
+            request["expected_artifact_sha256"] = expected_artifact_sha256
         prior = self.store.operation(command, run_id, operation_key, request)
         if prior:
             return prior
@@ -304,6 +314,8 @@ class Workflow:
         if run["revision"] != expected_revision:
             raise TaskAlongError("revision_conflict", "Inspect the current revision before starting.", exit_code=4)
         spec = self.store.spec(run)
+        if expected_artifact_sha256 is not None and spec["schema_version"] != "2.10":
+            raise TaskAlongError("handoff_pin_unsupported", "The ordered task must have a handoff artifact.", exit_code=3)
         if spec["schema_version"] == "2.10" and run["cancellation_requested"]:
             raise TaskAlongError("cancel_pending", "Cancellation prevents another handoff attempt.", exit_code=6)
         if spec["schema_version"] in {"2.7", "2.10"}:
@@ -352,6 +364,9 @@ class Workflow:
                 if expected_step_id != spec["steps"][target_index]["step_id"]:
                     raise TaskAlongError("step_identity_mismatch", "The requested step is not the valid next ordered step.", exit_code=3)
                 inputs(spec, self.store.lease(run)["workspace"]["path"], target_index)
+                if expected_artifact_sha256 is not None:
+                    from .artifact_handoff import require_expected_artifact
+                    require_expected_artifact(self.store, run, spec, target_index, expected_artifact_sha256)
         if mode != "start" and not ordered:
             if mode not in {"native", "restart"} or run["state"] != "blocked" or run["active_attempt_id"] is not None or run["pending_effect_ids"]:
                 raise TaskAlongError("resume_not_reconciled", "Resume needs a stopped, reconciled nonterminal run and an explicit mode.", exit_code=3)

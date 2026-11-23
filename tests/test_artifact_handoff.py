@@ -186,6 +186,19 @@ class HandoffFixture(ClaudeBindingFixture):
         return self.service.advance(first["run_id"],expected_step_id="B",predecessor_digest=first["steps"][0]["receipt_digest"],
             operation_key=key,expected_revision=first["revision"])
 
+    def rehearse(self, run, spec_digest, phase, *, key, authority, artifact_sha256=None):
+        from taskalong.cli import main
+
+        args = ["--state-dir", str(self.state), "handoff-rehearse", run["run_id"], "--phase", phase,
+                "--spec-digest", spec_digest, "--key", key, "--authority-id", authority,
+                "--expected-revision", str(run["revision"]), "--json"]
+        if artifact_sha256 is not None:
+            args.extend(["--artifact-sha256", artifact_sha256])
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = main(args)
+        return status, json.loads(output.getvalue())
+
 
 class SharedHandoffContract:
     def assert_no_target(self, run_id):
@@ -253,14 +266,45 @@ class SharedHandoffContract:
     def test_two_driver_handoff_binds_exact_bytes_and_fresh_sessions(self):
         task = self.handoff_task()
         immutable = canonical_bytes(task)
-        first,_ = self.first(task)
+        created, _ = self.submit(task)
+        authority = self.service._store.authority(
+            created, {"execute", "verify", "commit_candidate"}, task["digest"])["authority_id"]
+        artifact_sha = hashlib.sha256(PAYLOAD).hexdigest()
+        status, response = self.rehearse(created, task["digest"], "consumer", authority=authority,
+                                        key="campaign-consumer", artifact_sha256=artifact_sha)
+        self.assertEqual(status, 3, response)
+        self.assertEqual(response["errors"][0]["code"], "advance_not_ready")
+        status, response = self.rehearse(created, task["digest"], "producer",
+                                        authority=authority, key="campaign-producer")
+        self.assertEqual(status, 0, response)
+        first = self.wait(created["run_id"], predicate=lambda run: not run["active_attempt_id"]
+                          and run["state"] in {"ready", "blocked", "cancelled"})
+        self.assertEqual(first["steps"][0]["status"], "completed", first)
         self.assertIsNone(first["candidate"])
         self.assertIsNone(first["acceptance_id"])
         self.assertEqual(len(self.invocations()),1)
         with self.assertRaises(TaskAlongError) as incomplete:
             self.service.handoff_proof(first["run_id"], spec_digest=task["digest"])
         self.assertEqual(incomplete.exception.code, "handoff_proof_incomplete")
-        self.advance(first)
+        status, response = self.rehearse(first, task["digest"], "consumer", authority=authority,
+                                        key="campaign-consumer", artifact_sha256="0" * 64)
+        self.assertEqual(status, 3, response)
+        self.assertEqual(response["errors"][0]["code"], "handoff_proof_artifact_mismatch")
+        self.assertEqual(self.assert_no_target(first["run_id"])["revision"], first["revision"])
+        verify_only = self.service.authorize(first["run_id"], decision_digest=task["digest"], scope=["verify"])
+        status, response = self.rehearse(first, task["digest"], "consumer", authority=verify_only["authority_id"],
+                                        key="campaign-consumer", artifact_sha256=artifact_sha)
+        self.assertEqual(status, 3, response)
+        self.assertEqual(response["errors"][0]["code"], "authority_missing")
+        consumed = self.rehearse(first, task["digest"], "consumer", authority=authority,
+                                key="campaign-consumer", artifact_sha256=artifact_sha)
+        self.assertEqual(consumed[0], 0, consumed[1])
+        replay = self.rehearse(first, task["digest"], "consumer", authority=authority,
+                              key="campaign-consumer", artifact_sha256=artifact_sha)
+        self.assertEqual(replay, consumed)
+        conflict = self.rehearse(first, task["digest"], "consumer", authority=authority,
+                                key="campaign-consumer", artifact_sha256="0" * 64)
+        self.assertEqual(conflict[1]["errors"][0]["code"], "operation_key_conflict")
         final = self.wait(first["run_id"],timeout=35)
         self.assertEqual([s["status"] for s in final["steps"]],["completed","completed"],final)
         self.assertEqual(len(final["attempts"]),2)
@@ -294,7 +338,6 @@ class SharedHandoffContract:
 
         from taskalong.cli import main
 
-        artifact_sha = hashlib.sha256(PAYLOAD).hexdigest()
         stdout = io.StringIO()
         with redirect_stdout(stdout):
             exit_code = main(["--state-dir", str(self.state), "handoff-proof", final["run_id"],
@@ -318,6 +361,20 @@ class SharedHandoffContract:
             with self.subTest(code=code), self.assertRaises(TaskAlongError) as refused:
                 self.service.handoff_proof(final["run_id"], spec_digest=spec_digest, artifact_sha256=expected)
             self.assertEqual(refused.exception.code, code)
+
+    def test_rehearsal_refuses_a_task_without_a_text_transfer_before_starting(self):
+        task = self.handoff_task()
+        task["steps"][1]["inputs"] = []
+        task = seal_versioned("task-spec", task, version="2.10")
+        created, _ = self.submit(task)
+        authority = self.service._store.authority(
+            created, {"execute", "verify", "commit_candidate"}, task["digest"])["authority_id"]
+        status, response = self.rehearse(created, task["digest"], "producer",
+                                        authority=authority, key="campaign-producer")
+        self.assertEqual(status, 3, response)
+        self.assertEqual(response["errors"][0]["code"], "handoff_proof_unsupported")
+        self.assertEqual(self.service.inspect(created["run_id"]), created)
+        self.assertEqual(self.starts(), [])
 
     def test_empty_declared_text_is_present_and_consumed(self):
         self.set_driver_mode(self.direction[0],"empty")
@@ -352,6 +409,13 @@ class SharedHandoffContract:
         self.assertGreaterEqual(calls, 2)
         stopped = self.assert_no_target(first["run_id"])
         self.assertIn("artifact_packet_changed", {blocker["code"] for blocker in stopped["blockers"]})
+
+    def test_missing_dispatch_admission_has_a_typed_packet_error(self):
+        from taskalong.artifact_handoff import validate_packet
+
+        with self.assertRaises(TaskAlongError) as refusal:
+            validate_packet(self.service._store, {}, {})
+        self.assertEqual(refusal.exception.code, "artifact_packet_changed")
 
     def track_declared_output_in_base(self):
         note = self.repo / "handoff" / "note.txt"

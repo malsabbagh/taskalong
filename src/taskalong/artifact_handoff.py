@@ -10,6 +10,7 @@ import copy
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+import re
 from typing import ClassVar
 
 from .contracts import JsonDocument
@@ -322,6 +323,30 @@ def producer(store, run, index):
     return receipt, manifest
 
 
+def require_artifact_sha256(value):
+    if type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise TaskAlongError("handoff_pin_invalid", "Select a lowercase SHA-256 for the expected artifact.")
+
+
+def _text_selector(spec, index):
+    selectors = [item for item in spec["steps"][index]["inputs"] if "from_step_id" in item]
+    if len(selectors) != 1 or selectors[0]["expected_kind"] != "utf8_text":
+        refuse("handoff_proof_unsupported")
+    return selectors[0]
+
+
+def require_expected_artifact(store, run, spec, index, expected_sha256):
+    """Check the exact declared import before the consumer gets a reservation."""
+    selector = _text_selector(spec, index)
+    source_index = next(i for i, step in enumerate(spec["steps"][:index])
+                        if step["step_id"] == selector["from_step_id"])
+    _, manifest = producer(store, run, source_index)
+    artifact = next(output["artifact"] for output in manifest["outputs"]
+                    if output["output_id"] == selector["output_id"])
+    if artifact["sha256"] != expected_sha256:
+        refuse("handoff_proof_artifact_mismatch")
+
+
 def expected_manifest(workspace, before, files, store):
     from .workspace import _tree
     baseline = _tree(workspace["path"], workspace["base_commit"])
@@ -617,8 +642,8 @@ def compile_packet(store,run,attempt,fields,admission):
 
 
 def validate_packet(store,run,attempt,*,before_spawn=False):
-    admission = attempt["dispatch_admission"]
-    if digest(admission) != admission["digest"]:
+    admission = attempt.get("dispatch_admission")
+    if type(admission) is not dict or digest(admission) != admission.get("digest"):
         refuse("artifact_packet_changed")
     mapping=validate_versioned("packet-projection",attempt["packet_projection"],expected_version=VERSION)
     canonical=validate_versioned("worker-packet",attempt["canonical_packet"],expected_version=VERSION)
@@ -678,10 +703,7 @@ def validate_worker(store,run,attempt,worker,*,packet=None):
     return worker
 
 
-def handoff_proof(store, run, *, spec_digest, artifact_sha256=None):
-    """Revalidate a two-step text transfer against the trusted local store."""
-    from .steps import view
-
+def campaign_spec(store, run, spec_digest):
     if spec_digest != run["spec_digest"]:
         refuse("handoff_proof_task_mismatch")
     if run["schema_version"] != VERSION:
@@ -690,6 +712,26 @@ def handoff_proof(store, run, *, spec_digest, artifact_sha256=None):
     if (len(spec["steps"]) != 2 or len(spec["execution"]["routes"]) != 2
             or spec["steps"][0]["route_id"] == spec["steps"][1]["route_id"]):
         refuse("handoff_proof_unsupported")
+    _text_selector(spec, 1)
+    return spec
+
+
+def require_distinct_campaign_harnesses(store, spec):
+    from .admission import _registration
+
+    # The two admitted 2.10 projections represent different fixture harnesses.
+    # Registrations are immutable; current authority and route trust are checked by Workflow.
+    projections = {_registration(store, item["binding_digest"])["projection"]
+                   for item in spec["execution"]["routes"]}
+    if projections != {"claude-print-fixture/1", "codex-v1-fixture/1"}:
+        refuse("handoff_proof_unsupported")
+
+
+def handoff_proof(store, run, *, spec_digest, artifact_sha256=None):
+    """Revalidate a two-step text transfer against the trusted local store."""
+    from .steps import view
+
+    campaign_spec(store, run, spec_digest)
     if (run["active_attempt_id"] or run["pending_effect_ids"]
             or any(step["status"] != "completed" for step in run["steps"])):
         refuse("handoff_proof_incomplete")
