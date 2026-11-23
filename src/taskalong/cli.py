@@ -69,6 +69,9 @@ def parser():
         if name == "cancel": p.add_argument("--wait", type=int, default=0)
     for name in ("status", "result", "publish-intent"):
         p = command(name); p.add_argument("run_id")
+    p = command("handoff-proof"); p.add_argument("run_id")
+    p.add_argument("--spec-digest", required=True)
+    p.add_argument("--artifact-sha256")
     p = command("capabilities"); p.add_argument("run_id")
     p.add_argument("--mode", default="start",
                    help="Operation to assess: start, restart, native_resume, observe, cancel, or result.")
@@ -178,6 +181,9 @@ def main(argv=None):
             elif cmd == "reconcile": result = service.reconcile(args.run_id, **mutation)
             elif cmd == "verify": result = service.verify(args.run_id, **mutation)
             elif cmd == "status": result = service.inspect(args.run_id)
+            elif cmd == "handoff-proof":
+                result = service.handoff_proof(args.run_id, spec_digest=args.spec_digest,
+                                               artifact_sha256=args.artifact_sha256)
             elif cmd == "result": result = service.result(args.run_id)
             elif cmd == "capabilities": result = service.capabilities(args.run_id, mode=args.mode)
             elif cmd == "publish-intent": result = service.publish_intent(args.run_id)

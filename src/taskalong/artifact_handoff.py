@@ -572,6 +572,24 @@ def validate_import(store,run,attempt,*,staged=False):
     return resolution,journal
 
 
+def _wire_handoff(canonical, attempt, resolution):
+    scratch = attempt["workspace"]["scratch_relative"]
+    staged = []
+    for entry in resolution["entries"]:
+        path = scratch + entry["staged_relative_path"]
+        artifact = entry["output"]["artifact"]
+        payloads = []
+        for index, payload in enumerate(entry["output"]["payloads"]):
+            reference = payload["artifact"]
+            payloads.append({"path": f"{path}-payload-{index}", "sha256": reference["sha256"],
+                             "bytes": reference["bytes"]})
+        staged.append({"path": path, "sha256": artifact["sha256"], "bytes": artifact["bytes"],
+                       "payloads": payloads})
+    return {"canonical_packet_digest": canonical["digest"],
+            "resolved_inputs_blob_sha256": attempt["resolved_inputs_blob_sha256"],
+            "import_journal_blob_sha256": attempt["import_journal_blob_sha256"], "staged_inputs": staged}
+
+
 def compile_packet(store,run,attempt,fields,admission):
     from .admission import worker_contract
     spec=store.spec(run);index=attempt["step_index"];r=route(spec,index)
@@ -586,11 +604,7 @@ def compile_packet(store,run,attempt,fields,admission):
     _,configuration,_=admit(store,spec,index)
     contract,provider=worker_contract(store,view,configuration)
     wire_fields=copy.deepcopy(fields)
-    wire_fields["extensions"]["taskalong:handoff"]={"canonical_packet_digest":canonical["digest"],
-        "resolved_inputs_blob_sha256":attempt["resolved_inputs_blob_sha256"],"import_journal_blob_sha256":attempt["import_journal_blob_sha256"],
-        "staged_inputs":[{"path":attempt["workspace"]["scratch_relative"]+e["staged_relative_path"],"sha256":e["output"]["artifact"]["sha256"],
-            "bytes":e["output"]["artifact"]["bytes"],"payloads":[{"path":attempt["workspace"]["scratch_relative"]+e["staged_relative_path"]+"-payload-"+str(pi),
-                "sha256":payload["artifact"]["sha256"],"bytes":payload["artifact"]["bytes"]} for pi,payload in enumerate(e["output"]["payloads"])]} for e in resolution["entries"]]}
+    wire_fields["extensions"]["taskalong:handoff"] = _wire_handoff(canonical, attempt, resolution)
     if route_version=="2.2":
         wire_fields["bindings"]["runtime_profile_digest"]=configuration["digest"]
     route_packet,wire,route_projection=contract.compile_packet(wire_fields,admission)
@@ -603,6 +617,9 @@ def compile_packet(store,run,attempt,fields,admission):
 
 
 def validate_packet(store,run,attempt,*,before_spawn=False):
+    admission = attempt["dispatch_admission"]
+    if digest(admission) != admission["digest"]:
+        refuse("artifact_packet_changed")
     mapping=validate_versioned("packet-projection",attempt["packet_projection"],expected_version=VERSION)
     canonical=validate_versioned("worker-packet",attempt["canonical_packet"],expected_version=VERSION)
     packet=validate_versioned("worker-packet",attempt["packet"],expected_version=mapping["wire_version"])
@@ -618,8 +635,8 @@ def validate_packet(store,run,attempt,*,before_spawn=False):
         if spawned is None or not attempt.get("process_receipt"):
             refuse("artifact_proof_forged")
     if (route_mapping["canonical_packet_digest"]!=route_packet["digest"] or route_mapping["wire_packet_digest"]!=packet["digest"]
-            or route_mapping["admission_digest"]!=attempt["dispatch_admission"]["digest"]
-            or route_mapping["projection_digest"]!=attempt["dispatch_admission"]["projection"]["digest"]
+            or route_mapping["admission_digest"]!=admission["digest"]
+            or route_mapping["projection_digest"]!=admission["projection"]["digest"]
             or any(canonical[k]!=packet[k] for k in ("run_id","attempt_id","spec_digest","packet_id","goal","non_goals","scope","checks","remaining_budget","qualification"))
             or any(canonical["bindings"][k]!=packet["bindings"][k] for k in canonical["bindings"])
             or any(canonical[k]!=v for k,v in subject(run,attempt).items() if k!="lease_generation")
@@ -643,10 +660,10 @@ def validate_packet(store,run,attempt,*,before_spawn=False):
         "wire_packet_digest":packet["digest"],"binding_digest":route(store.spec(run),attempt["step_index"])["binding_digest"],
         "configuration_digest":route(store.spec(run),attempt["step_index"])["configuration_digest"],
         "resolved_inputs_blob_sha256":attempt["resolved_inputs_blob_sha256"],"import_journal_blob_sha256":attempt["import_journal_blob_sha256"],
-        "admission_digest":attempt["dispatch_admission"]["digest"],"predecessor_receipt_blob_sha256":resolution["predecessor_receipt_blob_sha256"]}
+        "admission_digest":admission["digest"],"predecessor_receipt_blob_sha256":resolution["predecessor_receipt_blob_sha256"]}
     if (any(mapping[k]!=v for k,v in expected.items())
             or any(canonical[k]!=v for k,v in expected.items() if k in canonical and k not in {"kind","schema_version","digest"})
-            or packet["extensions"]["taskalong:handoff"]["canonical_packet_digest"]!=canonical["digest"]):
+            or packet["extensions"].get("taskalong:handoff") != _wire_handoff(canonical, attempt, resolution)):
         refuse("artifact_packet_changed")
     return packet
 
@@ -659,3 +676,55 @@ def validate_worker(store,run,attempt,worker,*,packet=None):
     if version=="2.3" and (worker["session_id"]!=packet["session_id"] or any(worker[k]!=packet["bindings"][k] for k in ("driver_config_digest","provider_profile_digest"))):
         refuse("worker_binding_mismatch")
     return worker
+
+
+def handoff_proof(store, run, *, spec_digest, artifact_sha256=None):
+    """Revalidate a two-step text transfer against the trusted local store."""
+    from .steps import view
+
+    if spec_digest != run["spec_digest"]:
+        refuse("handoff_proof_task_mismatch")
+    if run["schema_version"] != VERSION:
+        refuse("handoff_proof_unsupported")
+    spec = store.spec(run)
+    if (len(spec["steps"]) != 2 or len(spec["execution"]["routes"]) != 2
+            or spec["steps"][0]["route_id"] == spec["steps"][1]["route_id"]):
+        refuse("handoff_proof_unsupported")
+    if (run["active_attempt_id"] or run["pending_effect_ids"]
+            or any(step["status"] != "completed" for step in run["steps"])):
+        refuse("handoff_proof_incomplete")
+
+    result = view(store, run)
+    receipt_shas = [step["receipt_digest"] for step in result["steps"]]
+    if result["execution_chain_digest"] != digest({"spec_digest": spec_digest, "step_receipts": receipt_shas}):
+        refuse("handoff_proof_chain_mismatch")
+    receipts = [blob_document(store, sha, "step-receipt") for sha in receipt_shas]
+    source, target = [store.detail("attempts", receipt["attempt_id"]) for receipt in receipts]
+    source_harness = source["dispatch_admission"]["installation"]["harness"]
+    target_harness = target["dispatch_admission"]["installation"]["harness"]
+    if (source_harness == target_harness or target["mode"] not in {"start", "restart"}
+            or target["lease_generation"] <= source["lease_generation"]):
+        refuse("handoff_proof_unsupported")
+
+    resolution, _ = validate_import(store, run, target)
+    entries = resolution["entries"]
+    if len(entries) != 1 or entries[0]["producer_step_index"] != 0 or entries[0]["output"]["artifact_kind"] != "utf8_text":
+        refuse("handoff_proof_unsupported")
+    artifact = entries[0]["output"]["artifact"]
+    if artifact_sha256 is not None and artifact_sha256 != artifact["sha256"]:
+        refuse("handoff_proof_artifact_mismatch")
+
+    report = {
+        "kind": "handoff_proof", "schema_version": "1.0", "run_id": run["run_id"],
+        "revision": run["revision"], "state": run["state"], "qualification": run["qualification"],
+        "task_spec_digest": spec_digest, "execution_chain_digest": result["execution_chain_digest"],
+        "artifact": {key: artifact[key] for key in ("sha256", "bytes", "media_type")},
+        "producer": {"harness": source_harness, "step_receipt_sha256": receipt_shas[0],
+                     "output_manifest_sha256": source["output_manifest_blob_sha256"]},
+        "consumer": {"harness": target_harness, "step_receipt_sha256": receipt_shas[1],
+                     "resolved_inputs_sha256": target["resolved_inputs_blob_sha256"],
+                     "wire_packet_digest": target["packet"]["digest"]},
+        "independently_accepted": result["independently_accepted"], "acceptance_digest": result["acceptance_digest"],
+        "production_dispatch_allowed": False,
+    }
+    return report | {"digest": digest(report)}

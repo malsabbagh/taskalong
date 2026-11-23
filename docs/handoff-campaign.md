@@ -96,7 +96,23 @@ Windows are not qualified; the existing Windows portable checks do not establish
 support for this new CLI. An unsupported safe read can return exit 2 rather than
 falling back to an unsafe reader.
 
-Actual two-harness execution, runtime/source authentication, authoritative
-producer-output association, containment and settlement proof remain separate
-unimplemented or unproven campaign obligations. Preparation never settles old
-unknown effects or changes historical receipts.
+## Verify a retained handoff
+
+After a two-step 2.10 fixture run has stopped, use its original
+`task_spec.digest` to verify the handoff against the controller's local store:
+
+```sh
+taskalong --state-dir STATE handoff-proof RUN_ID --spec-digest SPEC_SHA256 \
+  --artifact-sha256 EXPECTED_ARTIFACT_SHA256 --json
+```
+
+Omit `--artifact-sha256` to read the retained artifact identity. Supply it to
+compare against the expected SHA-256 in reviewed evidence. The command verifies
+the completed step receipts, producer output manifest, consumer import and
+packet, and ordered chain. Its report includes the artifact's digest and size,
+separate independent acceptance status, and the observed qualification level.
+Incomplete runs, unsettled effects and mismatched identities are rejected.
+
+The report verifies retained synthetic handoff evidence. A production campaign
+still requires actual two-harness execution, runtime/source authentication,
+containment and settlement evidence.
