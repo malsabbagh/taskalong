@@ -302,9 +302,10 @@ class SharedHandoffContract:
         replay = self.rehearse(first, task["digest"], "consumer", authority=authority,
                               key="campaign-consumer", artifact_sha256=artifact_sha)
         self.assertEqual(replay, consumed)
-        conflict = self.rehearse(first, task["digest"], "consumer", authority=authority,
-                                key="campaign-consumer", artifact_sha256="0" * 64)
-        self.assertEqual(conflict[1]["errors"][0]["code"], "operation_key_conflict")
+        status, conflict = self.rehearse(first, task["digest"], "consumer", authority=authority,
+                                        key="campaign-consumer", artifact_sha256="0" * 64)
+        self.assertEqual(status, 4, conflict)
+        self.assertEqual(conflict["errors"][0]["code"], "operation_key_conflict")
         final = self.wait(first["run_id"],timeout=35)
         self.assertEqual([s["status"] for s in final["steps"]],["completed","completed"],final)
         self.assertEqual(len(final["attempts"]),2)
@@ -592,6 +593,41 @@ class SharedHandoffContract:
         with self.assertRaises(TaskAlongError):
             self.advance(first)
         self.assert_no_target(first["run_id"])
+
+    def test_rehearsal_pin_rejects_a_changed_resolution_before_staging(self):
+        from taskalong import artifact_handoff
+        from taskalong._supervisor import run_guard
+        from taskalong.workflow import drive_run
+
+        first, task = self.first()
+        store = self.service._store
+        authority = store.authority(first, {"execute", "verify", "commit_candidate"}, task["digest"])["authority_id"]
+        expected_sha256 = hashlib.sha256(PAYLOAD).hexdigest()
+        with patch.object(self.service._workflow, "_launch_supervisor"):
+            prepared = self.service.handoff_rehearse(first["run_id"], phase="consumer", spec_digest=task["digest"],
+                authority_id=authority, operation_key="campaign-consumer", expected_revision=first["revision"],
+                artifact_sha256=expected_sha256)
+        attempt_id = prepared["active_attempt_id"]
+        changed = store.put_blob(b"x" * len(PAYLOAD), media_type="text/plain")
+        producer = artifact_handoff.producer
+
+        def changed_producer(store, run, index):
+            receipt, manifest = producer(store, run, index)
+            manifest["outputs"][0]["artifact"] = changed
+            return receipt, manifest
+
+        # Model a divergent import resolution after the reservation committed.
+        with patch.object(artifact_handoff, "producer", side_effect=changed_producer), \
+             patch("taskalong.artifact_io.stage_regular", side_effect=AssertionError("unexpected staging")) as stage, \
+             run_guard(self.state, first["run_id"]):
+            drive_run(self.state, first["run_id"], attempt_id)
+        stage.assert_not_called()
+        final = self.assert_no_target(first["run_id"])
+        self.assertIn("handoff_proof_artifact_mismatch", {b["code"] for b in final["blockers"]})
+        self.assertEqual(final["pending_effect_ids"], [])
+        attempt = store.detail("attempts", attempt_id)
+        self.assertEqual(attempt["expected_artifact_sha256"], expected_sha256)
+        self.assertNotIn("import_journal_blob_sha256", attempt)
 
     def test_staged_bytes_changed_after_packet_compile_prevent_gate_release(self):
         from taskalong import artifact_handoff

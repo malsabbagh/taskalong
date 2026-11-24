@@ -328,23 +328,23 @@ def require_artifact_sha256(value):
         raise TaskAlongError("handoff_pin_invalid", "Select a lowercase SHA-256 for the expected artifact.")
 
 
-def _text_selector(spec, index):
-    selectors = [item for item in spec["steps"][index]["inputs"] if "from_step_id" in item]
-    if len(selectors) != 1 or selectors[0]["expected_kind"] != "utf8_text":
+def _artifact_selectors(spec, index):
+    return [item for item in spec["steps"][index]["inputs"] if "from_step_id" in item]
+
+
+def _require_import_pin(entries, expected_sha256):
+    if expected_sha256 is None:
+        return
+    if len(entries) != 1 or entries[0]["output"]["artifact_kind"] != "utf8_text":
         refuse("handoff_proof_unsupported")
-    return selectors[0]
+    if entries[0]["output"]["artifact"]["sha256"] != expected_sha256:
+        refuse("handoff_proof_artifact_mismatch")
 
 
 def require_expected_artifact(store, run, spec, index, expected_sha256):
-    """Check the exact declared import before the consumer gets a reservation."""
-    selector = _text_selector(spec, index)
-    source_index = next(i for i, step in enumerate(spec["steps"][:index])
-                        if step["step_id"] == selector["from_step_id"])
-    _, manifest = producer(store, run, source_index)
-    artifact = next(output["artifact"] for output in manifest["outputs"]
-                    if output["output_id"] == selector["output_id"])
-    if artifact["sha256"] != expected_sha256:
-        refuse("handoff_proof_artifact_mismatch")
+    """Apply the pin to the import resolver before reserving the consumer."""
+    _, entries, _ = _resolve_import_inputs(store, run, spec, index)
+    _require_import_pin(entries, expected_sha256)
 
 
 def expected_manifest(workspace, before, files, store):
@@ -377,6 +377,39 @@ def require_import_owner(store, run, attempt):
     require_finish_identity(current,store.spec(current),store.detail("attempts",attempt["attempt_id"]))
 
 
+def _resolve_import_inputs(store, run, spec, index):
+    """Resolve producer receipts and authorized artifact descriptors without writes."""
+    entries, files, volume = [], [], 0
+    selectors = _artifact_selectors(spec, index)
+    target = route(spec, index)
+    for selector in selectors:
+        pi = next(i for i,s in enumerate(spec["steps"]) if s["step_id"] == selector["from_step_id"])
+        receipt, manifest = producer(store, run, pi)
+        declaration = next(o for o in spec["steps"][pi]["outputs"] if o["output_id"] == selector["output_id"])
+        if target["binding_digest"] not in declaration["allowed_target_binding_digests"] or target["disclosure_destination_id"] not in declaration["allowed_disclosure_destination_ids"]:
+            refuse("artifact_disclosure_forbidden")
+        output = next(o for o in manifest["outputs"] if o["output_id"] == selector["output_id"])
+        size = output["artifact"]["bytes"]
+        if output["artifact_kind"] == "file_set_patch":
+            patch, _, size = patch_files(store,output,manifest["outputs"])
+            files.extend(patch)
+            for payload in output["payloads"]:
+                export = next(o for o in spec["steps"][pi]["outputs"] if o["output_id"] == payload["output_id"])
+                if target["binding_digest"] not in export["allowed_target_binding_digests"] or target["disclosure_destination_id"] not in export["allowed_disclosure_destination_ids"]:
+                    refuse("artifact_disclosure_forbidden")
+        if size > selector["max_bytes"]:
+            refuse("artifact_size_limit")
+        volume += size
+        entries.append({"selector":selector,"producer_receipt_blob_sha256":run["steps"][pi]["receipt_digest"],
+            "producer_output_manifest_blob_sha256":run["steps"][pi]["output_manifest_blob_sha256"],"producer_step_index":pi,
+            "producer_attempt_id":receipt["attempt_id"],"producer_checkpoint_digest":receipt["checkpoint_digest"],
+            "producer_content_digest":receipt["final_snapshot_digest"],"source_binding_digest":manifest["binding_digest"],"output":output})
+    if volume > MAX_TARGET_BYTES or len(files) > 256:
+        refuse("artifact_size_limit")
+    disjoint([f["path"] for f in files])
+    return selectors, entries, files
+
+
 def prepare_import(store, run, attempt, manager, workspace):
     """Own/journal imports after target reservation, before executor intent."""
     from .artifact_io import read_regular, require_absent, stage_regular, apply_regular
@@ -401,38 +434,15 @@ def prepare_import(store, run, attempt, manager, workspace):
             refuse("artifact_import_changed")
         fields = {k:v for k,v in journal.items() if k not in {"kind","schema_version","digest","files","before_manifest"}}
         entries, files = journal["entries"], journal["files"]
+        _require_import_pin(entries, attempt.get("expected_artifact_sha256"))
         authority = store.authority(run,{"execute","verify","commit_candidate"},spec["digest"],journal["authority_id"])
     else:
         snapshot = manager.snapshot(workspace,spec["scope"],expected_head=spec["repository"]["base_commit"])
-        entries, files, volume = [], [], 0
-        selectors = [s for s in spec["steps"][index]["inputs"] if "from_step_id" in s]
+        selectors, entries, files = _resolve_import_inputs(store, run, spec, index)
+        _require_import_pin(entries, attempt.get("expected_artifact_sha256"))
+        for offset, entry in enumerate(entries):
+            entry["staged_relative_path"] = f"handoff/{attempt['attempt_id']}/inputs/{offset:04d}"
         target = route(spec,index)
-        for selector in selectors:
-            pi = next(i for i,s in enumerate(spec["steps"]) if s["step_id"] == selector["from_step_id"])
-            receipt, manifest = producer(store, run, pi)
-            declaration = next(o for o in spec["steps"][pi]["outputs"] if o["output_id"] == selector["output_id"])
-            if target["binding_digest"] not in declaration["allowed_target_binding_digests"] or target["disclosure_destination_id"] not in declaration["allowed_disclosure_destination_ids"]:
-                refuse("artifact_disclosure_forbidden")
-            output = next(o for o in manifest["outputs"] if o["output_id"] == selector["output_id"])
-            size = output["artifact"]["bytes"]
-            if output["artifact_kind"] == "file_set_patch":
-                patch, _, size = patch_files(store,output,manifest["outputs"])
-                files.extend(patch)
-                for payload in output["payloads"]:
-                    export = next(o for o in spec["steps"][pi]["outputs"] if o["output_id"] == payload["output_id"])
-                    if target["binding_digest"] not in export["allowed_target_binding_digests"] or target["disclosure_destination_id"] not in export["allowed_disclosure_destination_ids"]:
-                        refuse("artifact_disclosure_forbidden")
-            if size > selector["max_bytes"]:
-                refuse("artifact_size_limit")
-            volume += size
-            entries.append({"selector":selector,"producer_receipt_blob_sha256":run["steps"][pi]["receipt_digest"],
-                "producer_output_manifest_blob_sha256":run["steps"][pi]["output_manifest_blob_sha256"],"producer_step_index":pi,
-                "producer_attempt_id":receipt["attempt_id"],"producer_checkpoint_digest":receipt["checkpoint_digest"],
-                "producer_content_digest":receipt["final_snapshot_digest"],"source_binding_digest":manifest["binding_digest"],"output":output,
-                "staged_relative_path":"handoff/"+attempt["attempt_id"]+"/inputs/"+str(len(entries)).zfill(4)})
-        if volume > MAX_TARGET_BYTES or len(files) > 256:
-            refuse("artifact_size_limit")
-        disjoint([f["path"] for f in files])
         for f in files:
             if not contains(spec["steps"][index]["import_scope"],f["path"]) or f["operation"] not in spec["steps"][index]["import_scope"]["operations"]:
                 refuse("artifact_import_scope")
@@ -569,7 +579,8 @@ def validate_import(store,run,attempt,*,staged=False):
         {"journal_blob_sha256":attempt["import_journal_blob_sha256"],"resolved_inputs_blob_sha256":attempt["resolved_inputs_blob_sha256"]})
     if committed is None:
         refuse("artifact_proof_forged")
-    selectors=[s for s in spec["steps"][attempt["step_index"]]["inputs"] if "from_step_id" in s]
+    _require_import_pin(resolution["entries"], origin.get("expected_artifact_sha256"))
+    selectors = _artifact_selectors(spec, attempt["step_index"])
     if resolution["selectors_digest"]!=digest(selectors) or len(selectors)!=len(resolution["entries"]):
         refuse("artifact_selector_changed")
     expected_route=route(spec,attempt["step_index"])
@@ -712,7 +723,9 @@ def campaign_spec(store, run, spec_digest):
     if (len(spec["steps"]) != 2 or len(spec["execution"]["routes"]) != 2
             or spec["steps"][0]["route_id"] == spec["steps"][1]["route_id"]):
         refuse("handoff_proof_unsupported")
-    _text_selector(spec, 1)
+    selectors = _artifact_selectors(spec, 1)
+    if len(selectors) != 1 or selectors[0]["expected_kind"] != "utf8_text":
+        refuse("handoff_proof_unsupported")
     return spec
 
 

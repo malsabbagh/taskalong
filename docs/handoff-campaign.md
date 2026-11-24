@@ -116,10 +116,12 @@ taskalong --state-dir STATE handoff-rehearse RUN_ID --phase consumer \
   --key campaign-consumer --expected-revision STOPPED_REVISION --json
 ```
 
-The consumer refuses a hash mismatch before it reserves an attempt. Repeating
-the same phase with the same operation key and inputs returns its durable
-response. The operator initiates each phase explicitly. Use `handoff-proof`
-after the consumer stops to read the final artifact and acceptance evidence.
+The consumer checks the pin against the resolved import before reserving an
+attempt. It retains the pin with the attempt and rechecks it before staging
+inputs and when validating the committed import. Repeating the same phase with
+the same operation key and inputs returns its durable response. The operator
+initiates each phase explicitly. Use `handoff-proof` after the consumer stops to
+read the final artifact and acceptance evidence.
 
 ## Verify a retained handoff
 

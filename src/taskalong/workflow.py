@@ -364,9 +364,6 @@ class Workflow:
                 if expected_step_id != spec["steps"][target_index]["step_id"]:
                     raise TaskAlongError("step_identity_mismatch", "The requested step is not the valid next ordered step.", exit_code=3)
                 inputs(spec, self.store.lease(run)["workspace"]["path"], target_index)
-                if expected_artifact_sha256 is not None:
-                    from .artifact_handoff import require_expected_artifact
-                    require_expected_artifact(self.store, run, spec, target_index, expected_artifact_sha256)
         if mode != "start" and not ordered:
             if mode not in {"native", "restart"} or run["state"] != "blocked" or run["active_attempt_id"] is not None or run["pending_effect_ids"]:
                 raise TaskAlongError("resume_not_reconciled", "Resume needs a stopped, reconciled nonterminal run and an explicit mode.", exit_code=3)
@@ -414,6 +411,10 @@ class Workflow:
                 attempt["admission"] = fresh
             if ordered:
                 from .steps import reserve
+                if expected_artifact_sha256 is not None:
+                    from .artifact_handoff import require_expected_artifact
+                    require_expected_artifact(self.store, current, spec, target_index, expected_artifact_sha256)
+                    attempt["expected_artifact_sha256"] = expected_artifact_sha256
                 current["current_step_index"] = target_index
                 attempt["reservation"] = reserve(current, spec, reservation_id=identifier(), kind="worker", owner_id=attempt_id)
                 step = current["steps"][target_index]
