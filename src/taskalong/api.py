@@ -160,9 +160,11 @@ class RunService:
     def validate_task(self, spec):
         return self._workflow.validate_task(spec)
 
-    def advance(self, run_id, *, expected_step_id, predecessor_digest, operation_key, expected_revision):
+    def advance(self, run_id, *, expected_step_id, predecessor_digest, operation_key, expected_revision,
+                authority_id=None, expected_artifact_sha256=None):
         return self._workflow.start(run_id, mode="advance", expected_step_id=expected_step_id,
-            predecessor_digest=predecessor_digest, operation_key=operation_key, expected_revision=expected_revision)
+            predecessor_digest=predecessor_digest, operation_key=operation_key, expected_revision=expected_revision,
+            authority_id=authority_id, expected_artifact_sha256=expected_artifact_sha256)
 
     def retry(self, run_id, *, expected_step_id, operation_key, expected_revision):
         return self._workflow.start(run_id, mode="retry", expected_step_id=expected_step_id,
@@ -313,6 +315,29 @@ class RunService:
             "worker_result_digest":attempt["result_artifact"]["sha256"] if attempt and attempt.get("result_artifact") else None,
             "canonical_packet_digest":packet_digest, "evidence_artifacts": [unique[key] for key in sorted(unique)],
             "production_dispatch_allowed":False}, version="2.2")
+
+    def handoff_rehearse(self, run_id, *, phase, spec_digest, authority_id, operation_key,
+                         expected_revision, artifact_sha256=None):
+        """Run one explicit synthetic campaign phase through the normal lifecycle."""
+        from .artifact_handoff import campaign_spec, require_artifact_sha256, require_distinct_campaign_harnesses
+
+        run = self._store.run(run_id)
+        if (run["qualification"] != "synthetic" or type(authority_id) is not str or not authority_id
+                or phase not in ("producer", "consumer")
+                or (phase == "producer" and artifact_sha256 is not None)):
+            raise TaskAlongError("handoff_rehearsal_invalid", "Select a synthetic campaign phase and its existing authority.")
+        spec = campaign_spec(self._store, run, spec_digest)
+        require_distinct_campaign_harnesses(self._store, spec)
+        if phase == "producer":
+            return self.start(run_id, operation_key=operation_key, expected_revision=expected_revision,
+                              authority_id=authority_id)
+        require_artifact_sha256(artifact_sha256)
+        predecessor = run["steps"][0]["receipt_digest"]
+        if predecessor is None:
+            raise TaskAlongError("advance_not_ready", "The producer must complete before the consumer starts.", exit_code=3)
+        return self.advance(run_id, expected_step_id=spec["steps"][1]["step_id"], predecessor_digest=predecessor,
+                            operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id,
+                            expected_artifact_sha256=artifact_sha256)
 
     def handoff_proof(self, run_id, *, spec_digest, artifact_sha256=None):
         """Read back a stopped handoff with the expected task and artifact identities."""

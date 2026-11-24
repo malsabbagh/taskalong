@@ -3,8 +3,8 @@
 `tools/qualify_handoff.py` validates a bounded manifest and its local evidence
 snapshots. It is preparation only: it cannot start a campaign, reserve a provider
 submission, run task checks, open a Store, register trust or change durable state.
-There is no actual campaign invocation or `--execute` mode. This slice does not
-complete issue #12/E1 or qualify an actual route.
+The installed `taskalong` command supports the registered fixture rehearsal below.
+Issue #12 still requires a qualified actual campaign and separate E1 evidence.
 
 The [public example](examples/handoff-campaign/campaign.json) is generated from
 the synthetic fixture in [the campaign tests](../tests/test_handoff_campaign.py).
@@ -95,6 +95,33 @@ reads additionally require private permissions. Filesystem campaign reads on
 Windows are not qualified; the existing Windows portable checks do not establish
 support for this new CLI. An unsupported safe read can return exit 2 rather than
 falling back to an unsafe reader.
+
+## Rehearse a registered fixture handoff
+
+Use a submitted [2.10 fixture task](artifact-handoff.md) with two registered
+Codex and Claude fixture routes and one text import from the producer. Use the
+scoped authority ID returned by `taskalong authorize` for that run and task.
+The producer command starts the ordinary durable workflow. Read `status` until
+the producer is complete and its attempt has stopped. Then supply the current
+revision and the expected SHA-256 of the artifact to the consumer command.
+
+```sh
+taskalong --state-dir STATE handoff-rehearse RUN_ID --phase producer \
+  --spec-digest SPEC_SHA256 --authority-id AUTHORITY_ID \
+  --key campaign-producer --expected-revision SUBMITTED_REVISION --json
+taskalong --state-dir STATE status RUN_ID --json
+taskalong --state-dir STATE handoff-rehearse RUN_ID --phase consumer \
+  --spec-digest SPEC_SHA256 --authority-id AUTHORITY_ID \
+  --artifact-sha256 EXPECTED_ARTIFACT_SHA256 \
+  --key campaign-consumer --expected-revision STOPPED_REVISION --json
+```
+
+The consumer checks the pin against the resolved import before reserving an
+attempt. It retains the pin with the attempt and rechecks it before staging
+inputs and when validating the committed import. Repeating the same phase with
+the same operation key and inputs returns its durable response. The operator
+initiates each phase explicitly. Use `handoff-proof` after the consumer stops to
+read the final artifact and acceptance evidence.
 
 ## Verify a retained handoff
 

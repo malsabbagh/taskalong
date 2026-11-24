@@ -283,12 +283,16 @@ class Workflow:
             return self.store.retire_lease(run_id, operation_key=operation_key,
                                           expected_revision=expected_revision, workspace_subject=subject)
 
-    def start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start", expected_step_id=None, predecessor_digest=None):
+    def start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start",
+              expected_step_id=None, predecessor_digest=None, expected_artifact_sha256=None):
         self._refuse_trial_run(run_id)
         with self.store.guard(run_id, "dispatch"):
-            return self._start(run_id, operation_key=operation_key, expected_revision=expected_revision, authority_id=authority_id, mode=mode, expected_step_id=expected_step_id, predecessor_digest=predecessor_digest)
+            return self._start(run_id, operation_key=operation_key, expected_revision=expected_revision,
+                               authority_id=authority_id, mode=mode, expected_step_id=expected_step_id,
+                               predecessor_digest=predecessor_digest, expected_artifact_sha256=expected_artifact_sha256)
 
-    def _start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start", expected_step_id=None, predecessor_digest=None):
+    def _start(self, run_id, *, operation_key, expected_revision, authority_id=None, mode="start",
+               expected_step_id=None, predecessor_digest=None, expected_artifact_sha256=None):
         command = mode if mode in {"advance", "retry"} else "start" if mode == "start" else "resume"
         if mode == "retry":
             retained = self.store.run(run_id)
@@ -297,6 +301,12 @@ class Workflow:
         request = {"mode": mode, "authority_id": authority_id}
         if mode in {"advance", "retry"}:
             request.update(expected_step_id=expected_step_id, predecessor_digest=predecessor_digest)
+        if expected_artifact_sha256 is not None:
+            from .artifact_handoff import require_artifact_sha256
+            require_artifact_sha256(expected_artifact_sha256)
+            if mode != "advance":
+                raise TaskAlongError("handoff_pin_unsupported", "Only handoff advance accepts an expected artifact.", exit_code=3)
+            request["expected_artifact_sha256"] = expected_artifact_sha256
         prior = self.store.operation(command, run_id, operation_key, request)
         if prior:
             return prior
@@ -304,6 +314,8 @@ class Workflow:
         if run["revision"] != expected_revision:
             raise TaskAlongError("revision_conflict", "Inspect the current revision before starting.", exit_code=4)
         spec = self.store.spec(run)
+        if expected_artifact_sha256 is not None and spec["schema_version"] != "2.10":
+            raise TaskAlongError("handoff_pin_unsupported", "The ordered task must have a handoff artifact.", exit_code=3)
         if spec["schema_version"] == "2.10" and run["cancellation_requested"]:
             raise TaskAlongError("cancel_pending", "Cancellation prevents another handoff attempt.", exit_code=6)
         if spec["schema_version"] in {"2.7", "2.10"}:
@@ -399,6 +411,10 @@ class Workflow:
                 attempt["admission"] = fresh
             if ordered:
                 from .steps import reserve
+                if expected_artifact_sha256 is not None:
+                    from .artifact_handoff import require_expected_artifact
+                    require_expected_artifact(self.store, current, spec, target_index, expected_artifact_sha256)
+                    attempt["expected_artifact_sha256"] = expected_artifact_sha256
                 current["current_step_index"] = target_index
                 attempt["reservation"] = reserve(current, spec, reservation_id=identifier(), kind="worker", owner_id=attempt_id)
                 step = current["steps"][target_index]

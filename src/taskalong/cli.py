@@ -72,6 +72,13 @@ def parser():
     p = command("handoff-proof"); p.add_argument("run_id")
     p.add_argument("--spec-digest", required=True)
     p.add_argument("--artifact-sha256")
+    p = command("handoff-rehearse"); p.add_argument("run_id")
+    p.add_argument("--phase", choices=("producer", "consumer"), required=True)
+    p.add_argument("--spec-digest", required=True)
+    p.add_argument("--artifact-sha256")
+    p.add_argument("--authority-id", required=True)
+    p.add_argument("--key", required=True)
+    p.add_argument("--expected-revision", type=int, required=True)
     p = command("capabilities"); p.add_argument("run_id")
     p.add_argument("--mode", default="start",
                    help="Operation to assess: start, restart, native_resume, observe, cancel, or result.")
@@ -184,6 +191,10 @@ def main(argv=None):
             elif cmd == "handoff-proof":
                 result = service.handoff_proof(args.run_id, spec_digest=args.spec_digest,
                                                artifact_sha256=args.artifact_sha256)
+            elif cmd == "handoff-rehearse":
+                result = service.handoff_rehearse(args.run_id, phase=args.phase, spec_digest=args.spec_digest,
+                                                  authority_id=args.authority_id, artifact_sha256=args.artifact_sha256,
+                                                  **mutation)
             elif cmd == "result": result = service.result(args.run_id)
             elif cmd == "capabilities": result = service.capabilities(args.run_id, mode=args.mode)
             elif cmd == "publish-intent": result = service.publish_intent(args.run_id)
@@ -206,7 +217,8 @@ def main(argv=None):
             for requirement in result.get("blocker_details", []):
                 print(requirement["code"] + ": " + requirement.get("requirement", requirement.get("limitation", "")))
         else: print(f"{cmd}: {result.get('state', 'completed')}" + (f" ({result['run_id']})" if "run_id" in result else ""))
-        if cmd in {"run", "supervised-pilot-run", "start", "advance", "retry", "resume", "cancel", "reconcile", "verify", "publish"}:
+        if cmd in {"run", "supervised-pilot-run", "start", "advance", "retry", "resume", "cancel", "reconcile",
+                   "verify", "publish", "handoff-rehearse"}:
             if result.get("state") == "cancel_pending": return 6
             if result.get("state") == "blocked":
                 return 5 if any(b.get("effect_outcome") == "uncertain" for b in result.get("blockers", [])) else 3
