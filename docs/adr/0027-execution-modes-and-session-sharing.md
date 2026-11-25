@@ -92,3 +92,50 @@ execution-mode acceptance criteria open until those observed results exist.
 - M11 proves synthetic immutable artifact transfer in both directions. M12
   tracks the actual two-harness proof and the separate E1 trial.
   [Artifact handoff](../artifact-handoff.md) · [M12](https://github.com/malsabbagh/taskalong/issues/12)
+
+## Proposed first slice: model-free admission preparation
+
+The current profile and task documents are closed. A runtime profile describes
+an executable and its existing authentication reference; a qualification
+receipt's backend identifier describes what was measured. Neither is a request
+to run Docker. Keep those wire formats unchanged. Review a separate, additive
+preparation document before adding a reader. A prepared document grants no
+authority, creates no run, and must not become executable merely by being
+registered or accepted by a newer reader.
+
+| Input | Preparation check |
+| --- | --- |
+| No backend selection | Preserve the existing direct-local behavior. Neither Docker nor sharing is inferred from host capability, a previous invocation, or a missing field. |
+| Explicit local or remote Docker selection | Bind exactly one backend kind, OCI image digest (not a mutable tag), platform, and a reviewed binding to the embedded CLI installation and dependency closure. A named, independently approved destination is mandatory for remote Docker; a local choice cannot silently become remote. |
+| Selected inputs | Validate a bounded list of repository-relative file references against the pinned source revision, expected byte size and digest. Use the existing bounded artifact reader; duplicate paths, mismatched bytes, and references outside the selection refuse. Do not accept arbitrary mount, host-directory, device, or socket fields. |
+| Authentication and authority | A content document may refer only to an existing, non-secret, independently approved authentication lane. Match the intended backend, binding, and destination against operator-supplied approval and measured receipts. The document cannot certify itself; missing, stale, revoked, or mismatched authority refuses. Never accept host credentials or substitute another account or billing route. |
+| Preparation result | Report typed reasons and the exact identities matched. Even if all structural checks pass, Docker execution remains unsupported until an independently reviewed runtime and lifecycle proof exists. No daemon inspection or launch, external fetch, transfer, authorization registration, reservation, or Store write. |
+
+The first test fixture uses a generated repository, a synthetic image digest,
+a synthetic binding, a separate synthetic operator decision and two ordinary
+selected files. Check that the clean case is still nonadmitting. Negative tests
+must reject a floating image reference, image/binding/platform mismatch, stale
+receipt, wrong or unapproved remote destination, missing authentication lane,
+undeclared file, changed bytes, duplicate path, explicit host mount, socket,
+and credentials in the document. Assert zero launcher, network, or Store calls
+on both success and refusal. This test does not qualify a Docker image or
+container isolation. Keep runtime work out of this change.
+
+## Separate proposed slice: artifact-only sharing
+
+Keep sharing off for every backend unless a separate, explicit and current
+authorization names the source owner and identity, exact selected artifact
+digests, destination and expiry. Recheck authorization and revocation before
+any later access or export. A future implementation can reuse the immutable
+artifact handoff for a fresh consumer session; it must not copy transcripts,
+native session state or authentication by default. Do not reuse an executor
+qualification receipt as a sharing grant or infer permission from backend or
+provider configuration.
+
+First verify, in pure fixtures, that an unrequested share emits no export
+intent and that a matching explicit request identifies only the selected
+artifacts. Refuse a foreign owner, missing selection, substituted digest,
+mismatched destination, expired or revoked grant, credential content, and any
+attempt to import native state across CLIs. No actual export is part of the
+first slice. Revocation concerns future access, not deletion of a copy already
+delivered to another authorized destination.
