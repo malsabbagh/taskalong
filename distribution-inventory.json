@@ -635,6 +635,7 @@
     "tests/test_trial_contracts.py",
     "tests/test_trial_control.py",
     "tests/test_trial_handoff.py",
+    "tests/test_trial_pre_review_checkpoint.py",
     "tests/test_trial_refusal.py",
     "tests/test_trial_review.py",
     "tests/test_trial_store.py",

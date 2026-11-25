@@ -243,6 +243,7 @@ include tests/test_trial_assessment.py
 include tests/test_trial_contracts.py
 include tests/test_trial_control.py
 include tests/test_trial_handoff.py
+include tests/test_trial_pre_review_checkpoint.py
 include tests/test_trial_refusal.py
 include tests/test_trial_review.py
 include tests/test_trial_store.py

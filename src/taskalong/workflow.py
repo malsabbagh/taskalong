@@ -614,7 +614,7 @@ class Workflow:
         if run["revision"] != expected_revision:
             raise TaskAlongError("revision_conflict", "Run revision changed before verification.", exit_code=4)
         spec = self.store.spec(run)
-        self.store.authority(run, {"verify", "commit_candidate"}, spec["digest"])
+        verification_authority = self.store.authority(run, {"verify", "commit_candidate"}, spec["digest"])
         if spec["schema_version"] == "2.10" and run["cancellation_requested"]:
             raise TaskAlongError("cancel_pending", "Cancellation prevents final handoff verification.", exit_code=6)
         check_profile = None
@@ -654,6 +654,10 @@ class Workflow:
             run = self._candidate_observed(run_id, effect_id, candidate)
         candidate = run["candidate"]
         manager.assert_candidate(workspace, candidate, spec["scope"])
+        existing_claim = self.store.operation("verification.claim", run_id, "verification-claim:" + operation_key, {})
+        if existing_claim and run["state"] != "verifying":
+            raise TaskAlongError("verification_unreconciled", "Interrupted verification is not in its saved phase.",
+                                  exit_code=5, effect_outcome="uncertain")
         if run["state"] != "verifying":
             def entering(current, db):
                 if current["state"] == "cancel_pending":
@@ -665,95 +669,125 @@ class Workflow:
             run = self.store.mutate(run_id, "verification.begin", operation_key, run["revision"], {}, entering, events=[("acceptance.invalidated", {"reason": "fresh_verification"})], fence=run["lease_generation"])
         # Reuse only receipts for this exact durable verification invocation.
         verification_key = "verification-claim:" + operation_key
-        prior_claim = self.store.operation("verification.claim", run_id, verification_key, {})
-        if prior_claim:
-            raise TaskAlongError("verification_unreconciled", "An interrupted verification invocation cannot be silently repeated; inspect it and use a new explicit key.", exit_code=5, effect_outcome="uncertain")
-        self.store.mutate(run_id, "verification.claim", verification_key, None, {}, lambda current, db: None, events=[("effect.prepared", {"kind": "verification"})], fence=run["lease_generation"])
-        evidence_records = []
-        scope_record = self._evidence_base(run, spec, attempt, candidate, check_profile or self._profile(spec), "scope", "passed")
-        scope_record["artifacts"] = [self.store.put_blob(canonical_bytes(manager.snapshot(workspace, spec["scope"], expected_head=candidate["commit"])["manifest"]))]
-        self._record_evidence(run_id, scope_record)
-        evidence_records.append(scope_record)
+        prior_claim = existing_claim
         from .process import ProcessBoundaryError, collect_interrupts, run_bounded
         from .command_sandbox import command_sandbox_for
         from .evidence import acceptance_reasons
         profile = check_profile or self._profile(spec)
-        launcher = command_sandbox_for(profile)
-        for check in spec["checks"]:
-            if check_profile is not None:
-                if spec["schema_version"] == "2.10":
-                    admit(self.store, spec, check=True)
-                else:
-                    resolve(self.store, spec)
-            self.store.require_fence(self.store.run(run_id), run["lease_generation"])
-            manager.assert_candidate(workspace, candidate, spec["scope"])
-            sandbox = self.store.setting("command_sandbox")
-            if run["qualification"] == "synthetic" and sandbox:
-                executable = Path(sandbox["executable"])
-                if hashlib.sha256(executable.read_bytes()).hexdigest() != sandbox["sha256"]:
-                    raise TaskAlongError("sandbox_changed", "Synthetic command launcher changed after configuration.", exit_code=3)
-                argv = [str(executable), "--workspace", workspace["path"], "--git-common", self.store.repository(run["repository_registration_id"])["common_dir"], "--control", str(self.store.root), "--", *check["argv"]]
-            else:
-                argv = launcher.prepare_check(check["argv"], workspace=workspace["path"], git_common_dir=self.store.repository(run["repository_registration_id"])["common_dir"], control_dir=str(self.store.root))
-            if self.store.run(run_id)["state"] == "cancel_pending":
-                return self._cancel_verification(run_id)
-            started = now()
-            scratch = Path(workspace["path"]) / ".taskalong-scratch"
-            scratch.mkdir(mode=0o700, exist_ok=True)
-            environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(scratch), "HOME": str(scratch)}
-            check_cwd = Path(workspace["path"]) if check["cwd"] == "." else Path(workspace["path"]) / check["cwd"]
-            with collect_interrupts() as interruption:
-                capture = self._capture_prepare(run_id, "check:" + check["id"], operation_key)
-                if interruption.requested:
-                    self._capture_finish(run_id, capture, 0, confirmed=True)
-                    self._verification_interrupted(run_id, confirmed=True)
-                def before_dispatch(receipt):
-                    if interruption.requested:
-                        raise ProcessBoundaryError("Foreground verification stopped before dispatch.", code="verification_interrupted", effect_outcome="not_sent")
-                    if check_profile is not None or spec["schema_version"] in {"2.7", "2.10"}:
-                        current = self.store.run(run_id)
-                        if current["state"] == "cancel_pending":
-                            raise ProcessBoundaryError("Cancellation prevents verifier dispatch.", code="cancel_pending", effect_outcome="not_sent")
-                        self.store.authority(current, {"verify", "commit_candidate"}, spec["digest"])
-                        if spec["schema_version"] in {"2.7", "2.10"}:
-                            from .steps import validate_chain
-                            validate_chain(self.store, current, live=True, complete=True)
-                        else:
-                            resolve(self.store, spec)
-                try:
-                    outcome = run_bounded(argv, cwd=check_cwd, timeout_seconds=check["timeout_seconds"], max_output_bytes=capture["request"]["reserved_output_bytes"], env=environment, on_spawn=before_dispatch, cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
-                except ProcessBoundaryError as exc:
-                    # A closed target gate says nothing about its owned
-                    # wrapper's cleanup. Settle only an actual cessation
-                    # receipt as well as a non-uncertain effect outcome.
-                    confirmed = (exc.effect_outcome != "uncertain" and exc.process_result is not None
-                                 and exc.process_result.termination_confirmed is True)
-                    consumed = (0 if confirmed and exc.code == "verification_interrupted"
-                                and exc.effect_outcome == "not_sent" else capture["request"]["reserved_output_bytes"])
-                    self._capture_finish(run_id, capture, consumed, confirmed=confirmed)
-                    if interruption.requested:
-                        self._verification_interrupted(run_id, confirmed=confirmed)
-                    if self.store.run(run_id)["state"] == "cancel_pending":
-                        return self._cancel_verification(run_id)
-                    return _block(self.store, run_id, exc.code, phase="verifying", uncertain=not confirmed)
-                self._capture_finish(run_id, capture, outcome.output_bytes, confirmed=outcome.termination_confirmed)
-                if interruption.requested:
-                    self._verification_interrupted(run_id, confirmed=outcome.termination_confirmed)
-            if not outcome.termination_confirmed:
-                return _block(self.store, run_id, "cancellation_unconfirmed", phase="verifying", uncertain=True)
-            if outcome.output_limited:
-                return _block(self.store, run_id, "output_budget_exhausted", phase="verifying")
-            if outcome.cancelled:
-                return self._cancel_verification(run_id)
-            try:
+        # Exercise the continuation contract only in the existing v1 fixture
+        # workflow. This does not admit production E1 or any other live route.
+        fixture_scope = spec["schema_version"] == "1.0" and run["qualification"] == "synthetic"
+        review = self.store.setting("review") if fixture_scope else None
+        checkpoint_enabled = review is not None and bool(review.get("fixture_response"))
+        checkpoint_revision = None
+        checkpoint_key = _internal_key("pre-review", operation_key)
+        if prior_claim:
+            held = TaskAlongError("verification_unreconciled",
+                "Interrupted verification cannot continue without an exact pre-review checkpoint.",
+                exit_code=5, effect_outcome="uncertain")
+            if not checkpoint_enabled or run["state"] != "verifying":
+                raise held
+            evidence_records = self._pre_review_records(run, prior_claim, spec, attempt, candidate, profile, operation_key)
+            inputs = {"evidence": digest(evidence_records), "review": digest(review),
+                      "authority": digest(verification_authority)}
+            if self.store.operation("verification.pre_review", run_id, checkpoint_key, inputs) != run:
+                raise held
+            checkpoint_revision = run["revision"]
+        else:
+            claim = self.store.mutate(run_id, "verification.claim", verification_key, None, {},
+                lambda current, db: None, events=[("effect.prepared", {"kind": "verification"})],
+                fence=run["lease_generation"])
+            evidence_records = []
+            scope_record = self._evidence_base(run, spec, attempt, candidate, check_profile or self._profile(spec), "scope", "passed")
+            scope_record["artifacts"] = [self.store.put_blob(canonical_bytes(manager.snapshot(workspace, spec["scope"], expected_head=candidate["commit"])["manifest"]))]
+            self._record_evidence(run_id, scope_record)
+            evidence_records.append(scope_record)
+            launcher = command_sandbox_for(profile)
+            for check in spec["checks"]:
+                if check_profile is not None:
+                    if spec["schema_version"] == "2.10":
+                        admit(self.store, spec, check=True)
+                    else:
+                        resolve(self.store, spec)
+                self.store.require_fence(self.store.run(run_id), run["lease_generation"])
                 manager.assert_candidate(workspace, candidate, spec["scope"])
-            except TaskAlongError:
-                return _block(self.store, run_id, "check_mutated_candidate", phase="verifying")
-            artifact = self.store.put_blob(outcome.stdout + outcome.stderr, media_type="text/plain")
-            record = self._command_evidence(run, spec, attempt, check, candidate, profile, outcome, started, artifact)
-            evidence_records.append(record)
-            self._record_evidence(run_id, record)
-        review = self.store.setting("review")
+                sandbox = self.store.setting("command_sandbox")
+                if run["qualification"] == "synthetic" and sandbox:
+                    executable = Path(sandbox["executable"])
+                    if hashlib.sha256(executable.read_bytes()).hexdigest() != sandbox["sha256"]:
+                        raise TaskAlongError("sandbox_changed", "Synthetic command launcher changed after configuration.", exit_code=3)
+                    argv = [str(executable), "--workspace", workspace["path"], "--git-common", self.store.repository(run["repository_registration_id"])["common_dir"], "--control", str(self.store.root), "--", *check["argv"]]
+                else:
+                    argv = launcher.prepare_check(check["argv"], workspace=workspace["path"], git_common_dir=self.store.repository(run["repository_registration_id"])["common_dir"], control_dir=str(self.store.root))
+                if self.store.run(run_id)["state"] == "cancel_pending":
+                    return self._cancel_verification(run_id)
+                started = now()
+                scratch = Path(workspace["path"]) / ".taskalong-scratch"
+                scratch.mkdir(mode=0o700, exist_ok=True)
+                environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(scratch), "HOME": str(scratch)}
+                check_cwd = Path(workspace["path"]) if check["cwd"] == "." else Path(workspace["path"]) / check["cwd"]
+                with collect_interrupts() as interruption:
+                    capture = self._capture_prepare(run_id, "check:" + check["id"], operation_key)
+                    if interruption.requested:
+                        self._capture_finish(run_id, capture, 0, confirmed=True)
+                        self._verification_interrupted(run_id, confirmed=True)
+                    def before_dispatch(receipt):
+                        if interruption.requested:
+                            raise ProcessBoundaryError("Foreground verification stopped before dispatch.", code="verification_interrupted", effect_outcome="not_sent")
+                        if check_profile is not None or spec["schema_version"] in {"2.7", "2.10"}:
+                            current = self.store.run(run_id)
+                            if current["state"] == "cancel_pending":
+                                raise ProcessBoundaryError("Cancellation prevents verifier dispatch.", code="cancel_pending", effect_outcome="not_sent")
+                            self.store.authority(current, {"verify", "commit_candidate"}, spec["digest"])
+                            if spec["schema_version"] in {"2.7", "2.10"}:
+                                from .steps import validate_chain
+                                validate_chain(self.store, current, live=True, complete=True)
+                            else:
+                                resolve(self.store, spec)
+                    try:
+                        outcome = run_bounded(argv, cwd=check_cwd, timeout_seconds=check["timeout_seconds"], max_output_bytes=capture["request"]["reserved_output_bytes"], env=environment, on_spawn=before_dispatch, cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
+                    except ProcessBoundaryError as exc:
+                        # A closed target gate says nothing about its owned
+                        # wrapper's cleanup. Settle only an actual cessation
+                        # receipt as well as a non-uncertain effect outcome.
+                        confirmed = (exc.effect_outcome != "uncertain" and exc.process_result is not None
+                                     and exc.process_result.termination_confirmed is True)
+                        consumed = (0 if confirmed and exc.code == "verification_interrupted"
+                                    and exc.effect_outcome == "not_sent" else capture["request"]["reserved_output_bytes"])
+                        self._capture_finish(run_id, capture, consumed, confirmed=confirmed)
+                        if interruption.requested:
+                            self._verification_interrupted(run_id, confirmed=confirmed)
+                        if self.store.run(run_id)["state"] == "cancel_pending":
+                            return self._cancel_verification(run_id)
+                        return _block(self.store, run_id, exc.code, phase="verifying", uncertain=not confirmed)
+                    self._capture_finish(run_id, capture, outcome.output_bytes, confirmed=outcome.termination_confirmed)
+                    if interruption.requested:
+                        self._verification_interrupted(run_id, confirmed=outcome.termination_confirmed)
+                if not outcome.termination_confirmed:
+                    return _block(self.store, run_id, "cancellation_unconfirmed", phase="verifying", uncertain=True)
+                if outcome.output_limited:
+                    return _block(self.store, run_id, "output_budget_exhausted", phase="verifying")
+                if outcome.cancelled:
+                    return self._cancel_verification(run_id)
+                try:
+                    manager.assert_candidate(workspace, candidate, spec["scope"])
+                except TaskAlongError:
+                    return _block(self.store, run_id, "check_mutated_candidate", phase="verifying")
+                artifact = self.store.put_blob(outcome.stdout + outcome.stderr, media_type="text/plain")
+                record = self._command_evidence(run, spec, attempt, check, candidate, profile, outcome, started, artifact)
+                evidence_records.append(record)
+                self._record_evidence(run_id, record)
+            review = self.store.setting("review")
+            if (checkpoint_enabled and review is not None and review.get("fixture_response")
+                    and all(record["result"] == "passed" for record in evidence_records)):
+                current = self.store.run(run_id)
+                eligible = self._pre_review_records(current, claim, spec, attempt, candidate, profile, operation_key)
+                if eligible == evidence_records:
+                    saved = self.store.mutate(run_id, "verification.pre_review", checkpoint_key,
+                        current["revision"], {"evidence": digest(eligible), "review": digest(review),
+                                              "authority": digest(verification_authority)},
+                        lambda run, db: None, fence=run["lease_generation"])
+                    checkpoint_revision = saved["revision"]
         if review is None:
             return _block(self.store, run_id, "required_review_missing", phase="verifying")
         if check_profile is not None:
@@ -768,7 +802,7 @@ class Workflow:
         invocation_dir = self.store.root / "review" / identifier()
         invocation_dir.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
         with collect_interrupts() as interruption:
-            capture = self._capture_prepare(run_id, "review", operation_key)
+            capture = self._capture_prepare(run_id, "review", operation_key, expected_revision=checkpoint_revision)
             if interruption.requested:
                 self._capture_finish(run_id, capture, 0, confirmed=True)
                 self._verification_interrupted(run_id, confirmed=True)
@@ -777,17 +811,19 @@ class Workflow:
                     current = self.store.run(run_id)
                     if current["state"] == "cancel_pending":
                         raise TaskAlongError("cancel_pending", "Cancellation prevents review dispatch.", exit_code=6)
-                    self.store.authority(current, {"verify", "commit_candidate"}, spec["digest"])
+                    authority = self.store.authority(current, {"verify", "commit_candidate"}, spec["digest"])
+                    if checkpoint_revision is not None and authority != verification_authority:
+                        raise TaskAlongError("authority_changed", "Verification authority no longer matches the checkpoint.", exit_code=3)
                     if spec["schema_version"] in {"2.7", "2.10"}:
                         from .steps import validate_chain
                         validate_chain(self.store, current, live=True, complete=True)
-                    else:
+                    elif check_profile is not None:
                         resolve(self.store, spec)
                 review_options = {}
                 if spec["schema_version"] == "2.12":
                     from .muse_lifecycle import review_options as production_review_options
                     review_options = production_review_options(self.store, spec)
-                receipt = ReviewSenseiAdapter(review["executable"], python_executable=review["python_executable"], expected_executable_sha256=review["executable_sha256"], **review_options, interrupt_requested=lambda: interruption.requested, pre_dispatch=review_gate if check_profile or spec["schema_version"] in {"2.7", "2.10"} else None).review(diff_bytes, {"base_commit": candidate["base_commit"], "candidate_commit": candidate["commit"], "candidate_tree": candidate["tree"], "diff_sha256": candidate["diff_sha256"]}, config_path=review["config_path"], qualification=run["qualification"], invocation_dir=invocation_dir, expected_config_digest=spec["review"]["config_digest"], fixture_response=review["fixture_response"], max_output_bytes=capture["request"]["reserved_output_bytes"], cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
+                receipt = ReviewSenseiAdapter(review["executable"], python_executable=review["python_executable"], expected_executable_sha256=review["executable_sha256"], **review_options, interrupt_requested=lambda: interruption.requested, pre_dispatch=review_gate if checkpoint_revision is not None or check_profile or spec["schema_version"] in {"2.7", "2.10"} else None).review(diff_bytes, {"base_commit": candidate["base_commit"], "candidate_commit": candidate["commit"], "candidate_tree": candidate["tree"], "diff_sha256": candidate["diff_sha256"]}, config_path=review["config_path"], qualification=run["qualification"], invocation_dir=invocation_dir, expected_config_digest=spec["review"]["config_digest"], fixture_response=review["fixture_response"], max_output_bytes=capture["request"]["reserved_output_bytes"], cancel_requested=lambda: interruption.requested or self.store.run(run_id)["state"] == "cancel_pending")
                 self._capture_finish(run_id, capture, receipt.output_bytes, confirmed=True)
                 if interruption.requested:
                     self._verification_interrupted(run_id, confirmed=True)
@@ -841,6 +877,49 @@ class Workflow:
             updated["blockers"] = [] if decision == "accepted" else [{"code": r["code"], "message": r["message"], "recovery": []} for r in reasons]
         return self.store.mutate(run_id, "verify", operation_key, None, request, accept, events=[("acceptance.recorded", {"acceptance_id": acceptance["acceptance_id"], "decision": decision})], actor="verifier", fence=run["lease_generation"])
 
+    def _pre_review_records(self, run, claim, spec, attempt, candidate, profile, operation_key):
+        """Read passing receipts written after this exact verification claim."""
+        def invalid():
+            return TaskAlongError("verification_unreconciled", "The saved verification evidence did not match.",
+                                  exit_code=5, effect_outcome="uncertain")
+
+        before, after = claim["evidence_ids"], run["evidence_ids"]
+        if (run["state"] != "verifying" or run["pending_effect_ids"]
+                or after[:len(before)] != before or len(after) - len(before) != 1 + len(spec["checks"])):
+            raise invalid()
+        records = [self.store.detail("evidence", identity) for identity in after[len(before):]]
+        subject = dict(base_commit=candidate["base_commit"], candidate_commit=candidate["commit"],
+                       candidate_tree=candidate["tree"], diff_sha256=candidate["diff_sha256"])
+        expected = [("scope", None)] + [("command", digest(check)) for check in spec["checks"]]
+        for record, (kind, check_digest) in zip(records, expected, strict=True):
+            if (record["type"] != kind or record["result"] != "passed" or
+                    record["subject"] != subject or record["run_id"] != run["run_id"] or
+                    record["attempt_id"] != attempt["attempt_id"] or
+                    record["packet_digest"] != attempt["packet"]["digest"] or
+                    record["lease_generation"] != run["lease_generation"] or
+                    record["spec_digest"] != spec["digest"] or
+                    record["inputs"]["check_digest"] != check_digest or
+                    record["inputs"]["runtime_profile_digest"] != profile["digest"]):
+                raise invalid()
+            if len(record["artifacts"]) != 1:
+                raise invalid()
+            self.store.get_blob(record["artifacts"][0]["sha256"])
+        for check, record in zip(spec["checks"], records[1:], strict=True):
+            label = "check:" + check["id"]
+            key = _internal_key(label, operation_key)
+            prepared = self.store.operation("capture.prepare", run["run_id"], key, {"label": label})
+            if not prepared or len(prepared["pending_effect_ids"]) != 1:
+                raise invalid()
+            effect = self.store.detail("effects", prepared["pending_effect_ids"][0])
+            if (effect["kind"] != "verifier.capture" or effect["operation_key"] != key
+                    or effect["run_id"] != run["run_id"] or effect["request"]["label"] != label
+                    or effect["phase"] != "observed" or not effect["response"]
+                    or effect["response"]["termination_confirmed"] is not True
+                    or record["command"]["exit_code"] != check["expected_exit_code"]
+                    or record["command"]["timed_out"]):
+                raise invalid()
+        return records
+
     def _verification_interrupted(self, run_id, *, confirmed):
         outcome = "known" if confirmed else "uncertain"
         if self.store.run(run_id)["state"] == "cancel_pending":
@@ -851,7 +930,7 @@ class Workflow:
                            exit_code=130, effect_outcome=outcome,
                            recovery=[{"action": "inspect_and_reconcile" if not confirmed else "inspect_and_verify_with_fresh_key"}])
 
-    def _capture_prepare(self, run_id, label, key):
+    def _capture_prepare(self, run_id, label, key, *, expected_revision=None):
         run = self.store.run(run_id)
         spec = self.store.spec(run)
         remaining = spec["budget"]["max_output_bytes"] - run["budget_consumed"]["output_bytes"]
@@ -876,7 +955,7 @@ class Workflow:
                 item["request_digest"] = digest(item["request"])
                 db.execute("UPDATE effects SET request_digest=?,document=? WHERE effect_id=?", (item["request_digest"], encode(item), item["effect_id"]))
             selected.update(item)
-        self.store.mutate(run_id, "capture.prepare", _internal_key(label, key), None, {"label": label}, prepare, events=[("effect.prepared", {"kind": "verifier.capture", "label": label})], fence=run["lease_generation"])
+        self.store.mutate(run_id, "capture.prepare", _internal_key(label, key), expected_revision, {"label": label}, prepare, events=[("effect.prepared", {"kind": "verifier.capture", "label": label})], fence=run["lease_generation"])
         return selected
 
     def _capture_finish(self, run_id, capture, observed_bytes, *, confirmed):
