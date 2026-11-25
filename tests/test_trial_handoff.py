@@ -1,13 +1,16 @@
 """Public synthetic completed-handoff recovery with a real controller SIGKILL.
 
-This is workflow recovery before the first verify, not vendor native resume,
-real provider execution, ReviewSensei0.8.12 invocation or E1 trial completion.
+These tests cover checkpoints before the first verify and before review. They
+do not prove native resume, provider execution, actual E1 review, or trial
+completion.
 """
 import hashlib
+import json
 import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import time
 import unittest
 from unittest.mock import patch
@@ -100,6 +103,59 @@ class TrialHandoffRecoveryTests(ServiceFixture, unittest.TestCase):
             records = [store.detail("evidence", eid) for eid in accepted["evidence_ids"]]
             self.assertEqual(sum(item["type"] == "command" for item in records), 1)
             self.assertEqual(sum(item["type"] == "review" for item in records), 1)
+
+    def test_saved_green_check_survives_crash_before_unconfigured_review(self):
+        """An offline checkpoint observation, not E1 recovery completion."""
+        from test_recovery_regressions import RecoveryRegressions
+
+        run, _ = self.submit()
+        env, marker, _ = RecoveryRegressions.trace_environment(self, "verify")
+        with patch.dict(os.environ, env):
+            self.start(run)
+        RecoveryRegressions.wait_file(self, marker)
+
+        # The first controller exited before verifying. Wait for its scope
+        # guard to release via the second command's normal admission behavior.
+        env, marker, _ = RecoveryRegressions.trace_environment(self, "_block")
+        key = "fixture-post-green-crash"
+
+        def verify(operation_key, environment=None):
+            current = self.service.inspect(run["run_id"])
+            return subprocess.run(
+                [sys.executable, "-m", "taskalong", "--state-dir", str(self.state),
+                 "verify", run["run_id"], "--key", operation_key,
+                 "--expected-revision", str(current["revision"]), "--json"],
+                cwd=self.root, env=environment, capture_output=True, text=True, timeout=15,
+            )
+
+        deadline = time.monotonic() + 5
+        while True:
+            interrupted = verify(key, env)
+            if marker.exists():
+                break
+            self.assertEqual(interrupted.returncode, 4, interrupted.stderr + interrupted.stdout)
+            self.assertEqual(json.loads(interrupted.stdout)["errors"][0]["code"], "operation_in_progress")
+            self.assertLess(time.monotonic(), deadline, "First controller did not release its run guard")
+            time.sleep(.025)
+        self.assertEqual(interrupted.returncode, -signal.SIGKILL)
+        checkpoint = self.service.inspect(run["run_id"])
+        self.assertEqual(checkpoint["state"], "verifying")
+        self.assertIsNone(checkpoint["active_attempt_id"])
+        self.assertIsNone(checkpoint["acceptance_id"])
+        self.assertEqual(checkpoint["pending_effect_ids"], [])
+
+        with Store(self.state) as store:
+            records = [store.detail("evidence", item) for item in checkpoint["evidence_ids"]]
+        self.assertEqual([record["type"] for record in records], ["scope", "command"])
+        self.assertEqual(records[1]["result"], "passed")
+        self.assertEqual(records[1]["command"]["exit_code"], 0)
+
+        repeated = verify(key)
+        self.assertEqual(repeated.returncode, 5, repeated.stderr + repeated.stdout)
+        self.assertEqual(json.loads(repeated.stdout)["errors"][0]["code"], "verification_unreconciled")
+        self.assertEqual(self.service.inspect(run["run_id"]), checkpoint)
+        self.assertEqual(len(self.invocations()), 1)
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD"), self.base)
 
     def test_lost_cessation_refuses_before_new_verification_claim(self):
         checkpoint, attempt = self.completed_handoff()

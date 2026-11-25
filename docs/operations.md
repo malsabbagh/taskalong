@@ -445,6 +445,15 @@ resume an interrupted verification claim or repeat the worker. Pending effects,
 unknown worker cessation or changed subjects still refuse. No new stop/restart
 API, scheduler or native-session continuation is introduced.
 
+A separate offline checkpoint test stops the foreground controller after the
+passing command evidence is saved and before review. The passing evidence stays
+in the store, and repeating the interrupted verification key refuses with
+`verification_unreconciled` without rerunning the check or worker. This is a
+safe hold, not a supported E1 continuation from GREEN to review. That trial
+still needs an independently qualified continuation that recognizes the exact
+existing check evidence, or a different eligible interruption boundary reviewed
+against [E1 v2](https://github.com/malsabbagh/taskalong/issues/12#e1-v2-real-bug-to-reviewed-draft-pr-and-durable-recovery).
+
 ## Production Muse intent (v2.11, execution blocked)
 
 The additive v2.11 profile, task and driver-configuration contracts describe a
